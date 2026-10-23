@@ -12,7 +12,7 @@ import { sendInstructions } from "@/lib/tx";
 import { buildCosignLink } from "@/lib/cosign-link";
 import { escrowFor } from "@/lib/escrow";
 import { formatUsdc, parseAmount, shortAddress } from "@/lib/format";
-import { gatewayTokenAddress } from "@/lib/civic-addr";
+import { gatewayTokenAddress } from "@/lib/gateway";
 import { GATEKEEPER_NETWORK, TOKEN_DECIMALS } from "@/lib/config";
 import { copyLabel, useCopy } from "@/lib/clipboard";
 import { useRun } from "@/lib/use-run";
@@ -257,7 +257,7 @@ function RequestForm({
                   borrower: wallet,
                   borrowerPerson: mine.person,
                   pool,
-                  borrowerGatewayToken: gatewayTokenAddress(wallet, network),
+                  borrowerGatewayToken: await gatewayTokenAddress(wallet, network),
                   amount: amount!,
                   termDays,
                   cosigner: cosigner!,

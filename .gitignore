@@ -13,3 +13,6 @@ id.json
 txtx.yml
 runbooks
 *.proptest-regressions
+identity.sqlite*
+scripts/gatekeeper-network.json
+scripts/gatekeeper.json

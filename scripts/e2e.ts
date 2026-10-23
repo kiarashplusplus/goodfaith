@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { address, createKeyPairSignerFromBytes, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress, none, type Address } from '@solana/kit';
 import { getMintEncoder } from '@solana-program/token';
 import { ata, ATA_PROGRAM, cheat, clockTs, expectFail, fetchPool, gf, loanPda, MINT, GATEWAY_PROGRAM, rpc, send, setSol, setUsdc, sol, tok, TOKEN_PROGRAM, USDC, wallet } from './lib.ts';
+import { gatewayFixture } from './gateway-fixture.ts';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const addrDec = getAddressDecoder();
@@ -46,17 +47,13 @@ const dec = decodeGateway(realBytes);
 console.log('REAL civic token', real.pubkey, { ...dec, expiry: String(dec.expiry), expiryDate: dec.expiry ? new Date(Number(dec.expiry) * 1000).toISOString() : null });
 assert.equal(dec.consumed, dec.len, 'layout consumed exactly all bytes');
 assert.equal(dec.state, 0); assert.ok(dec.expiry! > BigInt(Math.floor(Date.now() / 1000)));
-const NETWORK = dec.network;
-row('civic layout', `real token ${real.pubkey.slice(0, 6)}.. v${dec.version} state=${dec.state} net=${NETWORK.slice(0, 6)}..`, `parsed ${dec.consumed}/${dec.len} bytes`);
-
-async function plantGateway(owner: Address): Promise<Address> {
-  const addr = (await wallet()).address;
-  const bytes = Buffer.from(realBytes);
-  Buffer.from(getAddressEncoder().encode(owner)).copy(bytes, 1 + 1); // version(1)+parent opt tag(1, None) -> owner_wallet at offset 2
-  assert.equal(dec.parent, 0);
-  await cheat('surfnet_setAccount', [addr, { lamports: real.lamports, owner: GATEWAY_PROGRAM, data: bytes.toString('hex') }]);
-  return addr;
-}
+row('civic layout', `real token ${real.pubkey.slice(0, 6)}.. v${dec.version} state=${dec.state} net=${dec.network.slice(0, 6)}..`, `parsed ${dec.consumed}/${dec.len} bytes`);
+// Our own gatekeeper network when `npm run gatekeeper-setup` has run (tokens issued by the real gateway program);
+// otherwise cloned Civic bytes on the token's original network.
+const gateway = await gatewayFixture(dec.network);
+const NETWORK = gateway.network;
+const plantGateway = (owner: Address) => gateway.tokenFor(owner);
+row('gateway tokens', gateway.mode === 'issued' ? `issued by the gateway program on our network ${NETWORK.slice(0, 6)}..` : 'planted (run gatekeeper-setup for real issuance)');
 
 // ---------- Setup ----------
 // The admin key doubles as the identity issuer on the fork (the issuer service holds a separate key in production).
@@ -117,7 +114,7 @@ assert.equal((await getPerson(pB)).ineligible, false);
 assert.equal((await getPerson(pB)).wallet, borrower.address);
 // one person, one wallet: the same hash with a second wallet is refused
 const dup = await expectFail(send([await gf.getRegisterMemberInstructionAsync({ wallet: third, payer: third, issuer: admin, pool, gatewayToken: gwThird, personHash: hashOf(borrower.address) })], third, 'duplicate person'), 'duplicate person');
-row('register_member', 'borrower+cosigner accepted (issuer-signed, cloned REAL civic token bytes)', `same person, second wallet: rejected (${errName(dup).slice(0, 40)})`);
+row('register_member', `borrower+cosigner accepted (issuer-signed, ${gateway.mode === 'issued' ? 'tokens issued by the gateway program' : 'cloned REAL civic token bytes'})`, `same person, second wallet: rejected (${errName(dup).slice(0, 40)})`);
 
 // ---------- Loan 1 ----------
 type Party = { signer: typeof borrower; gw: Address; person: Address; token: Address };

@@ -26,6 +26,14 @@ release set `SOLANA_VERSION` (only tarballs that exist on release.anza.xyz work;
 Program id note: LiteSVM (the Rust tests and `cd app && npm run test:svm`) registers the `.so` under the declared id
 directly, so neither needs a keypair or a running fork.
 
+## Gatekeeper network
+
+`npm run gatekeeper-setup` creates the fund's own gatekeeper network on the current cluster (a new keypair saved to
+`gatekeeper-network.json`, kept out of git) and adds the admin key as its gatekeeper through the Identity.com gateway
+program; it writes `gatekeeper.json` (public). With that file present, `e2e` and `kora-e2e` issue real gateway tokens
+for their wallets instead of planting cloned Civic bytes, and `identity-e2e` drives the app's identity routes
+(`IDENTITY_PROVIDER=mock`) from the wallet's proof of control to the issuer-signed join, a wallet replacement and a ban.
+
 ## Run
 - `npm run e2e` - full loan cycle with users paying fees: register, request, co-sign, partial and full repay,
   cancel (borrower, co-signer, stranger rejected), `rebind_wallet`, `schedule_params` + `apply_params` after the timelock (an open loan keeps its own grace period), `suspend_issuer`, a wind-down with `sweep_to_successor` on a second pool,

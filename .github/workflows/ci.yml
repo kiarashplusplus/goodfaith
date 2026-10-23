@@ -174,9 +174,9 @@ jobs:
             sleep 2
           done
           echo "surfpool did not come up"; tail -50 /tmp/surfpool.log; exit 1
-      - name: Plant the program and run the loan-cycle e2e
+      - name: Plant the program, create the gatekeeper network and run the loan-cycle e2e
         working-directory: scripts
-        run: npm run deploy-fork && npm run e2e
+        run: npm run deploy-fork && npm run gatekeeper-setup && npm run e2e
       - name: Validate the Kora policy and start Kora without auth (development mode)
         run: |
           solana-keygen new --no-bip39-passphrase --silent -o /tmp/kora-signer.json
@@ -204,13 +204,20 @@ jobs:
           export NEXT_PUBLIC_GATEKEEPER_NETWORK="$(node -e 'console.log(require("../scripts/e2e-result.json").network)')"
           export NEXT_PUBLIC_POOL_AUTHORITY="$(node -e 'const r=require("../scripts/e2e-result.json"); console.log(r.authority)')"
           npm run build
+          # Identity issuer in mock mode: the admin key is the pool's issuer and the network's gatekeeper on the fork.
+          export IDENTITY_PROVIDER=mock IDENTITY_DB_PATH=memory
+          export ISSUER_SECRET="$(cat ~/.config/solana/id.json)" GATEKEEPER_SECRET="$(cat ~/.config/solana/id.json)"
+          export PERSON_HASH_SECRET="$(openssl rand -hex 32)" IDENTITY_ADMIN_KEY="$(openssl rand -hex 16)"
+          echo "::add-mask::$PERSON_HASH_SECRET"; echo "::add-mask::$IDENTITY_ADMIN_KEY"
+          echo "IDENTITY_ADMIN_KEY=$IDENTITY_ADMIN_KEY" >> "$GITHUB_ENV"
           # The e2e sends ~16 sponsored transactions in a minute; give the per-client limiter room and tell the e2e the value.
-          KORA_URL=http://127.0.0.1:8080 SPONSOR_RATE_CAPACITY=120 PORT=3100 nohup npm start > /tmp/app.log 2>&1 &
+          KORA_URL=http://127.0.0.1:8080 SPONSOR_RATE_CAPACITY=120 IDENTITY_RATE_CAPACITY=200 PORT=3100 nohup npm start > /tmp/app.log 2>&1 &
           for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:3100/fund && exit 0; sleep 1; done
           echo "app did not come up"; tail -50 /tmp/app.log; exit 1
-      - name: Sponsored e2e through the proxy (HMAC + API key), then smoke
+      - name: Sponsored e2e through the proxy (HMAC + API key), the identity join flow, then smoke
         working-directory: scripts
         run: |
+          APP_URL=http://127.0.0.1:3100 npm run identity-e2e
           KORA_URL=http://127.0.0.1:3100/api/sponsor KORA_DIRECT_URL=http://127.0.0.1:8080 SPONSOR_RATE_CAPACITY=120 npm run kora-e2e
           npx playwright-core install chromium
           APP_URL=http://127.0.0.1:3100 npm run smoke

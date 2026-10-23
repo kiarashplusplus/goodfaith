@@ -16,7 +16,6 @@
     "test:svm": "vitest run --config vitest.svm.config.mts"
   },
   "dependencies": {
-    "@civic/solana-gateway-react": "^1.2.4",
     "@civic/solana-gateway-ts": "0.13.0",
     "@solana-program/system": "^0.16.0",
     "@solana-program/token": "^0.18.0",

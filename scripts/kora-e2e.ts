@@ -7,9 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { AccountRole, address, createKeyPairSignerFromBytes, createNoopSigner, getAddressEncoder, partiallySignTransaction, type Address, type Instruction } from '@solana/kit';
+import { AccountRole, address, createKeyPairSignerFromBytes, createNoopSigner, partiallySignTransaction, type Address, type Instruction } from '@solana/kit';
 import { getCloseAccountInstruction, getCreateAssociatedTokenIdempotentInstruction } from '@solana-program/token';
-import { ata, cheat, clockTs, GATEWAY_PROGRAM, rpc, RPC_URL, send, setSol, setUsdc, sol, tok, USDC, wallet } from './lib.ts';
+import { ata, cheat, clockTs, rpc, RPC_URL, send, setSol, setUsdc, sol, tok, USDC, wallet } from './lib.ts';
 
 process.env.NEXT_PUBLIC_KORA_URL = process.env.KORA_URL ?? 'http://127.0.0.1:8080';
 process.env.NEXT_PUBLIC_RPC_URL = RPC_URL;
@@ -18,7 +18,7 @@ const tx = await import('../app/src/lib/tx.ts');
 const kora = await import('../app/src/lib/kora.ts');
 const prog = await import('../app/src/lib/program.ts');
 const sendLib = await import('../app/src/lib/send.ts');
-const { gatewayTokenAddress } = await import('../app/src/lib/civic-addr.ts');
+const { gatewayFixture } = await import('./gateway-fixture.ts');
 const { escrowFor } = await import('../app/src/lib/escrow.ts');
 const cfg = await import('../app/src/lib/config.ts');
 
@@ -41,27 +41,21 @@ await setSol(payer!, 20_000_000_000n);
 row('kora', `payer ${payer!.slice(0, 6)}..`, `url ${process.env.NEXT_PUBLIC_KORA_URL}`);
 
 // ---------- actors ----------
-const real = JSON.parse(fs.readFileSync(path.join(here, 'civic-token.json'), 'utf8'));
-const realBytes = Buffer.from(real.data, 'hex');
 const [poolAddr] = await prog.findPoolPda(cfg.POOL_MINT);
 const poolMaybe = await prog.fetchPool(txRpc, poolAddr);
 if (!poolMaybe) throw new Error('pool missing: run `npm run e2e` first');
 const pool = poolMaybe;
 const network = pool.gatekeeperNetwork;
 const MINT = pool.mint;
-async function plantGateway(owner: Address) {
-  const addr = gatewayTokenAddress(owner, network);
-  const b = Buffer.from(realBytes);
-  Buffer.from(getAddressEncoder().encode(owner)).copy(b, 2);
-  await cheat('surfnet_setAccount', [addr, { lamports: real.lamports, owner: GATEWAY_PROGRAM, data: b.toString('hex') }]);
-  return addr;
-}
+const gateway = await gatewayFixture(network);
+assert.equal(gateway.network, network, 'gatekeeper.json network must match the pool (re-run e2e after gatekeeper-setup)');
+const plantGateway = (owner: Address) => gateway.tokenFor(owner);
 const borrower = await wallet(), cosigner = await wallet(), third = await wallet(), donor = await wallet(), borrower2 = await wallet(), cosigner2 = await wallet();
 for (const w of [borrower, cosigner, third, donor, borrower2, cosigner2]) await setSol(w.address, 1_000_000_000n);
 // borrower and borrower2 deliberately have NO token account: the co-sign prefix must create it (sponsor pays that rent)
 await setUsdc(cosigner.address, 500n * USDC); await setUsdc(third.address, 200n * USDC); await setUsdc(donor.address, 1000n * USDC);
 for (const w of [borrower, cosigner, borrower2, cosigner2]) await plantGateway(w.address);
-const gw = (w: Address) => gatewayTokenAddress(w, network);
+const gw = (w: Address) => gateway.addressOf(w);
 const base = Object.fromEntries(await Promise.all([borrower, cosigner, donor, borrower2, cosigner2].map(async w => [w.address, await sol(w.address)])));
 const koraBase = await sol(payer!);
 let sponsoredTxs = 0;
@@ -73,7 +67,7 @@ assert.equal(pool.issuer, admin.address, 'the fork pool must use the admin key a
 const hashOf = (a: Address) => new Uint8Array(createHash('sha256').update(`kora-e2e:${a}`).digest());
 for (const w of [borrower, cosigner, borrower2, cosigner2]) {
   // Prepared-transaction path: build for the sponsor, the issuer and the wallet sign, Kora adds its signature and sends.
-  const ix = await prog.registerMemberIx({ wallet: w.address, payer: payer!, issuer: admin.address, pool, gatewayToken: gw(w.address), personHash: hashOf(w.address) });
+  const ix = await prog.registerMemberIx({ wallet: w.address, payer: payer!, issuer: admin.address, pool, gatewayToken: await gw(w.address), personHash: hashOf(w.address) });
   const built = await tx.buildTransaction(txRpc, payer!, [ix]);
   await tx.simulate(txRpc, built);
   const signed = await partiallySignTransaction([admin.keyPair, (w as unknown as { keyPair: CryptoKeyPair }).keyPair], built);
@@ -85,7 +79,7 @@ const personOf = async (w: Address) => (await prog.fetchMember(txRpc, pool.addre
 
 // ---------- request + cosign for a borrower with no token account ----------
 const amount = 100n * USDC, term = 7;
-await sp(borrower, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower.address, borrowerPerson: await personOf(borrower.address), pool, borrowerGatewayToken: gw(borrower.address), amount, termDays: term, cosigner: cosigner.address })], 'request');
+await sp(borrower, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower.address, borrowerPerson: await personOf(borrower.address), pool, borrowerGatewayToken: await gw(borrower.address), amount, termDays: term, cosigner: cosigner.address })], 'request');
 const borrowerAta = await ata(borrower.address);
 assert.equal(await sendLib.ataExists(txRpc, borrowerAta), false, 'borrower must start without a token account');
 async function cosignFor(b: Signer, c: Signer) {
@@ -93,7 +87,7 @@ async function cosignFor(b: Signer, c: Signer) {
   const req = (await prog.fetchRequest(txRpc, p.address, b.address))!;
   const escrow = escrowFor(req.amount, p.cosignerEscrowBps);
   await sp(c, async (feePayer) => {
-    const { ix, borrowerToken } = await prog.cosignLoanIx({ payer: feePayer, pool: p, request: req, borrowerPerson: await personOf(req.borrower), cosignerPerson: await personOf(req.cosigner), borrowerGatewayToken: gw(req.borrower), cosignerGatewayToken: gw(req.cosigner), expectedAmount: req.amount, expectedTermDays: req.termDays, maxEscrow: escrow });
+    const { ix, borrowerToken } = await prog.cosignLoanIx({ payer: feePayer, pool: p, request: req, borrowerPerson: await personOf(req.borrower), cosignerPerson: await personOf(req.cosigner), borrowerGatewayToken: await gw(req.borrower), cosignerGatewayToken: await gw(req.cosigner), expectedAmount: req.amount, expectedTermDays: req.termDays, maxEscrow: escrow });
     return [ataCreate(feePayer, borrowerToken, req.borrower, p.mint), ix];
   }, 'cosign');
   return { id: p.loanCount, escrow };
@@ -122,7 +116,7 @@ assert.equal(await tok(pool.vault), vaultBefore + 50n * USDC);
 row('donate 50', 'sponsored');
 
 // ---------- request + cancel ----------
-await sp(borrower, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower.address, borrowerPerson: await personOf(borrower.address), pool, borrowerGatewayToken: gw(borrower.address), amount: 10n * USDC, termDays: 3, cosigner: cosigner.address })], 'request 2');
+await sp(borrower, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower.address, borrowerPerson: await personOf(borrower.address), pool, borrowerGatewayToken: await gw(borrower.address), amount: 10n * USDC, termDays: 3, cosigner: cosigner.address })], 'request 2');
 const req2 = (await prog.fetchRequest(txRpc, pool.address, borrower.address))!;
 assert.equal(req2.rentPayer, payer, 'Kora is the request rent payer');
 await sp(borrower, [prog.cancelRequestIx({ canceller: borrower.address, pool: pool.address, request: req2 })], 'cancel');
@@ -130,7 +124,7 @@ assert.equal(await prog.fetchRequest(txRpc, pool.address, borrower.address), nul
 row('request + cancel', 'request rent returned to Kora');
 
 // ---------- loan 2: default with the co-signer token account re-created by the sponsor ----------
-await sp(borrower2, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower2.address, borrowerPerson: await personOf(borrower2.address), pool, borrowerGatewayToken: gw(borrower2.address), amount, termDays: term, cosigner: cosigner2.address })], 'request b2');
+await sp(borrower2, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower2.address, borrowerPerson: await personOf(borrower2.address), pool, borrowerGatewayToken: await gw(borrower2.address), amount, termDays: term, cosigner: cosigner2.address })], 'request b2');
 const escrow2 = escrowFor(amount, pool.cosignerEscrowBps);
 await setUsdc(cosigner2.address, escrow2); // exactly the escrow, so the account is empty afterwards
 const L2 = await cosignFor(borrower2, cosigner2);

@@ -117,6 +117,21 @@ export async function submit(rpc: TxRpc, tx: Transaction, sponsored: boolean, fe
 }
 
 /**
+ * A transaction prepared and partially signed by the server (the identity issuer): decode, simulate, add the
+ * wallet's signature, send through the sponsor when it is the fee payer, confirm.
+ */
+export async function sendPrepared(
+  rpc: TxRpc,
+  wallet: TransactionSigner,
+  prepared: { transaction: string; feePayer: Address; sponsored: boolean },
+): Promise<string> {
+  const tx = fromBase64(prepared.transaction);
+  await simulate(rpc, tx);
+  const signed = await signWith(wallet, tx);
+  return submit(rpc, signed, prepared.sponsored, prepared.feePayer);
+}
+
+/**
  * One-wallet flow: build, simulate, sign, send, confirm.
  * Fees go to Kora when available; otherwise the wallet pays.
  */

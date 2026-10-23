@@ -47,7 +47,7 @@ import {
   type Pool,
 } from "./program";
 import { buildTransaction, sendInstructions } from "./tx";
-import { gatewayTokenAddress } from "./civic-addr";
+import { gatewayTokenAddress } from "./gateway";
 import { actor, admin, issuer, NETWORK, newSvm, personHashOf, plantAta, plantMint, setTime, T0, tokenAmount } from "./svm/fixtures";
 import { svmRpc, type SvmRpc } from "./svm/rpc";
 
@@ -194,8 +194,15 @@ describe("authority handover", () => {
 });
 
 /** Registration the way the identity service prepares it: wallet + fee payer + issuer signatures. */
-const reg = (w: KeyPairSigner, pool: Pool, payer = w.address, issuerKey: Address = iss.address) =>
-  registerMemberIx({ wallet: w.address, payer, issuer: issuerKey, pool, gatewayToken: gw(w.address), personHash: personHashOf(w.address) });
+const reg = async (w: KeyPairSigner, pool: Pool, payer = w.address, issuerKey: Address = iss.address) =>
+  registerMemberIx({
+    wallet: w.address,
+    payer,
+    issuer: issuerKey,
+    pool,
+    gatewayToken: await gw(w.address),
+    personHash: personHashOf(w.address),
+  });
 
 describe("membership", () => {
   it("registers members with the issuer's signature, including one whose rent a sponsor pays", async () => {
@@ -226,7 +233,7 @@ describe("membership", () => {
             payer: stranger.address,
             issuer: iss.address,
             pool: poolA,
-            gatewayToken: gw(borrower.address),
+            gatewayToken: await gw(borrower.address),
             personHash: personHashOf(stranger.address),
           }),
         ],
@@ -246,7 +253,7 @@ describe("request and co-sign", () => {
       borrower: b.address,
       borrowerPerson: await personOf(pool, b.address),
       pool,
-      borrowerGatewayToken: gw(b.address),
+      borrowerGatewayToken: await gw(b.address),
       amount,
       termDays,
       cosigner: cosigner.address,
@@ -276,8 +283,8 @@ describe("request and co-sign", () => {
         request: req,
         borrowerPerson: await personOf(pool, req.borrower),
         cosignerPerson: await personOf(pool, req.cosigner),
-        borrowerGatewayToken: gw(req.borrower),
-        cosignerGatewayToken: gw(req.cosigner),
+        borrowerGatewayToken: await gw(req.borrower),
+        cosignerGatewayToken: await gw(req.cosigner),
         expectedAmount: over.expectedAmount ?? req.amount,
         expectedTermDays: req.termDays,
         maxEscrow: over.maxEscrow ?? escrow,
@@ -406,7 +413,7 @@ describe("cancel request", () => {
       borrower: borrower.address,
       borrowerPerson: await personOf(poolA, borrower.address),
       pool: poolA,
-      borrowerGatewayToken: gw(borrower.address),
+      borrowerGatewayToken: await gw(borrower.address),
       amount: 10n * USDC,
       termDays: 5,
       cosigner: cosigner.address,
@@ -483,7 +490,7 @@ describe("wallet replacement", () => {
         borrower: b.address,
         borrowerPerson: await personOf(poolB, b.address),
         pool: poolB,
-        borrowerGatewayToken: gw(b.address),
+        borrowerGatewayToken: await gw(b.address),
         amount,
         termDays: 10,
         cosigner: c.address,
@@ -498,8 +505,8 @@ describe("wallet replacement", () => {
         request: req,
         borrowerPerson: await personOf(pool, req.borrower),
         cosignerPerson: await personOf(pool, req.cosigner),
-        borrowerGatewayToken: gw(req.borrower),
-        cosignerGatewayToken: gw(req.cosigner),
+        borrowerGatewayToken: await gw(req.borrower),
+        cosignerGatewayToken: await gw(req.cosigner),
         expectedAmount: req.amount,
         expectedTermDays: req.termDays,
         maxEscrow: escrowFor(req.amount, pool.cosignerEscrowBps),
@@ -527,7 +534,7 @@ describe("wallet replacement", () => {
       issuer: iss.address,
       pool: poolB,
       person,
-      gatewayToken: gw(newWallet.address),
+      gatewayToken: await gw(newWallet.address),
     });
     await sendSigned(adm, [newWallet, iss], [rebind]);
     expect(await fetchMember(rpc, poolB.address, c3.address)).toMatchObject({ retired: true, person: person.address });
@@ -558,7 +565,7 @@ describe("wallet replacement", () => {
             borrower: b3.address,
             borrowerPerson: await personOf(poolB, b3.address),
             pool: poolB,
-            borrowerGatewayToken: gw(b3.address),
+            borrowerGatewayToken: await gw(b3.address),
             amount: 1n * USDC,
             termDays: 1,
             cosigner: c3.address,
@@ -593,7 +600,7 @@ describe("wallet replacement", () => {
             borrower: newWallet.address,
             borrowerPerson: await personOf(pool, newWallet.address),
             pool,
-            borrowerGatewayToken: gw(newWallet.address),
+            borrowerGatewayToken: await gw(newWallet.address),
             amount: 1n * USDC,
             termDays: 1,
             cosigner: b3.address,

@@ -10,7 +10,7 @@ import { useApp, useBalances, useMember, usePendingForCosigner, usePool, useRequ
 import { parseCosignLink } from "@/lib/cosign-link";
 import { cancelRequestIx, cosignLoanIx, fetchMember, type LoanRequest, type Pool } from "@/lib/program";
 import { sendInstructions } from "@/lib/tx";
-import { gatewayTokenAddress } from "@/lib/civic-addr";
+import { gatewayTokenAddress } from "@/lib/gateway";
 import { GATEKEEPER_NETWORK } from "@/lib/config";
 import { escrowFor } from "@/lib/escrow";
 import { formatUsdc, shortAddress } from "@/lib/format";
@@ -175,8 +175,8 @@ function Terms({ wallet, pool, request, onDone }: { wallet: Address; pool: Pool;
                   request,
                   borrowerPerson: b.person,
                   cosignerPerson: c.person,
-                  borrowerGatewayToken: gatewayTokenAddress(request.borrower, network),
-                  cosignerGatewayToken: gatewayTokenAddress(request.cosigner, network),
+                  borrowerGatewayToken: await gatewayTokenAddress(request.borrower, network),
+                  cosignerGatewayToken: await gatewayTokenAddress(request.cosigner, network),
                   expectedAmount: request.amount,
                   expectedTermDays: request.termDays,
                   maxEscrow: escrow,

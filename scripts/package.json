@@ -5,6 +5,8 @@
   "scripts": {
     "deploy-fork": "tsx deploy-fork.ts",
     "e2e": "tsx e2e.ts",
+    "gatekeeper-setup": "tsx gatekeeper-setup.ts",
+    "identity-e2e": "tsx identity-e2e.ts",
     "kora-e2e": "tsx kora-e2e.ts",
     "smoke": "tsx smoke.ts"
   },

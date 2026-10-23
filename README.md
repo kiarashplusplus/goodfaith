@@ -27,6 +27,12 @@ npm run codegen   # after any program change
 npm run dev
 ```
 
+## Identity
+
+Members are people, not wallets: the app's identity issuer (see `app/README.md`) verifies a government ID with a
+provider, keeps a keyed hash per person, issues a pass on the fund's own gatekeeper network and co-signs the on-chain
+registration. One person, one wallet; a lost wallet is replaced without losing the membership.
+
 ## Continuous integration
 `.github/workflows/ci.yml`: program format and clippy; Anchor build with the Rust and app-side LiteSVM test suites;
 app lint, types, Prettier, unit tests, build, audit and a Playwright smoke; and, on `main` and by hand, the full end

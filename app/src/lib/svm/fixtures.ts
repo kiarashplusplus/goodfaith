@@ -1,4 +1,4 @@
-/** Accounts planted straight into LiteSVM: mints, token accounts, Civic gateway tokens, clock. */
+/** Accounts planted straight into LiteSVM: mints, token accounts, gateway tokens, clock. */
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -13,7 +13,7 @@ import {
 } from "@solana/kit";
 import { AccountState, getMintEncoder, getTokenEncoder, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { LiteSVM } from "litesvm";
-import { gatewayTokenAddress } from "../civic-addr";
+import { gatewayTokenAddress } from "../gateway";
 import { GATEKEEPER_NETWORK, PROGRAM_ID } from "../config";
 import { findAta } from "../program";
 import { TEST_ADMIN_SECRET, TEST_ISSUER_SECRET } from "./admin";
@@ -75,11 +75,11 @@ export function tokenAmount(svm: LiteSVM, account: Address): bigint {
 }
 
 /**
- * A Civic gateway token for `wallet`: the real devnet token bytes with the owner patched
- * (version 1 + parent tag 1 → owner at offset 2), planted where the app expects it.
+ * A gateway token for `wallet` on the test network: real devnet token bytes (the layout the program parses)
+ * with the owner patched (version 1 + parent tag 1 → owner at offset 2), planted where the app expects it.
  */
-export function plantGatewayToken(svm: LiteSVM, wallet: Address, at?: Address): Address {
-  const addr = at ?? gatewayTokenAddress(wallet, NETWORK);
+export async function plantGatewayToken(svm: LiteSVM, wallet: Address, at?: Address): Promise<Address> {
+  const addr = at ?? (await gatewayTokenAddress(wallet, NETWORK));
   const bytes = new Uint8Array(civicBytes);
   bytes.set(new Uint8Array(getAddressEncoder().encode(wallet)), 2);
   plant(svm, addr, GATEWAY_PROGRAM, bytes, BigInt(civic.lamports));
@@ -110,7 +110,7 @@ export function personHashOf(wallet: Address): Uint8Array {
 export async function actor(svm: LiteSVM, opts: { usdc?: bigint; mint?: Address; gateway?: boolean } = {}): Promise<KeyPairSigner> {
   const kp = await generateKeyPairSigner();
   svm.airdrop(kp.address, lamports(10_000_000_000n));
-  if (opts.gateway !== false) plantGatewayToken(svm, kp.address);
+  if (opts.gateway !== false) await plantGatewayToken(svm, kp.address);
   if (opts.usdc !== undefined && opts.mint) await plantAta(svm, kp.address, opts.mint, opts.usdc);
   return kp;
 }
