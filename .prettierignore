@@ -5,3 +5,9 @@ node_modules
 dist
 build
 test-ledger
+.next
+app/src/generated
+scripts/e2e-result.json
+scripts/civic-token.json
+package-lock.json
+Cargo.lock

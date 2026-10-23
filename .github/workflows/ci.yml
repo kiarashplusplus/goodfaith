@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  program:
+    name: Program (fmt, clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Reads rust-toolchain.toml (1.99.1 with rustfmt and clippy).
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Format
+        run: cargo fmt --all --check
+      # `cargo test` and `clippy --all-targets` need target/deploy/goodfaith.so:
+      # tests/goodfaith.rs include_bytes!() the built program, which needs the Anchor
+      # CLI (`anchor build --arch v2`). That toolchain isn't installed here, so CI
+      # lints the library crate only. Run `anchor build --arch v2 && anchor test
+      # --skip-build` locally before merging program changes.
+      - name: Clippy
+        working-directory: programs/goodfaith
+        run: cargo clippy --lib --no-deps -- -D warnings
+
+  app:
+    name: Web app (lint, types, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    env:
+      # Mirrors app/.env.example so the build is deterministic.
+      NEXT_PUBLIC_CLUSTER: devnet
+      NEXT_PUBLIC_RPC_URL: https://api.devnet.solana.com
+      NEXT_PUBLIC_POOL_MINT: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+      NEXT_PUBLIC_PROGRAM_ID: BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd
+      NEXT_PUBLIC_POOL_AUTHORITY: none
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
