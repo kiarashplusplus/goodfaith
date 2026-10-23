@@ -22,8 +22,12 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
 
-// Per server instance. Enough to stop one client farming the sponsor; put a shared limiter in front for fleets.
-const bucket = new TokenBucket({ capacity: 15, refillPerSec: 0.25 });
+// Per server instance; tune with SPONSOR_RATE_CAPACITY / SPONSOR_RATE_REFILL_PER_SEC. Defaults allow ten sponsored
+// sends in a burst (cost 3 each), then one every three seconds. Put a shared limiter in front for a fleet of instances.
+const bucket = new TokenBucket({
+  capacity: Number(process.env.SPONSOR_RATE_CAPACITY) || 30,
+  refillPerSec: Number(process.env.SPONSOR_RATE_REFILL_PER_SEC) || 1,
+});
 
 const reply = (body: unknown, status = 200, headers?: Record<string, string>) => Response.json(body, { status, headers });
 

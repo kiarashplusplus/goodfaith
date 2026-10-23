@@ -7,8 +7,18 @@ import { useClient } from "@solana/react";
 import { useConnectedWallet } from "@solana/kit-plugin-wallet/react";
 import type { AppClient } from "@/app/providers";
 import { POOL_MINT } from "./config";
-import { fetchLoan, fetchLoansFor, fetchMember, fetchCanonicalPool, findAta, fetchRequest, fetchRequestsForCosigner } from "./program";
+import {
+  fetchLoan,
+  fetchLoansFor,
+  fetchMember,
+  fetchCanonicalPool,
+  fetchRecentLoans,
+  findAta,
+  fetchRequest,
+  fetchRequestsForCosigner,
+} from "./program";
 import type { TxRpc } from "./tx";
+import type { Pool } from "./program";
 import { getKoraPayer, koraEnabled } from "./kora";
 
 const noopSubscribe = () => () => {};
@@ -136,4 +146,13 @@ export function useSponsor(): { enabled: boolean; available: boolean; payer: Add
     revalidateOnFocus: true,
   });
   return { enabled: koraEnabled, available: !!data, payer: data ?? null, isLoading: koraEnabled && isLoading };
+}
+
+/** The pool's newest loans for the public fund page (refreshed every 30 s). */
+export function useRecentLoans(pool: Pool | null | undefined, limit = 50) {
+  const { rpc } = useApp();
+  return useSWR(pool ? ["recent-loans", pool.address, pool.loanCount.toString(), limit] : null, () => fetchRecentLoans(rpc, pool!, limit), {
+    refreshInterval: 30_000,
+    revalidateOnFocus: true,
+  });
 }

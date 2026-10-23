@@ -29,12 +29,16 @@ State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch paramete
 - Program: 39 Rust LiteSVM + property tests pass; `cargo clippy --all-targets` clean.
 - App: `cd app && npm run test:svm` runs 14 scenarios that send the app's own instruction builders through `tx.ts` into LiteSVM (`app/src/lib/onchain.svm.test.ts`): pool pinning, donate, register (incl. sponsored payer), pool-scoped co-sign inbox across two pools, co-sign term binding, repay, loan history, cancel, mark-default and the exact grace boundary against `loanTiming`.
 - Surfpool fork: `npm run deploy-fork` plants the `.so` at the declared id (`surfnet_writeProgram`); `npm run e2e` passes with the new cancel, `update_pool` and `freeze_pool` rows.
-- CI: new `program-tests` job builds with Anchor and runs the Rust suite, clippy on all targets and `test:svm` (toolchain cached between runs). Kora e2e remains a local, optional check.
+- CI: `program-tests` (Anchor build, Rust suite, clippy, `test:svm`), `app` (lint, types, Prettier, unit tests, build, audit, Playwright smoke) on every push and PR; `e2e` (Surfpool fork, loan cycle, Kora direct and through the sponsor proxy with auth, smoke) on `main` and manual dispatch. Toolchain and Kora cached.
 
 ## Completed: program additions and Kora hardening
 - Program: two-step authority handover (`propose_authority` / `accept_authority` / `cancel_authority_proposal`; freeze clears it), richer events, parameter bounds, 48 tests (the review's missing error paths), `docs/audit.md` GF-08/GF-09, client regenerated. Hand the pool to the Squads vault with propose (owner key) + accept (vault transaction), then update `NEXT_PUBLIC_POOL_AUTHORITY`.
 - Kora: `app/api/sponsor` proxy (credentials server-side, three methods, per-client rate limit), hardened client (timeouts, typed errors, `signer_key`, cached payer with backoff), "Fees covered" badge, rent copy when unsponsored, Checking send never sponsors a stranger's token account, `kora.toml` sized for a first co-sign (7,000,000 lamports) and validated with `kora config validate`, `kora-e2e` rewritten on the app's real path.
 - Hosting plan for the sponsor: Kora behind the proxy only (its CORS is allow-any), HMAC secret in both environments, Turnkey/Privy signer, metrics on port 8081 with the fee-payer balance gauge, alert when the payer drops below ~0.5 SOL. Permanent cost per loan is the Loan rent (~0.002 SOL) plus ~0.0014 SOL per new member; request and escrow rents come back.
+
+## Re-evaluated (this session)
+- Flipped: Surfpool + Kora e2e in CI (main + dispatch), the sponsor proxy exercised live with HMAC and an API key, Playwright smoke in CI, a public "Recent loans" list on `/fund`, `npm audit` gate at high severity with `overrides` for `jayson`/`uuid`.
+- Kept: no request expiry, no `close_loan`, ineligibility permanent, no component tests, devnet deploy on hold until the deploy key is funded.
 
 ## Next: replace Civic with our own identity issuer (decided)
 - Keep the on-chain gateway check as is (`programs/goodfaith/src/gateway.rs`); no program change.

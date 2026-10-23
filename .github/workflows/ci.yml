@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -69,8 +70,9 @@ jobs:
         run: npm ci && npm run test:svm
 
   app:
-    name: Web app (lint, types, tests, build)
+    name: Web app (lint, types, tests, build, smoke)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: app
@@ -95,3 +97,130 @@ jobs:
       - run: npm run format:check
       - run: npm test
       - run: npm run build
+      # Blocks on new high/critical advisories in production dependencies; the full report is informational.
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit
+        continue-on-error: true
+      - name: Cache Playwright browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('scripts/package-lock.json') }}
+      - name: Smoke (page load of every route)
+        working-directory: scripts
+        run: |
+          npm ci
+          npx playwright-core install chromium
+          (cd ../app && PORT=3100 npm start > /tmp/app.log 2>&1 &)
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:3100/fund && break; sleep 1; done
+          APP_URL=http://127.0.0.1:3100 npm run smoke
+
+  # Long job: Surfpool devnet fork + Kora. Runs on pushes to main and by hand (Actions > CI > Run workflow);
+  # it depends on public devnet RPC from the runner, so a rate-limit flake is possible: re-run it.
+  e2e:
+    name: End to end (Surfpool fork, Kora direct and through the proxy, smoke)
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [program-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SOLANA_VERSION: "4.3.2"
+      ANCHOR_VERSION: "1.2.1"
+      SURFPOOL_VERSION: "1.6.1"
+      KORA_VERSION: "2.0.5"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache Solana CLI, platform-tools, Anchor and Surfpool
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/solana/install
+            ~/.cache/solana
+            ~/.local/bin/anchor
+            ~/.local/bin/surfpool
+          key: solana-${{ env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_VERSION }}-surfpool-${{ env.SURFPOOL_VERSION }}-${{ runner.os }}
+      - name: Cache Kora
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/kora
+          key: kora-${{ env.KORA_VERSION }}-${{ runner.os }}
+      - name: Install toolchain (with Kora)
+        run: bash scripts/toolchain.sh --with-kora
+      - name: Add toolchain to PATH
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - run: anchor build --arch v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            scripts/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - run: npm ci
+        working-directory: scripts
+      - name: Start a Surfpool fork of devnet
+        run: |
+          nohup surfpool start --network devnet --no-tui --no-deploy -a "$(solana address)" -q 100000000000 > /tmp/surfpool.log 2>&1 &
+          for i in $(seq 1 90); do
+            curl -s -m 3 http://127.0.0.1:8899 -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | grep -q ok && exit 0
+            sleep 2
+          done
+          echo "surfpool did not come up"; tail -50 /tmp/surfpool.log; exit 1
+      - name: Plant the program and run the loan-cycle e2e
+        working-directory: scripts
+        run: npm run deploy-fork && npm run e2e
+      - name: Validate the Kora policy and start Kora without auth (development mode)
+        run: |
+          solana-keygen new --no-bip39-passphrase --silent -o /tmp/kora-signer.json
+          kora --config scripts/kora/kora.toml config validate
+          export KORA_PRIVATE_KEY="$(cat /tmp/kora-signer.json)"
+          nohup kora --config scripts/kora/kora.toml --rpc-url http://127.0.0.1:8899 rpc start --signers-config scripts/kora/signers.toml --port 8080 > /tmp/kora.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:8080/liveness && exit 0; sleep 1; done
+          echo "kora did not come up"; tail -50 /tmp/kora.log; exit 1
+      - name: Sponsored e2e, direct to Kora
+        working-directory: scripts
+        run: KORA_URL=http://127.0.0.1:8080 npm run kora-e2e
+      - name: Restart Kora with auth and start the app in front of it
+        run: |
+          pkill -f "kora --config" || true
+          sleep 1
+          export KORA_PRIVATE_KEY="$(cat /tmp/kora-signer.json)"
+          export KORA_HMAC_SECRET="$(openssl rand -hex 32)"
+          export KORA_API_KEY="$(openssl rand -hex 16)"
+          echo "::add-mask::$KORA_HMAC_SECRET"; echo "::add-mask::$KORA_API_KEY"
+          nohup kora --config scripts/kora/kora.toml --rpc-url http://127.0.0.1:8899 rpc start --signers-config scripts/kora/signers.toml --port 8080 > /tmp/kora-auth.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:8080/liveness && break; sleep 1; done
+          cd app
+          export NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899
+          export NEXT_PUBLIC_KORA_URL=/api/sponsor
+          export NEXT_PUBLIC_GATEKEEPER_NETWORK="$(node -e 'console.log(require("../scripts/e2e-result.json").network)')"
+          export NEXT_PUBLIC_POOL_AUTHORITY="$(node -e 'const r=require("../scripts/e2e-result.json"); console.log(r.authority)')"
+          npm run build
+          # The e2e sends ~16 sponsored transactions in a minute; give the per-client limiter room and tell the e2e the value.
+          KORA_URL=http://127.0.0.1:8080 SPONSOR_RATE_CAPACITY=120 PORT=3100 nohup npm start > /tmp/app.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:3100/fund && exit 0; sleep 1; done
+          echo "app did not come up"; tail -50 /tmp/app.log; exit 1
+      - name: Sponsored e2e through the proxy (HMAC + API key), then smoke
+        working-directory: scripts
+        run: |
+          KORA_URL=http://127.0.0.1:3100/api/sponsor KORA_DIRECT_URL=http://127.0.0.1:8080 SPONSOR_RATE_CAPACITY=120 npm run kora-e2e
+          npx playwright-core install chromium
+          APP_URL=http://127.0.0.1:3100 npm run smoke
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            /tmp/surfpool.log
+            /tmp/kora.log
+            /tmp/kora-auth.log
+            /tmp/app.log

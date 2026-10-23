@@ -305,6 +305,21 @@ export async function fetchLoansFor(rpc: ScanRpc, pool: Pool, wallet: Address): 
   return out.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
 }
 
+/** The pool's newest loans (any borrower), for the public fund page. */
+export async function fetchRecentLoans(rpc: ScanRpc, pool: Pool, limit = 50): Promise<Loan[]> {
+  const disc = b58(getLoanDiscriminatorBytes());
+  const accounts = await scanProgramAccounts(rpc, [
+    { dataSize: BigInt(getLoanSize()) },
+    { memcmp: { offset: 0n, bytes: disc, encoding: "base58" } },
+  ]);
+  const out: Loan[] = [];
+  for (const l of decodeAll(accounts, (acc) => toLoan(acc.address, decodeLoan(acc).data))) {
+    const [expected] = await findLoanPda(pool.address, l.id);
+    if (expected === l.address) out.push(l);
+  }
+  return out.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)).slice(0, limit);
+}
+
 function toRequest(address: Address, d: LoanRequestData): LoanRequest {
   return {
     address,

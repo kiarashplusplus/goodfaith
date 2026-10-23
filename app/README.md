@@ -42,3 +42,10 @@ the Checking page keep working.
 - `src/generated` — Codama output. Never edit by hand.
 
 Tests (`vitest`) cover the pure helpers, config parsing, PDA derivation against the generated client and the error mapper.
+
+## Dependency advisories
+
+`npm audit` is part of CI (`--omit=dev --audit-level=high` blocks; the full report is informational). The remaining
+moderate advisories all come from `@civic/solana-gateway-react`, which depends on `@solana/web3.js` v1; `package.json`
+pins `jayson` to 5.x and `uuid` to 11.1.1+ through `overrides` to remove the ones with patched releases. The rest go
+away with the planned switch away from the Civic client.

@@ -167,6 +167,30 @@ console.log('kora rejection:', (rejected as Error).message);
 assert.equal(prog.friendlyError(rejected), "The fee sponsor doesn't cover this kind of transaction.");
 row('memo instruction', 'rejected by Kora', prog.friendlyError(rejected));
 
+// ---------- proxy boundary (only when KORA_URL is the app's /api/sponsor) ----------
+const viaProxy = /\/api\/sponsor$/.test(process.env.NEXT_PUBLIC_KORA_URL!);
+if (viaProxy) {
+  const direct = process.env.KORA_DIRECT_URL ?? 'http://127.0.0.1:8080';
+  const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  // 1. Kora itself refuses an unsigned request (auth is on), so only the proxy can reach it.
+  const unsigned = await post(direct, { jsonrpc: '2.0', id: 1, method: 'getPayerSigner', params: {} });
+  assert.equal(unsigned.status, 401, `direct unsigned call should be 401, got ${unsigned.status}`);
+  // 2. The proxy forwards only three methods.
+  const cfgRes = await post(process.env.NEXT_PUBLIC_KORA_URL!, { jsonrpc: '2.0', id: 2, method: 'getConfig', params: {} });
+  const cfgJson = await cfgRes.json() as { error?: { code: number } };
+  assert.equal(cfgJson.error?.code, -32601, 'getConfig must be refused by the proxy');
+  // 3. A burst trips the per-client limit (SPONSOR_RATE_CAPACITY tokens, cost 1 for liveness; the app server
+  //    for this run should be started with the same value, default 30).
+  const capacity = Number(process.env.SPONSOR_RATE_CAPACITY) || 30;
+  let limited = 0;
+  for (let i = 0; i < capacity * 2; i++) {
+    const r = await post(process.env.NEXT_PUBLIC_KORA_URL!, { jsonrpc: '2.0', id: 3, method: 'liveness', params: {} });
+    if (r.status === 429) limited++;
+  }
+  assert.ok(limited > 0, 'burst should hit the rate limit');
+  row('proxy boundary', 'direct unsigned: 401', 'getConfig: -32601', `burst: ${limited} x 429`);
+}
+
 // ---------- who paid ----------
 for (const w of [borrower, cosigner, donor, borrower2]) assert.equal(await sol(w.address), base[w.address], `${w.address} paid nothing`);
 // cosigner2 paid one unsponsored close (fee) and got the account rent back

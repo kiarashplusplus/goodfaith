@@ -1,13 +1,17 @@
 "use client";
 
 import { Card, Notice, PageTitle, Stat } from "@/components/ui";
-import { usePool, useVaultBalance } from "@/lib/hooks";
+import { useNow, usePool, useRecentLoans, useVaultBalance } from "@/lib/hooks";
+import { loanTiming } from "@/lib/loan-status";
+import { StatusChip } from "@/components/status-chip";
 import { formatUsdc } from "@/lib/format";
 import { explorerAddress } from "@/lib/config";
 
 export default function FundPage() {
   const pool = usePool();
   const vault = useVaultBalance(pool.data?.vault);
+  const recent = useRecentLoans(pool.data);
+  const now = useNow();
   const p = pool.data;
   const outstanding = p ? p.totalLent - p.totalRepaid - p.totalRecovered - p.totalLost : 0n;
 
@@ -60,6 +64,32 @@ export default function FundPage() {
             >
               View fund account
             </a>
+          </Card>
+          <Card title="Recent loans">
+            {recent.isLoading && <p className="text-sm text-stone-500">Loading...</p>}
+            {recent.error && <Notice tone="warn">Couldn&apos;t load the loan list right now.</Notice>}
+            {recent.data?.length === 0 && <p className="text-sm text-stone-600">No loans yet.</p>}
+            {recent.data && recent.data.length > 0 && (
+              <ul className="divide-y divide-stone-100 text-sm">
+                {recent.data.map((l) => (
+                  <li key={l.address} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <span>
+                      <a className="font-medium underline" href={explorerAddress(l.address)} target="_blank" rel="noreferrer">
+                        Loan #{l.id.toString()}
+                      </a>{" "}
+                      · {formatUsdc(l.principal)}
+                      {l.status === "Active" && <>, {formatUsdc(l.principal - l.repaid)} left</>}
+                      <span className="block text-xs text-stone-500">
+                        Due {new Date(Number(l.dueAt) * 1000).toLocaleDateString()}
+                        {loanTiming(l, now).label && ` · ${loanTiming(l, now).label}`}
+                      </span>
+                    </span>
+                    <StatusChip state={loanTiming(l, now).state} />
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-2 text-xs text-stone-500">Wallet addresses are not shown here; every loan is public on the explorer.</p>
           </Card>
         </div>
       )}

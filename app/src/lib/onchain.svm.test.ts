@@ -20,6 +20,7 @@ import {
   fetchLoansFor,
   fetchMember,
   fetchPool,
+  fetchRecentLoans,
   fetchRequest,
   fetchRequestsForCosigner,
   findAta,
@@ -282,6 +283,12 @@ describe("request and co-sign", () => {
     expect(loanA1.borrower).toBe(borrower2.address);
     expect(loanB0).toMatchObject({ id: 0n, borrower: borrower.address, principal: 100n * USDC });
     expect(loanB0.address).not.toBe(loanA0.address);
+  });
+
+  it("lists the pool's recent loans newest first, this pool only", async () => {
+    expect((await fetchRecentLoans(rpc, poolA)).map((l) => l.id)).toEqual([1n, 0n]);
+    expect((await fetchRecentLoans(rpc, poolA, 1)).map((l) => l.id)).toEqual([1n]);
+    expect((await fetchRecentLoans(rpc, poolB)).map((l) => l.address)).toEqual([loanB0.address]);
   });
 
   it("finds a wallet's loans in this pool only, newest first", async () => {

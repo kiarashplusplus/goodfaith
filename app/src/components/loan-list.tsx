@@ -6,18 +6,11 @@ import { getCreateAssociatedTokenIdempotentInstruction } from "@solana-program/t
 import { Button, GhostButton, Notice, TxStatus } from "./ui";
 import { useApp, useNow } from "@/lib/hooks";
 import { markDefaultIx, type Loan, type Pool } from "@/lib/program";
-import { loanTiming, type LoanState } from "@/lib/loan-status";
+import { loanTiming } from "@/lib/loan-status";
+import { CHIP } from "./status-chip";
 import { formatUsdc } from "@/lib/format";
 import { sendInstructions } from "@/lib/tx";
 import { useRun } from "@/lib/use-run";
-
-const CHIP: Record<LoanState, { text: string; className: string }> = {
-  open: { text: "Active", className: "bg-emerald-100 text-emerald-900" },
-  overdue: { text: "Overdue", className: "bg-amber-100 text-amber-900" },
-  defaultable: { text: "Past grace", className: "bg-red-100 text-red-900" },
-  repaid: { text: "Repaid", className: "bg-stone-100 text-stone-700" },
-  defaulted: { text: "Defaulted", className: "bg-red-100 text-red-900" },
-};
 
 const date = (unixSec: bigint) => new Date(Number(unixSec) * 1000).toLocaleDateString();
 

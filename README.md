@@ -26,3 +26,8 @@ npm install
 npm run codegen   # after any program change
 npm run dev
 ```
+
+## Continuous integration
+`.github/workflows/ci.yml`: program format and clippy; Anchor build with the Rust and app-side LiteSVM test suites;
+app lint, types, Prettier, unit tests, build, audit and a Playwright smoke; and, on `main` and by hand, the full end
+to end run on a Surfpool devnet fork with Kora direct and through the app's sponsor proxy.
