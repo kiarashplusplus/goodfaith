@@ -1,0 +1,25 @@
+import { createRequire } from 'node:module';
+const req = createRequire(import.meta.url);
+const { chromium } = req(process.env.PLAYWRIGHT_CORE ?? '/tmp/tsxinst/node_modules/playwright-core');
+const BASE = process.env.APP_URL ?? 'http://127.0.0.1:3100';
+const pages = ['/', '/join', '/borrow', '/cosign', '/repay', '/donate', '/fund'];
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
+let fail = 0;
+for (const p of pages) {
+  const page = await browser.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (e: Error) => errors.push('pageerror: ' + e.message));
+  page.on('console', (m: any) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('requestfailed', (r: any) => errors.push('reqfailed: ' + r.url() + ' ' + r.failure()?.errorText));
+  const resp = await page.goto(BASE + p, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2500);
+  const text = (await page.innerText('body')).replace(/\s+/g, ' ');
+  console.log(`${p} -> ${resp?.status()} errors=${errors.length} | ${text.slice(0, 200)}`);
+  if (p === '/fund') console.log('FUND TEXT:', text.slice(0, 800));
+  if (p === '/fund') await page.screenshot({ path: '/tmp/fund.png', fullPage: true });
+  for (const e of errors) console.log('   ', e.slice(0, 300));
+  if (resp?.status() !== 200 || errors.length) fail++;
+  await page.close();
+}
+await browser.close();
+console.log(fail ? `SMOKE FAIL (${fail})` : 'SMOKE PASS');

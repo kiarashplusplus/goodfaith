@@ -1,0 +1,40 @@
+[package]
+name = "goodfaith"
+version = "0.1.0"
+description = "Interest-free community loan fund"
+license-file = "../../LICENSE"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "goodfaith"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+
+[dependencies]
+anchor-lang = "1.2.1"
+anchor-spl = "1.2.1"
+
+[dev-dependencies]
+litesvm = "0.18.1"
+solana-message = "4.2.4"
+solana-transaction = "4.1.5"
+solana-signer = "3.0.1"
+solana-keypair = "3.1.2"
+solana-account = "4.3.0"
+proptest = "1"
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

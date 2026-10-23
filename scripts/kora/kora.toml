@@ -1,0 +1,68 @@
+# Local sponsored (free) config for the Good Faith e2e. Do not use as-is in production.
+[kora]
+rate_limit = 1000
+
+[kora.cache]
+enabled = false
+default_ttl = 300
+account_ttl = 60
+
+[kora.enabled_methods]
+liveness = true
+estimate_transaction_fee = true
+get_supported_tokens = true
+sign_transaction = true
+sign_and_send_transaction = true
+transfer_transaction = true
+get_blockhash = true
+get_config = true
+get_payer_signer = true
+
+[validation]
+max_allowed_lamports = 5000000
+max_signatures = 10
+price_source = "Mock"
+allow_durable_transactions = false
+allowed_programs = [
+    "11111111111111111111111111111111",
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "ComputeBudget111111111111111111111111111111",
+    "BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd",
+]
+allowed_tokens = ["4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"]
+allowed_spl_paid_tokens = ["4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"]
+disallowed_accounts = []
+
+[validation.fee_payer_policy.system]
+allow_transfer = false
+allow_assign = true
+allow_create_account = true
+allow_allocate = true
+
+[validation.fee_payer_policy.spl_token]
+allow_transfer = false
+allow_burn = false
+allow_close_account = false
+allow_approve = false
+allow_revoke = false
+allow_set_authority = false
+allow_mint_to = false
+allow_initialize_mint = false
+allow_initialize_account = false
+allow_initialize_multisig = false
+allow_freeze_account = false
+allow_thaw_account = false
+
+[validation.price]
+type = "free"
+
+[validation.token2022]
+blocked_mint_extensions = []
+blocked_account_extensions = []
+
+[kora.usage_limit]
+enabled = false
+cache_url = "redis://localhost:6379"
+max_transactions = 2
+fallback_if_unavailable = true
