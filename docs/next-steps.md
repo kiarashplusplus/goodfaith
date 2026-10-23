@@ -9,11 +9,20 @@ State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch paramete
 - End-to-end on a Surfpool devnet fork (`scripts/`): full loan cycle passes; real Civic gateway token bytes parse correctly (`scripts/civic-token.json`); Kora sponsorship works (users pay $0, including `register_member`).
 - White paper (`docs/whitepaper.md`). License: proprietary, Kiarash Adl.
 
-## Completed last session
-1. `register_member` has a separate `payer` signer (Kora covers member rent); app and scripts updated; 39 tests, clippy clean.
-2. Hydration error #418 fixed: wallet state (a client singleton that may already be ready at hydration) is now hidden until after mount (`useMounted` in `app/src/lib/hooks.ts`, used by `useApp` and the connect gate). Smoke passes 5/5.
-3. `scripts/` reproducible: own `package.json` (`tsx`, `playwright-core`, `@solana/kit`), `npm run e2e|kora-e2e|smoke`, `scripts/README.md`.
-Re-deploying to a fork may need `solana program extend <id> 10240` first.
+- `register_member` has a separate `payer` signer (Kora covers member rent). Hydration error #418 fixed (`useMounted` in `app/src/lib/hooks.ts`). `scripts/` reproducible with its own `package.json`; re-deploying to a fork may need `solana program extend <id> 10240` first.
+- CI (`.github/workflows/ci.yml`): cargo fmt + clippy on the program crate; lint, typecheck, Prettier, vitest and `next build` on the app. Program tests still run locally only (they need the Anchor-built `.so`).
+
+## Completed this pass (app, CI, hygiene; no program change)
+- Config is validated at startup (`app/src/lib/config.ts`): bad `NEXT_PUBLIC_*` values show the red banner instead of crashing, and a wrong cluster no longer silently means mainnet.
+- Co-sign inbox is scoped to the pinned pool (request PDA check); co-sign links with a bad key or another pool are refused instead of crashing.
+- `friendlyError` no longer reports a failed `cancel_request` simulation as "You cancelled".
+- Repay page shows every loan (borrowed or co-signed, including repaid and defaulted) with due/overdue/grace status, and lets anyone mark a loan past its grace period as defaulted (`markDefaultIx`; confirmation explains the consequences). Loans load with `getProgramAccounts` instead of scanning ids.
+- Success notices survive the request account closing (co-sign, decline, cancel). "Pay all" is bigint only.
+- Client-side checks before signing: co-signer membership/hold/guarantee limit on Borrow; hold, limit and escrow balance on Co-sign; balance and self-send on Checking.
+- Accessibility: field errors linked to inputs, live regions for notices, keyboard-safe wallet menu, `aria-current` nav, Join and Co-sign in the nav.
+- Next 16 conventions: per-route titles, `error.tsx` (`retry`), `not-found.tsx`, `loading.tsx`, app icon.
+- `@civic/solana-gateway-ts` declared (it was only a transitive dependency). Prettier config and format check. 27 unit tests.
+- Smoke passes 7/7 on a production build.
 
 ## Next: replace Civic with our own identity issuer (decided)
 - Keep the on-chain gateway check as is (`programs/goodfaith/src/gateway.rs`); no program change.
