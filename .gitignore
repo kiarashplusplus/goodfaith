@@ -16,3 +16,4 @@ runbooks
 identity.sqlite*
 scripts/gatekeeper-network.json
 scripts/gatekeeper.json
+scripts/identity-e2e-result.json

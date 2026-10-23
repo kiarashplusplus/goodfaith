@@ -109,6 +109,8 @@ export type Pool = {
 /** One verified human; eligibility and open positions live here and follow a replaced wallet. */
 export type Person = {
   address: Address;
+  /** The issuer's keyed hash of the person's ID fields (hex), as stored on chain. */
+  personHash: string;
   wallet: Address;
   activeLoan: Address | null;
   activeGuarantees: number;
@@ -281,7 +283,14 @@ export async function fetchPerson(rpc: ReadRpc, a: Address): Promise<Person | nu
   const acc = await fetchChecked(rpc, a, GoodfaithAccount.Person);
   if (!acc) return null;
   const d = decodePerson(acc).data;
-  return { address: a, wallet: d.wallet, activeLoan: unwrap(d.activeLoan), activeGuarantees: d.activeGuarantees, ineligible: d.ineligible };
+  return {
+    address: a,
+    personHash: Array.from(d.personHash, (x) => x.toString(16).padStart(2, "0")).join(""),
+    wallet: d.wallet,
+    activeLoan: unwrap(d.activeLoan),
+    activeGuarantees: d.activeGuarantees,
+    ineligible: d.ineligible,
+  };
 }
 
 /** The wallet's membership merged with its person's standing; null when the wallet never joined. */

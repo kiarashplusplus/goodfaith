@@ -7,6 +7,9 @@
     "e2e": "tsx e2e.ts",
     "gatekeeper-setup": "tsx gatekeeper-setup.ts",
     "identity-e2e": "tsx identity-e2e.ts",
+    "model": "tsx model.ts",
+    "cranker": "tsx cranker.ts",
+    "cranker-e2e": "tsx cranker-e2e.ts",
     "kora-e2e": "tsx kora-e2e.ts",
     "smoke": "tsx smoke.ts"
   },

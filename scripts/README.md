@@ -34,6 +34,16 @@ program; it writes `gatekeeper.json` (public). With that file present, `e2e` and
 for their wallets instead of planting cloned Civic bytes, and `identity-e2e` drives the app's identity routes
 (`IDENTITY_PROVIDER=mock`) from the wallet's proof of control to the issuer-signed join, a wallet replacement and a ban.
 
+## Cranker and model
+
+`npm run cranker -- --once` (or `--interval 300` to loop) is the operator's scheduled job: it marks loans past due
+plus grace as defaulted, applies settings whose timelock has elapsed, sweeps the vault to the successor once a
+wind-down is in effect with no open loan, and posts the barred people to the identity service
+(`APP_URL`/`IDENTITY_URL` + `IDENTITY_ADMIN_KEY`) so their passes are revoked. It pays with `CRANKER_KEYPAIR`
+(default `~/.config/solana/id.json`) or through Kora when `KORA_URL` is set. `cranker-e2e` proves it on the fork with
+a one-day loan from the member `identity-e2e` created. `npm run model` prints the economic scenarios behind
+`docs/economics.md`.
+
 ## Run
 - `npm run e2e` - full loan cycle with users paying fees: register, request, co-sign, partial and full repay,
   cancel (borrower, co-signer, stranger rejected), `rebind_wallet`, `schedule_params` + `apply_params` after the timelock (an open loan keeps its own grace period), `suspend_issuer`, a wind-down with `sweep_to_successor` on a second pool,

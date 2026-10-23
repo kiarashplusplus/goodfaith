@@ -218,6 +218,7 @@ jobs:
         working-directory: scripts
         run: |
           APP_URL=http://127.0.0.1:3100 npm run identity-e2e
+          APP_URL=http://127.0.0.1:3100 npm run cranker-e2e
           KORA_URL=http://127.0.0.1:3100/api/sponsor KORA_DIRECT_URL=http://127.0.0.1:8080 SPONSOR_RATE_CAPACITY=120 npm run kora-e2e
           npx playwright-core install chromium
           APP_URL=http://127.0.0.1:3100 npm run smoke

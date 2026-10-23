@@ -2,8 +2,10 @@
 // control, passes the (mock) check, gets a real gateway token on our network, and joins with the issuer-signed
 // transaction the app prepared; a second wallet of the same person moves the membership; declined, out-of-state
 // and banned people are turned away. Run after `npm run e2e` with the app started as in CI (see ci.yml).
+import fs from 'node:fs';
+import path from 'node:path';
 import assert from 'node:assert/strict';
-import { generateKeyPairSigner, getBase64Decoder, getBase64Encoder, getTransactionDecoder, partiallySignTransaction, signBytes, type Address, type KeyPairSigner } from '@solana/kit';
+import { createKeyPairSignerFromPrivateKeyBytes, generateKeyPairSigner, getAddressEncoder, getBase64Decoder, getBase64Encoder, getTransactionDecoder, partiallySignTransaction, signBytes, type Address, type KeyPairSigner } from '@solana/kit';
 import { rpc, RPC_URL, setSol } from './lib.ts';
 
 const APP = process.env.APP_URL ?? 'http://127.0.0.1:3100';
@@ -14,7 +16,10 @@ const kora = await import('../app/src/lib/kora.ts');
 const prog = await import('../app/src/lib/program.ts');
 const cfg = await import('../app/src/lib/config.ts');
 const { proofMessage } = await import('../app/src/lib/identity/wallet-proof.ts');
-const { MOCK_FIELDS_TX } = await import('../app/src/lib/identity/mock.ts');
+const { MOCK_FIELDS_TX: MOCK_BASE } = await import('../app/src/lib/identity/mock.ts');
+// Fresh ID numbers per run so the script can be repeated against the same app (people banned earlier stay banned).
+const runId = Date.now().toString(36);
+const MOCK_FIELDS_TX = { ...MOCK_BASE, idNumber: `TX-${runId}-1` };
 const { gatewayTokenAddress } = await import('../app/src/lib/gateway.ts');
 type StatusView = import('../app/src/lib/identity/service.ts').StatusView;
 type PreparedTx = import('../app/src/lib/identity/service.ts').PreparedTx;
@@ -35,7 +40,7 @@ async function start(w: KeyPairSigner, tamper = false) {
   const sig = await signBytes(w.keyPair.privateKey, new TextEncoder().encode(tamper ? message + '!' : message));
   return api<{ inquiryId: string; url: string }>('/api/identity/start', { method: 'POST', body: JSON.stringify({ wallet: w.address, message, signature: getBase64Decoder().decode(sig) }) }, tamper ? 401 : 200);
 }
-const decide = (inquiryId: string, outcome: string, fields?: object) => api<{ result: string }>('/api/identity/mock', { method: 'POST', body: JSON.stringify({ inquiryId, outcome, fields }) });
+const decide = (inquiryId: string, outcome: string, fields: object = MOCK_FIELDS_TX) => api<{ result: string }>('/api/identity/mock', { method: 'POST', body: JSON.stringify({ inquiryId, outcome, fields }) });
 async function finish(w: KeyPairSigner, kind: 'join' | 'rebind') {
   const prepared = await api<PreparedTx>(`/api/identity/${kind}`, { method: 'POST', body: JSON.stringify({ wallet: w.address }) });
   const decoded = getTransactionDecoder().decode(getBase64Encoder().encode(prepared.transaction));
@@ -83,7 +88,9 @@ assert.equal((await status(w1.address)).next, 'done');
 row('verify + join', `inquiry ${s1.inquiryId}`, `pass ${tokenW1.slice(0, 6)}.. issued by the gateway program`, `register_member ${j1.prepared.sponsored ? 'sponsored by Kora' : 'paid by the wallet'}`, `sig ${j1.sig.slice(0, 8)}..`);
 
 // ---------- the same person, new wallet: the membership moves ----------
-const w2 = await generateKeyPairSigner();
+// w2's seed is kept so cranker-e2e can borrow with this member later (test keys only).
+const w2Seed = crypto.getRandomValues(new Uint8Array(32));
+const w2 = await createKeyPairSignerFromPrivateKeyBytes(w2Seed);
 await setSol(w2.address, 1_000_000_000n);
 const s2 = await start(w2);
 assert.equal((await decide(s2.inquiryId, 'approved')).result, 'issued');
@@ -114,18 +121,28 @@ assert.equal((await rpc.getAccountInfo(await gatewayTokenAddress(w4.address, poo
 row('declined / out of state', `w3 ${st.reason}`, 'w4 Good Faith is for Texas residents only. (no pass issued)');
 
 // ---------- ban after a default: pass revoked, the person cannot come back on a new wallet ----------
-await api('/api/identity/ban', { method: 'POST', body: JSON.stringify({ wallet: w2.address }) }, 401);
-const ban = await api<{ banned: boolean; revoked: string[] }>('/api/identity/ban', { method: 'POST', headers: { 'x-identity-admin-key': adminKey }, body: JSON.stringify({ wallet: w2.address }) });
+// A second person (different ID) joins and is then barred; the first person stays eligible for cranker-e2e.
+const other = { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-2` };
+const w6 = await generateKeyPairSigner();
+await setSol(w6.address, 1_000_000_000n);
+const s6 = await start(w6);
+assert.equal((await decide(s6.inquiryId, 'approved', other)).result, 'issued');
+await finish(w6, 'join');
+await api('/api/identity/ban', { method: 'POST', body: JSON.stringify({ wallet: w6.address }) }, 401);
+const ban = await api<{ banned: boolean; revoked: string[] }>('/api/identity/ban', { method: 'POST', headers: { 'x-identity-admin-key': adminKey }, body: JSON.stringify({ wallet: w6.address }) });
 assert.equal(ban.banned, true);
-assert.ok(ban.revoked.includes(w2.address));
-const tokenW2 = await rpc.getAccountInfo(await gatewayTokenAddress(w2.address, pool.gatekeeperNetwork), { encoding: 'base64' }).send();
-const state = Buffer.from(tokenW2.value!.data[0], 'base64')[99]; // version, parent tag, owner, identity tag, network, gatekeeper, then state
+assert.ok(ban.revoked.includes(w6.address));
+const tokenW6 = await rpc.getAccountInfo(await gatewayTokenAddress(w6.address, pool.gatekeeperNetwork), { encoding: 'base64' }).send();
+const state = Buffer.from(tokenW6.value!.data[0], 'base64')[99]; // version, parent tag, owner, identity tag, network, gatekeeper, then state
 assert.equal(state, 2, 'gateway token revoked');
 const w5 = await generateKeyPairSigner();
 const s5 = await start(w5);
-assert.equal((await decide(s5.inquiryId, 'approved')).result, 'ineligible');
+assert.equal((await decide(s5.inquiryId, 'approved', other)).result, 'ineligible');
 assert.equal((await status(w5.address)).reason, 'This person can no longer use Good Faith.');
-row('ban', 'without the admin key: 401', `pass of ${w2.address.slice(0, 6)}.. revoked on chain (state=2)`, 'same person, new wallet: ineligible');
+row('ban', 'without the admin key: 401', `pass of ${w6.address.slice(0, 6)}.. revoked on chain (state=2)`, 'same person, new wallet: ineligible');
+// hand the still-eligible member to cranker-e2e (test keys only)
+const here = path.dirname(new URL(import.meta.url).pathname);
+fs.writeFileSync(path.join(here, 'identity-e2e-result.json'), JSON.stringify({ member: w2.address, memberSecret: [...w2Seed, ...getAddressEncoder().encode(w2.address)] }));
 
 console.log('\n' + ['step', 'detail...'].join(' | ')); for (const r of rows) console.log(r.join(' | '));
 console.log('\nIDENTITY E2E PASS');
