@@ -38,21 +38,20 @@ State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch paramete
 
 ## Re-evaluated (this session)
 - Flipped: Surfpool + Kora e2e in CI (main + dispatch), the sponsor proxy exercised live with HMAC and an API key, Playwright smoke in CI, a public "Recent loans" list on `/fund`, `npm audit` gate at high severity with `overrides` for `jayson`/`uuid`.
-- Kept: no request expiry, no `close_loan`, ineligibility permanent, no component tests, devnet deploy on hold until the deploy key is funded.
+- Kept: no request expiry, no `close_loan`, no component tests, devnet deploy on hold until the deploy key is funded. Ineligibility stays permanent for a borrower; a co-signer whose escrow covered the loss keeps their standing (v2).
 
-## Next: replace Civic with our own identity issuer (decided)
-- Keep the on-chain gateway check as is (`programs/goodfaith/src/gateway.rs`); no program change.
-- Create our own gatekeeper network on the Identity.com gateway program (`gatem74V238djXdzWnJf94Wo1DcnuGkfijbf3AuBhfs`); add our gatekeeper key. Set `pool.gatekeeper_network` to it.
-- Small backend (e.g. Next.js route handlers or a separate service): user completes ID + selfie with **Persona** (free Starter: 500 gov ID checks/month; fallback **Didit**, 500/month free). On the provider's verified webhook, require ID issuing state = TX and age ≥ 18, then issue a gateway token to the user's wallet (expiry e.g. 1 year), Kora-paid.
-- Store only: wallet, provider inquiry id, verified yes/no, state, timestamp. No document data.
-- Replace the Civic React flow in the app (`app/src/components/civic-gate.tsx`, `verify-join.tsx`) with the Persona/Didit flow.
-- Tests: gatekeeper issuance on the Surfpool fork; register_member with our network's token; webhook signature verification; non-TX ID rejected.
+## Completed: version 2 (people not wallets, own identity issuer, timelocked governance, operations)
+- Program: `Person` accounts carry eligibility; `register_member(person_hash)` and `rebind_wallet` are issuer-signed; settings change through `schedule_params` → `apply_params` after `timelock_seconds`; `suspend_issuer`; wind-down with a successor and `sweep_to_successor`; the co-signer is barred only when the fund lost money. 59 LiteSVM tests + property test; `docs/spec.md` rewritten; `docs/audit.md` GF-10..13.
+- Identity issuer (`app/src/lib/identity`, `/api/identity/*`): Persona behind a provider interface (mock for tests), keyed person hash, SQLite/memory store, gatekeeper issuance on our own network, issuer-signed join and wallet replacement, ban route. Civic React client removed. `scripts/gatekeeper-setup`, `identity-e2e`.
+- Operations: `scripts/cranker.ts` (defaults, apply, sweep, bans), `scripts/model.ts` + `docs/economics.md`, `cranker-e2e`. White paper v2 (`docs/whitepaper.md`).
 
 ## Then
-- Devnet deploy: needs ~3 devnet SOL in `2agNDw6soEttnATLgkhxup22GGoeCa7KVNfxyeeuHbve` (airdrops were rate-limited; owner to send from faucet.solana.com via GitHub login). Init pool with launch params ($500, 180 days, 30-day grace, 25% escrow, devnet USDC).
-- Squads 2-of-3 multisig (three owner devices) as pool authority before mainnet; `freeze_pool` when rules settle.
-- Host the app (goodfaith.fi, register the domain) and Kora.
-- Independent audit before mainnet.
+- Persona production mode: create the inquiry template (government ID + address), confirm the field keys in `app/src/lib/identity/persona.ts` against a sandbox inquiry, set `PERSONA_*`, `PERSON_HASH_SECRET`, `ISSUER_SECRET` and `GATEKEEPER_SECRET` (separate keys from the pool authority), point the webhook at `/api/identity/webhook`.
+- Devnet deploy: needs ~3 devnet SOL in `2agNDw6soEttnATLgkhxup22GGoeCa7KVNfxyeeuHbve` (airdrops were rate-limited; owner to send from faucet.solana.com via GitHub login). Then `gatekeeper-setup` on devnet, init the pool with the launch params ($500, 180 days, 30-day grace, 25% escrow, 2 guarantees, 7-day timelock, the issuer key, devnet USDC), host the app with the identity env and run the cranker on a schedule (`npm run cranker -- --once` from cron, or `--interval`).
+- Squads 2-of-3 multisig (three owner devices) as pool authority before mainnet; freezing is optional now that changes are timelocked.
+- Host the app (goodfaith.fi, register the domain) and Kora; Postgres instead of SQLite if the identity service runs on more than one instance.
+- Fill the white paper's verification appendix at each deploy (program id, tag, build hash, upgrade authority, keys).
+- Independent audit before mainnet; legal review of the open questions listed in the white paper.
 
 ## Environment notes
 - PATH: `$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$HOME/.avm/bin`.

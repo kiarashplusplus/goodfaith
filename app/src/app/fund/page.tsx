@@ -1,11 +1,29 @@
 "use client";
 
 import { Card, Notice, PageTitle, Stat } from "@/components/ui";
+import { windingDown } from "@/lib/program";
 import { useNow, usePool, useRecentLoans, useVaultBalance } from "@/lib/hooks";
 import { loanTiming } from "@/lib/loan-status";
 import { StatusChip } from "@/components/status-chip";
 import { formatUsdc } from "@/lib/format";
 import { explorerAddress } from "@/lib/config";
+
+const ZERO = "11111111111111111111111111111111";
+/** "7 days", "36 hours" or "20 minutes". */
+function days(seconds: bigint): string {
+  const s = Number(seconds);
+  if (s >= 86_400 && s % 86_400 === 0) return `${s / 86_400} day${s === 86_400 ? "" : "s"}`;
+  if (s >= 3_600) return `${Math.round(s / 3_600)} hours`;
+  return `${Math.max(1, Math.round(s / 60))} minutes`;
+}
+/** A unix time relative to now, in words, with the date for reference. */
+function when(ts: bigint, now: bigint): string {
+  const date = new Date(Number(ts) * 1000).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  if (now === 0n) return `on ${date}`;
+  const diff = Number(ts - now);
+  if (diff <= 0) return `on ${date}`;
+  return `in ${days(BigInt(diff))} (${date})`;
+}
 
 export default function FundPage() {
   const pool = usePool();
@@ -47,8 +65,28 @@ export default function FundPage() {
               <li>
                 {p.authority === null
                   ? "These rules are frozen. Nobody can change them."
-                  : "These rules can still be changed by the fund's administrator. Changes never affect loans that are already open."}
+                  : p.timelockSeconds > 0n
+                    ? `The administrator can change these rules only with ${days(p.timelockSeconds)} of public notice. Changes never affect loans that are already open.`
+                    : "These rules can be changed by the fund's administrator without a notice period. Changes never affect loans that are already open."}
               </li>
+              {p.pendingParams && (
+                <li>
+                  A rule change is announced and takes effect {when(p.paramsEffectiveAt, now)}: loans up to{" "}
+                  {formatUsdc(p.pendingParams.maxLoan)}, {p.pendingParams.maxTermDays} days, {p.pendingParams.graceDays} days of grace,{" "}
+                  {(p.pendingParams.cosignerEscrowBps / 100).toString()}% escrow, {p.pendingParams.maxGuaranteesPerMember} guarantees per
+                  co-signer, {days(p.pendingParams.timelockSeconds)} of notice
+                  {p.pendingParams.issuer !== p.issuer && ", and a new identity issuer"}.
+                </li>
+              )}
+              {p.issuer === ZERO && <li>New memberships are paused: the identity issuer is suspended until a new one is announced.</li>}
+              {p.windDownAt !== null && (
+                <li className="font-medium">
+                  {windingDown(p, now)
+                    ? `The fund is winding down since ${when(p.windDownAt, now)}: no new loans or donations. Open loans run their course; once none is open, the balance moves to its successor.`
+                    : `The fund will wind down ${when(p.windDownAt, now)}: after that, no new loans or donations. The administrator can still withdraw the announcement.`}
+                  {p.totalSwept > 0n && ` ${formatUsdc(p.totalSwept)} has been moved to the successor.`}
+                </li>
+              )}
               {p.pendingAuthority && (
                 <li>
                   A handover of the administrator role to <span className="font-mono">{p.pendingAuthority}</span> is pending until that key
