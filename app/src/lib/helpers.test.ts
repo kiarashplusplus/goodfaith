@@ -3,6 +3,7 @@ import { formatAmount, formatSol, formatUsdc, parseAmount, shortAddress } from "
 import { escrowFor } from "./escrow";
 import { buildCosignLink, parseCosignLink } from "./cosign-link";
 import { solanaPayUrl } from "./solana-pay";
+import { copyText } from "./clipboard";
 
 describe("amounts", () => {
   it("parses decimal strings to base units", () => {
@@ -43,13 +44,22 @@ describe("cosign link", () => {
   it("round-trips", () => {
     const link = buildCosignLink("https://goodfaith.fi", ref);
     expect(link.startsWith("https://goodfaith.fi/cosign?")).toBe(true);
-    expect(parseCosignLink(link.split("?")[1]!)).toEqual(ref);
-    expect(parseCosignLink("?" + link.split("?")[1]!)).toEqual(ref);
+    expect(parseCosignLink(link.split("?")[1]!)).toEqual({ ok: true, ref });
+    expect(parseCosignLink("?" + link.split("?")[1]!)).toEqual({ ok: true, ref });
   });
-  it("rejects garbage", () => {
-    expect(parseCosignLink("")).toBeNull();
-    expect(parseCosignLink("pool=abc&borrower=def")).toBeNull();
-    expect(parseCosignLink(`pool=${ref.pool}`)).toBeNull();
+  it("tells a missing link from a broken one", () => {
+    expect(parseCosignLink("")).toEqual({ ok: false, reason: "missing" });
+    expect(parseCosignLink("?utm=1")).toEqual({ ok: false, reason: "missing" });
+    expect(parseCosignLink("pool=abc&borrower=def")).toEqual({ ok: false, reason: "invalid" });
+    expect(parseCosignLink(`pool=${ref.pool}`)).toEqual({ ok: false, reason: "invalid" });
+    // base58 but not 32 bytes
+    expect(parseCosignLink(`pool=${ref.pool}&borrower=1111111111111111111111111111111111111111111`)).toEqual({ ok: false, reason: "invalid" });
+  });
+});
+
+describe("clipboard", () => {
+  it("reports failure without a clipboard", async () => {
+    expect(await copyText("x")).toBe(false);
   });
 });
 

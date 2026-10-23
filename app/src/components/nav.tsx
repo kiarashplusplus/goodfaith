@@ -6,7 +6,9 @@ import { ConnectButton } from "./connect-button";
 
 const LINKS = [
   ["/", "Checking"],
+  ["/join", "Join"],
   ["/borrow", "Borrow"],
+  ["/cosign", "Co-sign"],
   ["/repay", "Repay"],
   ["/donate", "Donate"],
   ["/fund", "Fund"],
@@ -20,16 +22,20 @@ export function Nav() {
         <Link href="/" className="text-xl font-bold text-emerald-800">
           Good Faith
         </Link>
-        <nav className="flex gap-1 text-sm">
-          {LINKS.map(([href, label]) => (
-            <Link
-              key={href}
-              href={href}
-              className={`rounded-lg px-3 py-1.5 ${path === href ? "bg-emerald-100 text-emerald-900" : "text-stone-700 hover:bg-stone-100"}`}
-            >
-              {label}
-            </Link>
-          ))}
+        <nav aria-label="Main" className="flex flex-wrap gap-1 text-sm">
+          {LINKS.map(([href, label]) => {
+            const current = path === href;
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={current ? "page" : undefined}
+                className={`rounded-lg px-3 py-1.5 ${current ? "bg-emerald-100 text-emerald-900" : "text-stone-700 hover:bg-stone-100"}`}
+              >
+                {label}
+              </Link>
+            );
+          })}
         </nav>
         <ConnectButton />
       </div>

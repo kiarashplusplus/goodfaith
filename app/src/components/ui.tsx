@@ -1,4 +1,4 @@
-import type { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes } from "react";
+import { useId, type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes } from "react";
 import { explorerTx } from "@/lib/config";
 
 export function Card({ title, children, className = "" }: { title?: string; children: ReactNode; className?: string }) {
@@ -23,24 +23,53 @@ export function GhostButton({ className = "", ...p }: ButtonHTMLAttributes<HTMLB
   return (
     <button
       {...p}
-      className={`rounded-xl border border-stone-300 px-4 py-2 font-medium text-stone-800 transition hover:bg-stone-100 disabled:opacity-50 ${className}`}
+      className={`rounded-xl border border-stone-300 px-4 py-2 font-medium text-stone-800 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
     />
   );
 }
 
-export function Field({ label, hint, ...p }: { label: string; hint?: string } & InputHTMLAttributes<HTMLInputElement>) {
+/** Labelled input. `error` marks the field invalid and is linked to it for screen readers. */
+export function Field({
+  label,
+  hint,
+  error,
+  id: idProp,
+  ...p
+}: { label: string; hint?: string; error?: string | null } & InputHTMLAttributes<HTMLInputElement>) {
+  const autoId = useId();
+  const id = idProp ?? autoId;
+  const hintId = `${id}-hint`;
+  const errorId = `${id}-error`;
+  const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block font-medium text-stone-700">{label}</span>
+    <div className="block text-sm">
+      <label htmlFor={id} className="mb-1 block font-medium text-stone-700">
+        {label}
+      </label>
       <input
         {...p}
-        className="w-full rounded-xl border border-stone-300 px-3 py-2 text-base text-stone-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+        id={id}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy}
+        className={`w-full rounded-xl border px-3 py-2 text-base text-stone-900 outline-none focus:ring-2 ${
+          error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : "border-stone-300 focus:border-emerald-600 focus:ring-emerald-100"
+        }`}
       />
-      {hint && <span className="mt-1 block text-xs text-stone-500">{hint}</span>}
-    </label>
+      {hint && (
+        <span id={hintId} className="mt-1 block text-xs text-stone-500">
+          {hint}
+        </span>
+      )}
+      {error && (
+        <span id={errorId} className="mt-1 block text-xs text-red-700">
+          {error}
+        </span>
+      )}
+    </div>
   );
 }
 
+/** Errors are announced at once; everything else politely. */
 export function Notice({ tone = "info", children }: { tone?: "info" | "warn" | "error" | "ok"; children: ReactNode }) {
   const c = {
     info: "bg-sky-50 text-sky-900 border-sky-200",
@@ -48,15 +77,20 @@ export function Notice({ tone = "info", children }: { tone?: "info" | "warn" | "
     error: "bg-red-50 text-red-900 border-red-200",
     ok: "bg-emerald-50 text-emerald-900 border-emerald-200",
   }[tone];
-  return <div className={`rounded-xl border px-4 py-3 text-sm ${c}`}>{children}</div>;
+  const role = tone === "error" ? "alert" : "status";
+  return (
+    <div role={role} aria-live={role === "alert" ? "assertive" : "polite"} className={`rounded-xl border px-4 py-3 text-sm ${c}`}>
+      {children}
+    </div>
+  );
 }
 
-export function TxStatus({ error, sig }: { error: string | null; sig: string | null }) {
+export function TxStatus({ error, sig, label = "Done." }: { error: string | null; sig: string | null; label?: string }) {
   if (error) return <Notice tone="error">{error}</Notice>;
   if (sig)
     return (
       <Notice tone="ok">
-        Done.{" "}
+        {label}{" "}
         <a className="underline" href={explorerTx(sig)} target="_blank" rel="noreferrer">
           View transaction
         </a>

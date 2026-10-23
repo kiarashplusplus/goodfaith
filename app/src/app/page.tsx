@@ -7,13 +7,14 @@ import { address, type Address } from "@solana/kit";
 import { getCreateAssociatedTokenIdempotentInstruction, getTransferCheckedInstruction } from "@solana-program/token";
 import { createNoopSigner } from "@solana/kit";
 import { RequireWallet } from "@/components/connect-button";
-import { Button, Card, Field, GhostButton, PageTitle, Stat, TxStatus } from "@/components/ui";
+import { Button, Card, Field, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
 import { useApp, useBalances } from "@/lib/hooks";
 import { explorerAddress, explorerTx, POOL_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/config";
 import { formatAmount, formatSol, formatUsdc, parseAmount, shortAddress } from "@/lib/format";
 import { findAta } from "@/lib/program";
 import { sendInstructions } from "@/lib/tx";
 import { solanaPayUrl } from "@/lib/solana-pay";
+import { copyLabel, useCopy } from "@/lib/clipboard";
 import { useRun } from "@/lib/use-run";
 
 export default function CheckingPage() {
@@ -34,7 +35,7 @@ function Account({ wallet }: { wallet: Address }) {
         <Stat label="SOL" value={data ? formatSol(data.sol) : "..."} sub="Only needed if fees aren't covered" />
       </div>
       <div className="grid gap-6 md:grid-cols-2">
-        <Send wallet={wallet} onDone={() => mutate()} />
+        <Send wallet={wallet} balance={data?.usdc} onDone={() => mutate()} />
         <Receive wallet={wallet} />
       </div>
       <History wallet={wallet} />
@@ -42,11 +43,11 @@ function Account({ wallet }: { wallet: Address }) {
   );
 }
 
-function Send({ wallet, onDone }: { wallet: Address; onDone: () => void }) {
+function Send({ wallet, balance, onDone }: { wallet: Address; balance: bigint | undefined; onDone: () => void }) {
   const { rpc, signer } = useApp();
   const [to, setTo] = useState("");
   const [amt, setAmt] = useState("");
-  const { run, busy, error, result } = useRun();
+  const { run, busy, error, result, reset } = useRun();
 
   let dest: Address | null = null;
   try {
@@ -55,14 +56,39 @@ function Send({ wallet, onDone }: { wallet: Address; onDone: () => void }) {
     dest = null;
   }
   const amount = parseAmount(amt, TOKEN_DECIMALS);
-  const ok = !!dest && !!amount && amount > 0n && !!signer;
+  const toError = to && !dest ? "That doesn't look like a wallet address." : dest === wallet ? "That's your own address." : null;
+  const amountError =
+    amt && (!amount || amount <= 0n)
+      ? "Enter an amount greater than zero."
+      : amount && balance !== undefined && amount > balance
+        ? `You have ${formatUsdc(balance)}.`
+        : null;
+  const ok = !!dest && !toError && !!amount && amount > 0n && !amountError && !!signer;
 
   return (
     <Card title={`Send ${TOKEN_SYMBOL}`}>
       <div className="space-y-3">
-        <Field label="To (wallet address)" value={to} onChange={(e) => setTo(e.target.value)} placeholder="Wallet address" />
-        {to && !dest && <p className="text-xs text-red-700">That doesn&apos;t look like a wallet address.</p>}
-        <Field label="Amount" inputMode="decimal" value={amt} onChange={(e) => setAmt(e.target.value)} placeholder="0.00" />
+        <Field
+          label="To (wallet address)"
+          value={to}
+          onChange={(e) => {
+            if (error || result) reset();
+            setTo(e.target.value);
+          }}
+          placeholder="Wallet address"
+          error={toError}
+        />
+        <Field
+          label="Amount"
+          inputMode="decimal"
+          value={amt}
+          onChange={(e) => {
+            if (error || result) reset();
+            setAmt(e.target.value);
+          }}
+          placeholder="0.00"
+          error={amountError}
+        />
         <Button
           disabled={!ok || busy}
           onClick={() =>
@@ -86,6 +112,7 @@ function Send({ wallet, onDone }: { wallet: Address; onDone: () => void }) {
                   decimals: TOKEN_DECIMALS,
                 }),
               ]);
+              setAmt("");
               onDone();
               return sig;
             })
@@ -93,7 +120,7 @@ function Send({ wallet, onDone }: { wallet: Address; onDone: () => void }) {
         >
           {busy ? "Sending..." : "Send"}
         </Button>
-        <TxStatus error={error} sig={result} />
+        <TxStatus error={error} sig={result} label="Sent." />
       </div>
     </Card>
   );
@@ -101,7 +128,7 @@ function Send({ wallet, onDone }: { wallet: Address; onDone: () => void }) {
 
 function Receive({ wallet }: { wallet: Address }) {
   const [amt, setAmt] = useState("");
-  const [copied, setCopied] = useState(false);
+  const copy = useCopy();
   const parsed = parseAmount(amt, TOKEN_DECIMALS);
   const url = solanaPayUrl({
     recipient: wallet,
@@ -113,18 +140,10 @@ function Receive({ wallet }: { wallet: Address }) {
     <Card title={`Receive ${TOKEN_SYMBOL}`}>
       <div className="flex flex-col items-center gap-3">
         <div className="rounded-xl border border-stone-200 bg-white p-3">
-          <QRCodeSVG value={url} size={176} />
+          <QRCodeSVG value={url} size={176} title="QR code for your wallet address" />
         </div>
         <p className="break-all text-center font-mono text-xs text-stone-600">{wallet}</p>
-        <GhostButton
-          onClick={async () => {
-            await navigator.clipboard.writeText(wallet);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-        >
-          {copied ? "Copied" : "Copy address"}
-        </GhostButton>
+        <GhostButton onClick={() => copy.copy(wallet)}>{copyLabel(copy.state, "Copy address")}</GhostButton>
         <div className="w-full">
           <Field label="Request a specific amount (optional)" inputMode="decimal" value={amt} onChange={(e) => setAmt(e.target.value)} />
         </div>
@@ -137,30 +156,35 @@ type Row = { sig: string; time: number | null; delta: bigint; failed: boolean };
 
 function History({ wallet }: { wallet: Address }) {
   const { rpc } = useApp();
-  const { data, isLoading } = useSWR(["history", wallet], async (): Promise<Row[]> => {
-    const ata = await findAta(wallet, POOL_MINT);
-    const sigs = await rpc.getSignaturesForAddress(ata, { limit: 10, commitment: "confirmed" }).send();
-    return Promise.all(
-      sigs.map(async (s) => {
-        let delta = 0n;
-        try {
-          const tx = await rpc
-            .getTransaction(s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 1, commitment: "confirmed" })
-            .send();
-          const sum = (arr?: readonly { mint: string; owner?: string; uiTokenAmount: { amount: string } }[]) =>
-            (arr ?? []).filter((b) => b.mint === POOL_MINT && b.owner === wallet).reduce((n, b) => n + BigInt(b.uiTokenAmount.amount), 0n);
-          delta = sum(tx?.meta?.postTokenBalances as never) - sum(tx?.meta?.preTokenBalances as never);
-        } catch {
-          // leave delta at zero if the transaction can't be read
-        }
-        return { sig: s.signature, time: s.blockTime ? Number(s.blockTime) : null, delta, failed: !!s.err };
-      }),
-    );
-  }, { refreshInterval: 20_000 });
+  const { data, isLoading, error } = useSWR(
+    ["history", wallet],
+    async (): Promise<Row[]> => {
+      const ata = await findAta(wallet, POOL_MINT);
+      const sigs = await rpc.getSignaturesForAddress(ata, { limit: 10, commitment: "confirmed" }).send();
+      return Promise.all(
+        sigs.map(async (s) => {
+          let delta = 0n;
+          try {
+            const tx = await rpc
+              .getTransaction(s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" })
+              .send();
+            const sum = (arr?: readonly { mint: string; owner?: string; uiTokenAmount: { amount: string } }[]) =>
+              (arr ?? []).filter((b) => b.mint === POOL_MINT && b.owner === wallet).reduce((n, b) => n + BigInt(b.uiTokenAmount.amount), 0n);
+            delta = sum(tx?.meta?.postTokenBalances as never) - sum(tx?.meta?.preTokenBalances as never);
+          } catch {
+            // leave delta at zero if the transaction can't be read
+          }
+          return { sig: s.signature, time: s.blockTime ? Number(s.blockTime) : null, delta, failed: !!s.err };
+        }),
+      );
+    },
+    { refreshInterval: 20_000 },
+  );
 
   return (
     <Card title="Recent activity">
       {isLoading && <p className="text-sm text-stone-500">Loading...</p>}
+      {error && <Notice tone="warn">Couldn&apos;t load recent activity. Use the explorer link below.</Notice>}
       {data && data.length === 0 && <p className="text-sm text-stone-600">No activity yet.</p>}
       <ul className="divide-y divide-stone-100">
         {data?.map((r) => (
