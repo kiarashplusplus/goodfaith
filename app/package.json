@@ -12,7 +12,8 @@
     "test": "vitest run",
     "codegen": "node scripts/codegen.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:svm": "vitest run --config vitest.svm.config.mts"
   },
   "dependencies": {
     "@civic/solana-gateway-react": "^1.2.4",
@@ -41,6 +42,7 @@
     "codama": "^1.11.0",
     "eslint": "^10.13.0",
     "eslint-config-next": "^16.4.2",
+    "litesvm": "1.6.1",
     "postcss": "^8.5.31",
     "prettier": "^3.9.10",
     "tailwindcss": "^4.3.3",

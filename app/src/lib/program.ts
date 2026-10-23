@@ -161,7 +161,7 @@ export async function fetchCanonicalPool(rpc: ReadRpc): Promise<Pool | null> {
   const [derived] = await findPoolPda(POOL_MINT);
   const expected = POOL_ADDRESS ? address(POOL_ADDRESS) : derived;
   if (expected !== derived) throw new Error("Configured pool address doesn't match the pool for this mint.");
-  const pool = await fetchPoolAt(rpc, expected);
+  const pool = await fetchPool(rpc, expected);
   if (!pool) return null;
   if (pool.mint !== POOL_MINT) throw new Error("This pool uses a different token than expected. Not safe to use.");
   if (!GATEKEEPER_NETWORK) throw new Error("App isn't configured: set NEXT_PUBLIC_GATEKEEPER_NETWORK.");
@@ -177,7 +177,8 @@ export async function fetchCanonicalPool(rpc: ReadRpc): Promise<Pool | null> {
   return pool;
 }
 
-async function fetchPoolAt(rpc: ReadRpc, a: Address): Promise<Pool | null> {
+/** A pool by address, with owner and type checks but none of the canonical-pool pinning. */
+export async function fetchPool(rpc: ReadRpc, a: Address): Promise<Pool | null> {
   const acc = await fetchChecked(rpc, a, GoodfaithAccount.Pool);
   if (!acc) return null;
   const d = decodePool(acc).data;
