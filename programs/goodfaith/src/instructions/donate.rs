@@ -31,6 +31,10 @@ pub struct Donate<'info> {
 
 pub fn donate_handler(ctx: Context<Donate>, amount: u64) -> Result<()> {
     require!(amount > 0, GoodFaithError::AmountZero);
+    require!(
+        !ctx.accounts.pool.winding_down(Clock::get()?.unix_timestamp),
+        GoodFaithError::WindingDown
+    );
     token_interface::transfer_checked(
         CpiContext::new(
             ctx.accounts.token_program.key(),

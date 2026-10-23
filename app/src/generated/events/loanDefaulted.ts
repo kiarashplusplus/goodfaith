@@ -6,24 +6,28 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
+import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
 
 export const LOAN_DEFAULTED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([194, 98, 51, 88, 228, 118, 173, 46]);
 
 export function getLoanDefaultedEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(LOAN_DEFAULTED_EVENT_DISCRIMINATOR); }
 
-export type LoanDefaultedEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; recovered: bigint; lost: bigint; escrowReturned: bigint;  };
+export type LoanDefaultedEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; recovered: bigint; lost: bigint; escrowReturned: bigint; 
+/** False when the escrow covered the whole shortfall: the co-signer keeps their eligibility. */
+cosignerBarred: boolean;  };
 
-export type LoanDefaultedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; recovered: number | bigint; lost: number | bigint; escrowReturned: number | bigint;  };
+export type LoanDefaultedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; recovered: number | bigint; lost: number | bigint; escrowReturned: number | bigint; 
+/** False when the escrow covered the whole shortfall: the co-signer keeps their eligibility. */
+cosignerBarred: boolean;  };
 
 /** Gets the encoder for {@link LoanDefaultedEventArgs} event data. */
 export function getLoanDefaultedEventEncoder(): FixedSizeEncoder<LoanDefaultedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['recovered', getU64Encoder()], ['lost', getU64Encoder()], ['escrowReturned', getU64Encoder()]]), [getConstantEncoder(LOAN_DEFAULTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['recovered', getU64Encoder()], ['lost', getU64Encoder()], ['escrowReturned', getU64Encoder()], ['cosignerBarred', getBooleanEncoder()]]), [getConstantEncoder(LOAN_DEFAULTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link LoanDefaultedEvent} event data. */
 export function getLoanDefaultedEventDecoder(): FixedSizeDecoder<LoanDefaultedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['recovered', getU64Decoder()], ['lost', getU64Decoder()], ['escrowReturned', getU64Decoder()]]), [getConstantDecoder(LOAN_DEFAULTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['recovered', getU64Decoder()], ['lost', getU64Decoder()], ['escrowReturned', getU64Decoder()], ['cosignerBarred', getBooleanDecoder()]]), [getConstantDecoder(LOAN_DEFAULTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link LoanDefaultedEvent} event data. */

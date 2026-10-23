@@ -3,7 +3,7 @@ use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, Tran
 
 use crate::{
     error::GoodFaithError, events::LoanOpened, gateway::verify_gateway_token, state::*,
-    BPS_DENOMINATOR, ESCROW_SEED, LOAN_SEED, MEMBER_SEED, POOL_SEED, REQUEST_SEED, SECONDS_PER_DAY,
+    BPS_DENOMINATOR, ESCROW_SEED, LOAN_SEED, PERSON_SEED, POOL_SEED, REQUEST_SEED, SECONDS_PER_DAY,
 };
 
 #[derive(Accounts)]
@@ -38,16 +38,18 @@ pub struct CosignLoan<'info> {
     pub request_rent_payer: UncheckedAccount<'info>,
     #[account(
         mut,
-        seeds = [MEMBER_SEED, pool.key().as_ref(), request.borrower.as_ref()],
-        bump = borrower_member.bump,
+        seeds = [PERSON_SEED, pool.key().as_ref(), borrower_person.person_hash.as_ref()],
+        bump = borrower_person.bump,
+        constraint = borrower_person.wallet == request.borrower @ GoodFaithError::WalletNotBound,
     )]
-    pub borrower_member: Box<Account<'info, Member>>,
+    pub borrower_person: Box<Account<'info, Person>>,
     #[account(
         mut,
-        seeds = [MEMBER_SEED, pool.key().as_ref(), cosigner.key().as_ref()],
-        bump = cosigner_member.bump,
+        seeds = [PERSON_SEED, pool.key().as_ref(), cosigner_person.person_hash.as_ref()],
+        bump = cosigner_person.bump,
+        constraint = cosigner_person.wallet == cosigner.key() @ GoodFaithError::WalletNotBound,
     )]
-    pub cosigner_member: Box<Account<'info, Member>>,
+    pub cosigner_person: Box<Account<'info, Person>>,
     #[account(
         mut,
         token::mint = mint,
@@ -98,6 +100,7 @@ pub fn cosign_loan_handler(
     let amount = a.request.amount;
     let term_days = a.request.term_days;
 
+    require!(!a.pool.winding_down(now), GoodFaithError::WindingDown);
     // The co-signer only commits to what they saw; the request may have been
     // replaced (cancel + new request) since.
     require!(
@@ -110,8 +113,13 @@ pub fn cosign_loan_handler(
         term_days > 0 && term_days <= a.pool.max_term_days,
         GoodFaithError::TermTooLong
     );
+    require_keys_neq!(
+        a.borrower_person.key(),
+        a.cosigner_person.key(),
+        GoodFaithError::SelfCosign
+    );
     require!(
-        !a.borrower_member.ineligible && !a.cosigner_member.ineligible,
+        !a.borrower_person.ineligible && !a.cosigner_person.ineligible,
         GoodFaithError::Ineligible
     );
     verify_gateway_token(
@@ -127,11 +135,11 @@ pub fn cosign_loan_handler(
         now,
     )?;
     require!(
-        a.borrower_member.active_loan.is_none(),
+        a.borrower_person.active_loan.is_none(),
         GoodFaithError::BorrowerHasLoan
     );
     require!(
-        a.cosigner_member.active_guarantees < a.pool.max_guarantees_per_member,
+        a.cosigner_person.active_guarantees < a.pool.max_guarantees_per_member,
         GoodFaithError::CosignerLimit
     );
     require!(a.vault.amount >= amount, GoodFaithError::InsufficientFund);
@@ -154,6 +162,11 @@ pub fn cosign_loan_handler(
 
     let loan_id = a.pool.loan_count;
     a.pool.loan_count = loan_id.checked_add(1).ok_or(GoodFaithError::MathOverflow)?;
+    a.pool.active_loans = a
+        .pool
+        .active_loans
+        .checked_add(1)
+        .ok_or(GoodFaithError::MathOverflow)?;
     a.pool.total_lent = a
         .pool
         .total_lent
@@ -174,10 +187,12 @@ pub fn cosign_loan_handler(
         status: LoanStatus::Active,
         bump: ctx.bumps.loan,
         escrow_bump: ctx.bumps.escrow,
+        borrower_person: a.borrower_person.key(),
+        cosigner_person: a.cosigner_person.key(),
     });
-    a.borrower_member.active_loan = Some(a.loan.key());
-    a.cosigner_member.active_guarantees = a
-        .cosigner_member
+    a.borrower_person.active_loan = Some(a.loan.key());
+    a.cosigner_person.active_guarantees = a
+        .cosigner_person
         .active_guarantees
         .checked_add(1)
         .ok_or(GoodFaithError::MathOverflow)?;
@@ -222,6 +237,8 @@ pub fn cosign_loan_handler(
         loan_id,
         borrower,
         cosigner: a.cosigner.key(),
+        borrower_person: a.borrower_person.key(),
+        cosigner_person: a.cosigner_person.key(),
         principal: amount,
         escrowed,
         due_at,

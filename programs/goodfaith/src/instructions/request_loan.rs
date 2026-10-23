@@ -3,10 +3,11 @@ use anchor_spl::token_interface::Mint;
 
 use crate::{
     error::GoodFaithError, events::LoanRequested, gateway::verify_gateway_token, state::*,
-    MEMBER_SEED, POOL_SEED, REQUEST_SEED,
+    MEMBER_SEED, PERSON_SEED, POOL_SEED, REQUEST_SEED,
 };
 
 #[derive(Accounts)]
+#[instruction(amount: u64, term_days: u16, cosigner: Pubkey)]
 pub struct RequestLoan<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -18,10 +19,19 @@ pub struct RequestLoan<'info> {
     pub pool: Box<Account<'info, Pool>>,
     pub mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(
-        seeds = [MEMBER_SEED, pool.key().as_ref(), borrower.key().as_ref()],
-        bump = borrower_member.bump,
+        seeds = [PERSON_SEED, pool.key().as_ref(), borrower_person.person_hash.as_ref()],
+        bump = borrower_person.bump,
+        constraint = borrower_person.wallet == borrower.key() @ GoodFaithError::WalletNotBound,
     )]
-    pub borrower_member: Box<Account<'info, Member>>,
+    pub borrower_person: Box<Account<'info, Person>>,
+    /// The named co-signer must be a current member of a different person.
+    #[account(
+        seeds = [MEMBER_SEED, pool.key().as_ref(), cosigner.as_ref()],
+        bump = cosigner_member.bump,
+        constraint = !cosigner_member.retired @ GoodFaithError::WalletRetired,
+        constraint = cosigner_member.person != borrower_person.key() @ GoodFaithError::SelfCosign,
+    )]
+    pub cosigner_member: Box<Account<'info, Member>>,
     /// CHECK: parsed and validated in `verify_gateway_token`.
     pub borrower_gateway_token: UncheckedAccount<'info>,
     #[account(
@@ -43,6 +53,7 @@ pub fn request_loan_handler(
 ) -> Result<()> {
     let a = ctx.accounts;
     let now = Clock::get()?.unix_timestamp;
+    require!(!a.pool.winding_down(now), GoodFaithError::WindingDown);
     require!(amount > 0, GoodFaithError::AmountZero);
     require!(amount <= a.pool.max_loan, GoodFaithError::OverLoanCap);
     require!(
@@ -50,9 +61,9 @@ pub fn request_loan_handler(
         GoodFaithError::TermTooLong
     );
     require_keys_neq!(cosigner, a.borrower.key(), GoodFaithError::SelfCosign);
-    require!(!a.borrower_member.ineligible, GoodFaithError::Ineligible);
+    require!(!a.borrower_person.ineligible, GoodFaithError::Ineligible);
     require!(
-        a.borrower_member.active_loan.is_none(),
+        a.borrower_person.active_loan.is_none(),
         GoodFaithError::BorrowerHasLoan
     );
     verify_gateway_token(

@@ -3,7 +3,8 @@ use anchor_lang::prelude::*;
 use crate::{
     error::GoodFaithError,
     events::{
-        AuthorityChanged, AuthorityProposalCancelled, AuthorityProposed, PoolFrozen, PoolUpdated,
+        AuthorityChanged, AuthorityProposalCancelled, AuthorityProposed, IssuerSuspended,
+        ParamsCancelled, ParamsScheduled, PoolFrozen, PoolUpdated,
     },
     state::*,
 };
@@ -29,15 +30,57 @@ pub struct AcceptAuthority<'info> {
     pub pool: Account<'info, Pool>,
 }
 
-pub fn update_handler(ctx: Context<UpdatePool>, params: PoolParams) -> Result<()> {
+/// Anyone may apply settings once their timelock has elapsed.
+#[derive(Accounts)]
+pub struct ApplyParams<'info> {
+    #[account(mut)]
+    pub pool: Account<'info, Pool>,
+}
+
+/// Step one of a settings change: announce it. It takes effect only after `pool.timelock_seconds`,
+/// measured with the timelock in force now (so lowering the timelock itself waits the old delay).
+pub fn schedule_params_handler(ctx: Context<UpdatePool>, params: PoolParams) -> Result<()> {
     params.validate()?;
     let pool = &mut ctx.accounts.pool;
-    pool.gatekeeper_network = params.gatekeeper_network;
-    pool.max_loan = params.max_loan;
-    pool.max_term_days = params.max_term_days;
-    pool.grace_days = params.grace_days;
-    pool.max_guarantees_per_member = params.max_guarantees_per_member;
-    pool.cosigner_escrow_bps = params.cosigner_escrow_bps;
+    let effective_at = Clock::get()?
+        .unix_timestamp
+        .checked_add(pool.timelock_seconds)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    pool.pending_params = Some(params);
+    pool.params_effective_at = effective_at;
+    emit!(ParamsScheduled {
+        pool: pool.key(),
+        params,
+        effective_at,
+    });
+    Ok(())
+}
+
+/// The authority withdraws a scheduled change before (or after) its time, as long as nobody applied it.
+pub fn cancel_params_handler(ctx: Context<UpdatePool>) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    require!(
+        pool.pending_params.is_some(),
+        GoodFaithError::NothingPending
+    );
+    pool.pending_params = None;
+    pool.params_effective_at = 0;
+    emit!(ParamsCancelled { pool: pool.key() });
+    Ok(())
+}
+
+/// Step two: once the delay has passed, anyone (typically the operator's cranker) applies the change.
+pub fn apply_params_handler(ctx: Context<ApplyParams>) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    let params = pool.pending_params.ok_or(GoodFaithError::NothingPending)?;
+    require!(
+        Clock::get()?.unix_timestamp >= pool.params_effective_at,
+        GoodFaithError::TimelockNotElapsed
+    );
+    params.validate()?;
+    params.apply_to(pool);
+    pool.pending_params = None;
+    pool.params_effective_at = 0;
     emit!(PoolUpdated {
         pool: pool.key(),
         params,
@@ -45,12 +88,24 @@ pub fn update_handler(ctx: Context<UpdatePool>, params: PoolParams) -> Result<()
     Ok(())
 }
 
-/// Irreversible: clears the authority and any pending handover.
+/// Irreversible: clears the authority, any pending handover and any scheduled settings change.
+/// An announced wind-down stays, so a frozen fund can still be retired.
 pub fn freeze_handler(ctx: Context<UpdatePool>) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
     pool.authority = None;
     pool.pending_authority = None;
+    pool.pending_params = None;
+    pool.params_effective_at = 0;
     emit!(PoolFrozen { pool: pool.key() });
+    Ok(())
+}
+
+/// Instant brake on the identity issuer: no registrations or wallet replacements until a new issuer
+/// is set through the timelock. Existing members are unaffected.
+pub fn suspend_issuer_handler(ctx: Context<UpdatePool>) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    pool.issuer = Pubkey::default();
+    emit!(IssuerSuspended { pool: pool.key() });
     Ok(())
 }
 

@@ -28,7 +28,7 @@ directly, so neither needs a keypair or a running fork.
 
 ## Run
 - `npm run e2e` - full loan cycle with users paying fees: register, request, co-sign, partial and full repay,
-  cancel (borrower, co-signer, stranger rejected), `update_pool` (an open loan keeps its own grace period),
+  cancel (borrower, co-signer, stranger rejected), `rebind_wallet`, `schedule_params` + `apply_params` after the timelock (an open loan keeps its own grace period), `suspend_issuer`, a wind-down with `sweep_to_successor` on a second pool,
   default after time travel, `freeze_pool` (irreversible; re-runs on the same fork skip the update/freeze rows,
   restart Surfpool for a fresh one).
 - `npm run kora-e2e` - request, co-sign and repay with Kora as fee and rent payer; asserts user SOL is unchanged.

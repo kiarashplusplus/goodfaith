@@ -8,7 +8,7 @@ pub enum GoodFaithError {
     OverLoanCap,
     #[msg("Term is zero or longer than the maximum")]
     TermTooLong,
-    #[msg("Borrower and co-signer must be different wallets")]
+    #[msg("Borrower and co-signer must be different people")]
     SelfCosign,
     #[msg("Borrower already has an active loan")]
     BorrowerHasLoan,
@@ -38,4 +38,20 @@ pub enum GoodFaithError {
     EscrowTooHigh,
     #[msg("Invalid pool parameters")]
     InvalidParams,
+    #[msg("Wallet is not the current wallet of this person")]
+    WalletNotBound,
+    #[msg("This wallet was replaced and can no longer be used")]
+    WalletRetired,
+    #[msg("The fund is winding down; no new loans or donations")]
+    WindingDown,
+    #[msg("No wind-down is in effect")]
+    NotWindingDown,
+    #[msg("The change is not yet effective")]
+    TimelockNotElapsed,
+    #[msg("No change is scheduled")]
+    NothingPending,
+    #[msg("Loans are still active")]
+    LoansOutstanding,
+    #[msg("Successor must be a token account of the pool mint not controlled by the pool")]
+    InvalidSuccessor,
 }

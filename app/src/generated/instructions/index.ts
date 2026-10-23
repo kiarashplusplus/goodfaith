@@ -7,15 +7,22 @@
  */
 
 export * from './acceptAuthority';
+export * from './announceWindDown';
+export * from './applyParams';
 export * from './cancelAuthorityProposal';
+export * from './cancelParams';
 export * from './cancelRequest';
+export * from './cancelWindDown';
 export * from './cosignLoan';
 export * from './donate';
 export * from './freezePool';
 export * from './initializePool';
 export * from './markDefault';
 export * from './proposeAuthority';
+export * from './rebindWallet';
 export * from './registerMember';
 export * from './repay';
 export * from './requestLoan';
-export * from './updatePool';
+export * from './scheduleParams';
+export * from './suspendIssuer';
+export * from './sweepToSuccessor';

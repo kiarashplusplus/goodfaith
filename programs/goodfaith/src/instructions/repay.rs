@@ -3,9 +3,7 @@ use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
-use crate::{
-    error::GoodFaithError, events::Repaid, state::*, ESCROW_SEED, LOAN_SEED, MEMBER_SEED, POOL_SEED,
-};
+use crate::{error::GoodFaithError, events::Repaid, state::*, ESCROW_SEED, LOAN_SEED, POOL_SEED};
 
 #[derive(Accounts)]
 pub struct Repay<'info> {
@@ -39,32 +37,25 @@ pub struct Repay<'info> {
         token::authority = pool,
     )]
     pub escrow: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, address = loan.borrower_person)]
+    pub borrower_person: Box<Account<'info, Person>>,
+    #[account(mut, address = loan.cosigner_person)]
+    pub cosigner_person: Box<Account<'info, Person>>,
     #[account(
         mut,
         token::mint = mint,
         token::authority = payer,
     )]
     pub payer_token: Box<InterfaceAccount<'info, TokenAccount>>,
+    // The escrow goes back to the co-signer's *current* wallet, so a replaced wallet is not paid.
     // May equal `payer_token` when the co-signer repays; the two transfers run in order.
     #[account(
         mut,
         dup,
         token::mint = mint,
-        token::authority = loan.cosigner,
+        token::authority = cosigner_person.wallet,
     )]
     pub cosigner_token: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(
-        mut,
-        seeds = [MEMBER_SEED, pool.key().as_ref(), loan.borrower.as_ref()],
-        bump = borrower_member.bump,
-    )]
-    pub borrower_member: Box<Account<'info, Member>>,
-    #[account(
-        mut,
-        seeds = [MEMBER_SEED, pool.key().as_ref(), loan.cosigner.as_ref()],
-        bump = cosigner_member.bump,
-    )]
-    pub cosigner_member: Box<Account<'info, Member>>,
     /// CHECK: receives the escrow account rent; must match `loan.rent_payer`.
     #[account(mut, address = loan.rent_payer)]
     pub rent_payer: UncheckedAccount<'info>,
@@ -110,10 +101,15 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
 
     if fully_repaid {
         a.loan.status = LoanStatus::Repaid;
-        a.borrower_member.active_loan = None;
-        a.cosigner_member.active_guarantees = a
-            .cosigner_member
+        a.borrower_person.active_loan = None;
+        a.cosigner_person.active_guarantees = a
+            .cosigner_person
             .active_guarantees
+            .checked_sub(1)
+            .ok_or(GoodFaithError::MathOverflow)?;
+        a.pool.active_loans = a
+            .pool
+            .active_loans
             .checked_sub(1)
             .ok_or(GoodFaithError::MathOverflow)?;
 

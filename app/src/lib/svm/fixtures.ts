@@ -16,7 +16,7 @@ import { LiteSVM } from "litesvm";
 import { gatewayTokenAddress } from "../civic-addr";
 import { GATEKEEPER_NETWORK, PROGRAM_ID } from "../config";
 import { findAta } from "../program";
-import { TEST_ADMIN_SECRET } from "./admin";
+import { TEST_ADMIN_SECRET, TEST_ISSUER_SECRET } from "./admin";
 
 export const T0 = 1_700_000_000n;
 export const GATEWAY_PROGRAM = address("gatem74V238djXdzWnJf94Wo1DcnuGkfijbf3AuBhfs");
@@ -88,6 +88,22 @@ export function plantGatewayToken(svm: LiteSVM, wallet: Address, at?: Address): 
 
 export async function admin(): Promise<KeyPairSigner> {
   return createKeyPairSignerFromBytes(Uint8Array.from(TEST_ADMIN_SECRET));
+}
+
+/** The identity issuer that co-signs registrations in the suite. */
+export async function issuer(): Promise<KeyPairSigner> {
+  return createKeyPairSignerFromBytes(Uint8Array.from(TEST_ISSUER_SECRET));
+}
+
+const hashes = new Map<Address, Uint8Array>();
+/** A stable 32-byte person hash per wallet for the suite (the issuer service derives real ones from verified ID fields). */
+export function personHashOf(wallet: Address): Uint8Array {
+  let h = hashes.get(wallet);
+  if (!h) {
+    h = crypto.getRandomValues(new Uint8Array(32));
+    hashes.set(wallet, h);
+  }
+  return h;
 }
 
 /** A funded wallet with a gateway token; the pool-mint ATA is planted only when `usdc` is given. */

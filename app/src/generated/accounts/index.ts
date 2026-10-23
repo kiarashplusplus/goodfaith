@@ -9,4 +9,5 @@
 export * from './loan';
 export * from './loanRequest';
 export * from './member';
+export * from './person';
 export * from './pool';

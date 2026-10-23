@@ -6,19 +6,19 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress } from '@solana/kit';
+import { combineCodec, getAddressDecoder, getAddressEncoder, getI64Decoder, getI64Encoder, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress } from '@solana/kit';
 
-/** Settings the pool authority can change. */
-export type PoolParams = { gatekeeperNetwork: Address; maxLoan: bigint; maxTermDays: number; graceDays: number; maxGuaranteesPerMember: number; cosignerEscrowBps: number;  };
+/** Settings the pool authority can change (after the timelock). */
+export type PoolParams = { gatekeeperNetwork: Address; maxLoan: bigint; maxTermDays: number; graceDays: number; maxGuaranteesPerMember: number; cosignerEscrowBps: number; issuer: Address; timelockSeconds: bigint;  };
 
-export type PoolParamsArgs = { gatekeeperNetwork: Address | HasAddress; maxLoan: number | bigint; maxTermDays: number; graceDays: number; maxGuaranteesPerMember: number; cosignerEscrowBps: number;  };
+export type PoolParamsArgs = { gatekeeperNetwork: Address | HasAddress; maxLoan: number | bigint; maxTermDays: number; graceDays: number; maxGuaranteesPerMember: number; cosignerEscrowBps: number; issuer: Address | HasAddress; timelockSeconds: number | bigint;  };
 
 export function getPoolParamsEncoder(): FixedSizeEncoder<PoolParamsArgs> {
-    return getStructEncoder([['gatekeeperNetwork', getAddressEncoder()], ['maxLoan', getU64Encoder()], ['maxTermDays', getU16Encoder()], ['graceDays', getU16Encoder()], ['maxGuaranteesPerMember', getU8Encoder()], ['cosignerEscrowBps', getU16Encoder()]]);
+    return getStructEncoder([['gatekeeperNetwork', getAddressEncoder()], ['maxLoan', getU64Encoder()], ['maxTermDays', getU16Encoder()], ['graceDays', getU16Encoder()], ['maxGuaranteesPerMember', getU8Encoder()], ['cosignerEscrowBps', getU16Encoder()], ['issuer', getAddressEncoder()], ['timelockSeconds', getI64Encoder()]]);
 }
 
 export function getPoolParamsDecoder(): FixedSizeDecoder<PoolParams> {
-    return getStructDecoder([['gatekeeperNetwork', getAddressDecoder()], ['maxLoan', getU64Decoder()], ['maxTermDays', getU16Decoder()], ['graceDays', getU16Decoder()], ['maxGuaranteesPerMember', getU8Decoder()], ['cosignerEscrowBps', getU16Decoder()]]);
+    return getStructDecoder([['gatekeeperNetwork', getAddressDecoder()], ['maxLoan', getU64Decoder()], ['maxTermDays', getU16Decoder()], ['graceDays', getU16Decoder()], ['maxGuaranteesPerMember', getU8Decoder()], ['cosignerEscrowBps', getU16Decoder()], ['issuer', getAddressDecoder()], ['timelockSeconds', getI64Decoder()]]);
 }
 
 export function getPoolParamsCodec(): FixedSizeCodec<PoolParamsArgs, PoolParams> {

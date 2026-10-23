@@ -12,3 +12,4 @@ test-ledger
 id.json
 txtx.yml
 runbooks
+*.proptest-regressions

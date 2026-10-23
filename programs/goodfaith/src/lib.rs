@@ -21,8 +21,32 @@ pub mod goodfaith {
         instructions::initialize_pool::initialize_pool_handler(ctx, params)
     }
 
-    pub fn update_pool(ctx: Context<UpdatePool>, params: PoolParams) -> Result<()> {
-        instructions::update_pool::update_handler(ctx, params)
+    pub fn schedule_params(ctx: Context<UpdatePool>, params: PoolParams) -> Result<()> {
+        instructions::update_pool::schedule_params_handler(ctx, params)
+    }
+
+    pub fn cancel_params(ctx: Context<UpdatePool>) -> Result<()> {
+        instructions::update_pool::cancel_params_handler(ctx)
+    }
+
+    pub fn apply_params(ctx: Context<ApplyParams>) -> Result<()> {
+        instructions::update_pool::apply_params_handler(ctx)
+    }
+
+    pub fn suspend_issuer(ctx: Context<UpdatePool>) -> Result<()> {
+        instructions::update_pool::suspend_issuer_handler(ctx)
+    }
+
+    pub fn announce_wind_down(ctx: Context<AnnounceWindDown>) -> Result<()> {
+        instructions::wind_down::announce_wind_down_handler(ctx)
+    }
+
+    pub fn cancel_wind_down(ctx: Context<CancelWindDown>) -> Result<()> {
+        instructions::wind_down::cancel_wind_down_handler(ctx)
+    }
+
+    pub fn sweep_to_successor(ctx: Context<SweepToSuccessor>) -> Result<()> {
+        instructions::wind_down::sweep_to_successor_handler(ctx)
     }
 
     pub fn freeze_pool(ctx: Context<UpdatePool>) -> Result<()> {
@@ -45,8 +69,12 @@ pub mod goodfaith {
         instructions::donate::donate_handler(ctx, amount)
     }
 
-    pub fn register_member(ctx: Context<RegisterMember>) -> Result<()> {
-        instructions::register_member::register_member_handler(ctx)
+    pub fn register_member(ctx: Context<RegisterMember>, person_hash: [u8; 32]) -> Result<()> {
+        instructions::register_member::register_member_handler(ctx, person_hash)
+    }
+
+    pub fn rebind_wallet(ctx: Context<RebindWallet>) -> Result<()> {
+        instructions::rebind_wallet::rebind_wallet_handler(ctx)
     }
 
     pub fn request_loan(

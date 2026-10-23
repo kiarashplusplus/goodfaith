@@ -42,12 +42,14 @@ pub fn initialize_pool_handler(ctx: Context<InitializePool>, params: PoolParams)
     pool.pending_authority = None;
     pool.mint = ctx.accounts.mint.key();
     pool.vault = ctx.accounts.vault.key();
-    pool.gatekeeper_network = params.gatekeeper_network;
-    pool.max_loan = params.max_loan;
-    pool.max_term_days = params.max_term_days;
-    pool.grace_days = params.grace_days;
-    pool.max_guarantees_per_member = params.max_guarantees_per_member;
-    pool.cosigner_escrow_bps = params.cosigner_escrow_bps;
+    // The only instant settings change; later ones go through the timelock.
+    params.apply_to(pool);
+    pool.pending_params = None;
+    pool.params_effective_at = 0;
+    pool.wind_down_at = None;
+    pool.successor = None;
+    pool.active_loans = 0;
+    pool.total_swept = 0;
     pool.bump = ctx.bumps.pool;
     pool.vault_bump = ctx.bumps.vault;
     emit!(PoolInitialized {

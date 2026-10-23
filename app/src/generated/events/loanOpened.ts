@@ -12,18 +12,18 @@ export const LOAN_OPENED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Arra
 
 export function getLoanOpenedEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(LOAN_OPENED_EVENT_DISCRIMINATOR); }
 
-export type LoanOpenedEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; principal: bigint; escrowed: bigint; dueAt: bigint;  };
+export type LoanOpenedEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; borrowerPerson: Address; cosignerPerson: Address; principal: bigint; escrowed: bigint; dueAt: bigint;  };
 
-export type LoanOpenedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; principal: number | bigint; escrowed: number | bigint; dueAt: number | bigint;  };
+export type LoanOpenedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; borrowerPerson: Address | HasAddress; cosignerPerson: Address | HasAddress; principal: number | bigint; escrowed: number | bigint; dueAt: number | bigint;  };
 
 /** Gets the encoder for {@link LoanOpenedEventArgs} event data. */
 export function getLoanOpenedEventEncoder(): FixedSizeEncoder<LoanOpenedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['principal', getU64Encoder()], ['escrowed', getU64Encoder()], ['dueAt', getI64Encoder()]]), [getConstantEncoder(LOAN_OPENED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()], ['principal', getU64Encoder()], ['escrowed', getU64Encoder()], ['dueAt', getI64Encoder()]]), [getConstantEncoder(LOAN_OPENED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link LoanOpenedEvent} event data. */
 export function getLoanOpenedEventDecoder(): FixedSizeDecoder<LoanOpenedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['principal', getU64Decoder()], ['escrowed', getU64Decoder()], ['dueAt', getI64Decoder()]]), [getConstantDecoder(LOAN_OPENED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()], ['principal', getU64Decoder()], ['escrowed', getU64Decoder()], ['dueAt', getI64Decoder()]]), [getConstantDecoder(LOAN_OPENED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link LoanOpenedEvent} event data. */

@@ -15,7 +15,7 @@ export const GOODFAITH_ERROR__AMOUNT_ZERO = 0x1770; // 6000
 export const GOODFAITH_ERROR__OVER_LOAN_CAP = 0x1771; // 6001
 /** TermTooLong: Term is zero or longer than the maximum */
 export const GOODFAITH_ERROR__TERM_TOO_LONG = 0x1772; // 6002
-/** SelfCosign: Borrower and co-signer must be different wallets */
+/** SelfCosign: Borrower and co-signer must be different people */
 export const GOODFAITH_ERROR__SELF_COSIGN = 0x1773; // 6003
 /** BorrowerHasLoan: Borrower already has an active loan */
 export const GOODFAITH_ERROR__BORROWER_HAS_LOAN = 0x1774; // 6004
@@ -45,12 +45,28 @@ export const GOODFAITH_ERROR__REQUEST_MISMATCH = 0x177f; // 6015
 export const GOODFAITH_ERROR__ESCROW_TOO_HIGH = 0x1780; // 6016
 /** InvalidParams: Invalid pool parameters */
 export const GOODFAITH_ERROR__INVALID_PARAMS = 0x1781; // 6017
+/** WalletNotBound: Wallet is not the current wallet of this person */
+export const GOODFAITH_ERROR__WALLET_NOT_BOUND = 0x1782; // 6018
+/** WalletRetired: This wallet was replaced and can no longer be used */
+export const GOODFAITH_ERROR__WALLET_RETIRED = 0x1783; // 6019
+/** WindingDown: The fund is winding down; no new loans or donations */
+export const GOODFAITH_ERROR__WINDING_DOWN = 0x1784; // 6020
+/** NotWindingDown: No wind-down is in effect */
+export const GOODFAITH_ERROR__NOT_WINDING_DOWN = 0x1785; // 6021
+/** TimelockNotElapsed: The change is not yet effective */
+export const GOODFAITH_ERROR__TIMELOCK_NOT_ELAPSED = 0x1786; // 6022
+/** NothingPending: No change is scheduled */
+export const GOODFAITH_ERROR__NOTHING_PENDING = 0x1787; // 6023
+/** LoansOutstanding: Loans are still active */
+export const GOODFAITH_ERROR__LOANS_OUTSTANDING = 0x1788; // 6024
+/** InvalidSuccessor: Successor must be a token account of the pool mint not controlled by the pool */
+export const GOODFAITH_ERROR__INVALID_SUCCESSOR = 0x1789; // 6025
 
-export type GoodfaithError = typeof GOODFAITH_ERROR__AMOUNT_ZERO | typeof GOODFAITH_ERROR__BORROWER_HAS_LOAN | typeof GOODFAITH_ERROR__COSIGNER_LIMIT | typeof GOODFAITH_ERROR__ESCROW_TOO_HIGH | typeof GOODFAITH_ERROR__INELIGIBLE | typeof GOODFAITH_ERROR__INSUFFICIENT_FUND | typeof GOODFAITH_ERROR__INVALID_BPS | typeof GOODFAITH_ERROR__INVALID_GATEWAY_TOKEN | typeof GOODFAITH_ERROR__INVALID_PARAMS | typeof GOODFAITH_ERROR__LOAN_NOT_ACTIVE | typeof GOODFAITH_ERROR__MATH_OVERFLOW | typeof GOODFAITH_ERROR__NOT_YET_DEFAULTABLE | typeof GOODFAITH_ERROR__OVER_LOAN_CAP | typeof GOODFAITH_ERROR__OVER_REPAY | typeof GOODFAITH_ERROR__REQUEST_MISMATCH | typeof GOODFAITH_ERROR__SELF_COSIGN | typeof GOODFAITH_ERROR__TERM_TOO_LONG | typeof GOODFAITH_ERROR__UNAUTHORIZED;
+export type GoodfaithError = typeof GOODFAITH_ERROR__AMOUNT_ZERO | typeof GOODFAITH_ERROR__BORROWER_HAS_LOAN | typeof GOODFAITH_ERROR__COSIGNER_LIMIT | typeof GOODFAITH_ERROR__ESCROW_TOO_HIGH | typeof GOODFAITH_ERROR__INELIGIBLE | typeof GOODFAITH_ERROR__INSUFFICIENT_FUND | typeof GOODFAITH_ERROR__INVALID_BPS | typeof GOODFAITH_ERROR__INVALID_GATEWAY_TOKEN | typeof GOODFAITH_ERROR__INVALID_PARAMS | typeof GOODFAITH_ERROR__INVALID_SUCCESSOR | typeof GOODFAITH_ERROR__LOAN_NOT_ACTIVE | typeof GOODFAITH_ERROR__LOANS_OUTSTANDING | typeof GOODFAITH_ERROR__MATH_OVERFLOW | typeof GOODFAITH_ERROR__NOTHING_PENDING | typeof GOODFAITH_ERROR__NOT_WINDING_DOWN | typeof GOODFAITH_ERROR__NOT_YET_DEFAULTABLE | typeof GOODFAITH_ERROR__OVER_LOAN_CAP | typeof GOODFAITH_ERROR__OVER_REPAY | typeof GOODFAITH_ERROR__REQUEST_MISMATCH | typeof GOODFAITH_ERROR__SELF_COSIGN | typeof GOODFAITH_ERROR__TERM_TOO_LONG | typeof GOODFAITH_ERROR__TIMELOCK_NOT_ELAPSED | typeof GOODFAITH_ERROR__UNAUTHORIZED | typeof GOODFAITH_ERROR__WALLET_NOT_BOUND | typeof GOODFAITH_ERROR__WALLET_RETIRED | typeof GOODFAITH_ERROR__WINDING_DOWN;
 
 let goodfaithErrorMessages: Record<GoodfaithError, string> | undefined;
 if (process.env['NODE_ENV'] !== 'production') {
-  goodfaithErrorMessages = { [GOODFAITH_ERROR__AMOUNT_ZERO]: `Amount must be greater than zero`, [GOODFAITH_ERROR__BORROWER_HAS_LOAN]: `Borrower already has an active loan`, [GOODFAITH_ERROR__COSIGNER_LIMIT]: `Co-signer is already at the guarantee limit`, [GOODFAITH_ERROR__ESCROW_TOO_HIGH]: `Escrow is above the maximum the co-signer approved`, [GOODFAITH_ERROR__INELIGIBLE]: `Member is not eligible`, [GOODFAITH_ERROR__INSUFFICIENT_FUND]: `The loan fund does not hold enough`, [GOODFAITH_ERROR__INVALID_BPS]: `Escrow basis points must be at most 10000`, [GOODFAITH_ERROR__INVALID_GATEWAY_TOKEN]: `Missing or invalid gateway token`, [GOODFAITH_ERROR__INVALID_PARAMS]: `Invalid pool parameters`, [GOODFAITH_ERROR__LOAN_NOT_ACTIVE]: `Loan is not active`, [GOODFAITH_ERROR__MATH_OVERFLOW]: `Arithmetic overflow`, [GOODFAITH_ERROR__NOT_YET_DEFAULTABLE]: `Loan cannot be marked as defaulted yet`, [GOODFAITH_ERROR__OVER_LOAN_CAP]: `Amount is above the per-loan cap`, [GOODFAITH_ERROR__OVER_REPAY]: `Payment is more than the amount still owed`, [GOODFAITH_ERROR__REQUEST_MISMATCH]: `The request no longer matches what was approved`, [GOODFAITH_ERROR__SELF_COSIGN]: `Borrower and co-signer must be different wallets`, [GOODFAITH_ERROR__TERM_TOO_LONG]: `Term is zero or longer than the maximum`, [GOODFAITH_ERROR__UNAUTHORIZED]: `Not authorized` };
+  goodfaithErrorMessages = { [GOODFAITH_ERROR__AMOUNT_ZERO]: `Amount must be greater than zero`, [GOODFAITH_ERROR__BORROWER_HAS_LOAN]: `Borrower already has an active loan`, [GOODFAITH_ERROR__COSIGNER_LIMIT]: `Co-signer is already at the guarantee limit`, [GOODFAITH_ERROR__ESCROW_TOO_HIGH]: `Escrow is above the maximum the co-signer approved`, [GOODFAITH_ERROR__INELIGIBLE]: `Member is not eligible`, [GOODFAITH_ERROR__INSUFFICIENT_FUND]: `The loan fund does not hold enough`, [GOODFAITH_ERROR__INVALID_BPS]: `Escrow basis points must be at most 10000`, [GOODFAITH_ERROR__INVALID_GATEWAY_TOKEN]: `Missing or invalid gateway token`, [GOODFAITH_ERROR__INVALID_PARAMS]: `Invalid pool parameters`, [GOODFAITH_ERROR__INVALID_SUCCESSOR]: `Successor must be a token account of the pool mint not controlled by the pool`, [GOODFAITH_ERROR__LOAN_NOT_ACTIVE]: `Loan is not active`, [GOODFAITH_ERROR__LOANS_OUTSTANDING]: `Loans are still active`, [GOODFAITH_ERROR__MATH_OVERFLOW]: `Arithmetic overflow`, [GOODFAITH_ERROR__NOTHING_PENDING]: `No change is scheduled`, [GOODFAITH_ERROR__NOT_WINDING_DOWN]: `No wind-down is in effect`, [GOODFAITH_ERROR__NOT_YET_DEFAULTABLE]: `Loan cannot be marked as defaulted yet`, [GOODFAITH_ERROR__OVER_LOAN_CAP]: `Amount is above the per-loan cap`, [GOODFAITH_ERROR__OVER_REPAY]: `Payment is more than the amount still owed`, [GOODFAITH_ERROR__REQUEST_MISMATCH]: `The request no longer matches what was approved`, [GOODFAITH_ERROR__SELF_COSIGN]: `Borrower and co-signer must be different people`, [GOODFAITH_ERROR__TERM_TOO_LONG]: `Term is zero or longer than the maximum`, [GOODFAITH_ERROR__TIMELOCK_NOT_ELAPSED]: `The change is not yet effective`, [GOODFAITH_ERROR__UNAUTHORIZED]: `Not authorized`, [GOODFAITH_ERROR__WALLET_NOT_BOUND]: `Wallet is not the current wallet of this person`, [GOODFAITH_ERROR__WALLET_RETIRED]: `This wallet was replaced and can no longer be used`, [GOODFAITH_ERROR__WINDING_DOWN]: `The fund is winding down; no new loans or donations` };
 }
 
 export function getGoodfaithErrorMessage(code: GoodfaithError): string {

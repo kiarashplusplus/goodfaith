@@ -8,7 +8,7 @@ import { RequireWallet } from "@/components/connect-button";
 import { Button, Card, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
 import { useApp, useBalances, useMember, usePendingForCosigner, usePool, useRequest, useSponsor } from "@/lib/hooks";
 import { parseCosignLink } from "@/lib/cosign-link";
-import { cancelRequestIx, cosignLoanIx, type LoanRequest, type Pool } from "@/lib/program";
+import { cancelRequestIx, cosignLoanIx, fetchMember, type LoanRequest, type Pool } from "@/lib/program";
 import { sendInstructions } from "@/lib/tx";
 import { gatewayTokenAddress } from "@/lib/civic-addr";
 import { GATEKEEPER_NETWORK } from "@/lib/config";
@@ -164,10 +164,17 @@ function Terms({ wallet, pool, request, onDone }: { wallet: Address; pool: Pool;
           onClick={() =>
             run(async () => {
               const sig = await sendInstructions(rpc, signer!, async (feePayer) => {
+                const [b, c] = await Promise.all([
+                  fetchMember(rpc, pool.address, request.borrower),
+                  fetchMember(rpc, pool.address, request.cosigner),
+                ]);
+                if (!b || !c) throw new Error("The borrower or co-signer is no longer a member.");
                 const { ix, borrowerToken } = await cosignLoanIx({
                   payer: feePayer,
                   pool,
                   request,
+                  borrowerPerson: b.person,
+                  cosignerPerson: c.person,
                   borrowerGatewayToken: gatewayTokenAddress(request.borrower, network),
                   cosignerGatewayToken: gatewayTokenAddress(request.cosigner, network),
                   expectedAmount: request.amount,

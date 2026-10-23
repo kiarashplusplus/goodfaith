@@ -5,7 +5,7 @@ import { createNoopSigner, type Address } from "@solana/kit";
 import { getCreateAssociatedTokenIdempotentInstruction } from "@solana-program/token";
 import { Button, GhostButton, Notice, TxStatus } from "./ui";
 import { useApp, useNow } from "@/lib/hooks";
-import { markDefaultIx, type Loan, type Pool } from "@/lib/program";
+import { cosignerWalletOf, markDefaultIx, type Loan, type Pool } from "@/lib/program";
 import { loanTiming } from "@/lib/loan-status";
 import { CHIP } from "./status-chip";
 import { formatUsdc } from "@/lib/format";
@@ -95,20 +95,21 @@ function LoanRow({
         <div className="mt-3">
           <Notice tone="warn">
             <strong>This is final.</strong> The co-signer&apos;s escrow ({formatUsdc(loan.escrowed)}) goes to the fund to cover what is
-            still owed ({formatUsdc(owed)}). Anything left over goes back to the co-signer. Both the borrower and the co-signer lose their
-            membership. Anyone can do this once the grace period has passed.
+            still owed ({formatUsdc(owed)}). Anything left over goes back to the co-signer. The borrower loses their membership; the
+            co-signer keeps theirs only if the escrow covers everything owed. Anyone can do this once the grace period has passed.
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 disabled={busy || !signer}
                 onClick={() =>
                   run(async () => {
                     const sig = await sendInstructions(rpc, signer!, async (feePayer) => {
-                      const { ix, cosignerToken } = await markDefaultIx({ caller: wallet, pool, loan });
+                      const cosignerWallet = await cosignerWalletOf(rpc, loan);
+                      const { ix, cosignerToken } = await markDefaultIx({ caller: wallet, pool, loan, cosignerWallet });
                       return [
                         getCreateAssociatedTokenIdempotentInstruction({
                           payer: createNoopSigner(feePayer),
                           ata: cosignerToken,
-                          owner: loan.cosigner,
+                          owner: cosignerWallet,
                           mint: pool.mint,
                         }),
                         ix,

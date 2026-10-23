@@ -22,3 +22,9 @@ pub const MAX_GRACE_DAYS: u16 = 365;
 
 #[constant]
 pub const REQUEST_SEED: &[u8] = b"request";
+#[constant]
+pub const PERSON_SEED: &[u8] = b"person";
+
+/// Longest delay a pool may put on its own settings changes and wind-down (90 days).
+#[constant]
+pub const MAX_TIMELOCK_SECONDS: i64 = 90 * 86_400;

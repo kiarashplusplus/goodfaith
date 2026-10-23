@@ -6,28 +6,28 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { assertAccountExists, assertAccountsExist, combineCodec, decodeAccount, fetchEncodedAccount, fetchEncodedAccounts, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getOptionDecoder, getOptionEncoder, getStructDecoder, getStructEncoder, getU8Decoder, getU8Encoder, transformEncoder, type Account, type Address, type ClientWithRpc, type Codec, type Decoder, type EncodedAccount, type Encoder, type FetchAccountConfig, type FetchAccountsConfig, type GetAccountInfoApi, type GetMultipleAccountsApi, type HasAddress, type MaybeAccount, type MaybeEncodedAccount, type Option, type OptionOrNullable, type ReadonlyUint8Array } from '@solana/kit';
+import { assertAccountExists, assertAccountsExist, combineCodec, decodeAccount, fetchEncodedAccount, fetchEncodedAccounts, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU8Decoder, getU8Encoder, transformEncoder, type Account, type Address, type ClientWithRpc, type EncodedAccount, type FetchAccountConfig, type FetchAccountsConfig, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type GetAccountInfoApi, type GetMultipleAccountsApi, type HasAddress, type MaybeAccount, type MaybeEncodedAccount, type ReadonlyUint8Array } from '@solana/kit';
 
 export const MEMBER_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([54, 19, 162, 21, 29, 166, 17, 198]);
 
 export function getMemberDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(MEMBER_DISCRIMINATOR); }
 
-export type Member = { discriminator: ReadonlyUint8Array; wallet: Address; activeLoan: Option<Address>; activeGuarantees: number; ineligible: boolean; bump: number;  };
+export type Member = { discriminator: ReadonlyUint8Array; wallet: Address; person: Address; retired: boolean; bump: number;  };
 
-export type MemberArgs = { wallet: Address | HasAddress; activeLoan: OptionOrNullable<Address | HasAddress>; activeGuarantees: number; ineligible: boolean; bump: number;  };
+export type MemberArgs = { wallet: Address | HasAddress; person: Address | HasAddress; retired: boolean; bump: number;  };
 
 /** Gets the encoder for {@link MemberArgs} account data. */
-export function getMemberEncoder(): Encoder<MemberArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['wallet', getAddressEncoder()], ['activeLoan', getOptionEncoder(getAddressEncoder())], ['activeGuarantees', getU8Encoder()], ['ineligible', getBooleanEncoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: MEMBER_DISCRIMINATOR }));
+export function getMemberEncoder(): FixedSizeEncoder<MemberArgs> {
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['wallet', getAddressEncoder()], ['person', getAddressEncoder()], ['retired', getBooleanEncoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: MEMBER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Member} account data. */
-export function getMemberDecoder(): Decoder<Member> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['wallet', getAddressDecoder()], ['activeLoan', getOptionDecoder(getAddressDecoder())], ['activeGuarantees', getU8Decoder()], ['ineligible', getBooleanDecoder()], ['bump', getU8Decoder()]]);
+export function getMemberDecoder(): FixedSizeDecoder<Member> {
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['wallet', getAddressDecoder()], ['person', getAddressDecoder()], ['retired', getBooleanDecoder()], ['bump', getU8Decoder()]]);
 }
 
 /** Gets the codec for {@link Member} account data. */
-export function getMemberCodec(): Codec<MemberArgs, Member> {
+export function getMemberCodec(): FixedSizeCodec<MemberArgs, Member> {
     return combineCodec(getMemberEncoder(), getMemberDecoder());
 }
 
@@ -73,4 +73,8 @@ export async function fetchAllMaybeMember(
 ): Promise<MaybeAccount<Member>[]> {
   const maybeAccounts = await fetchEncodedAccounts('rpc' in rpc ? rpc.rpc : rpc, addresses.map((a) => (typeof a === 'string' ? a : a.address)), config);
   return maybeAccounts.map((maybeAccount) => decodeMember(maybeAccount));
+}
+
+export function getMemberSize(): number {
+  return 74;
 }

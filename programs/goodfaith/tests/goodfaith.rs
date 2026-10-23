@@ -7,7 +7,7 @@ use {
     goodfaith::{
         error::GoodFaithError,
         gateway::GATEWAY_PROGRAM_ID,
-        state::{Loan, LoanRequest, LoanStatus, Member, Pool, PoolParams},
+        state::{Loan, LoanRequest, LoanStatus, Member, Person, Pool, PoolParams},
     },
     litesvm::LiteSVM,
     solana_account::Account,
@@ -29,6 +29,8 @@ struct Actor {
     kp: Keypair,
     token: Pubkey,
     gateway: Pubkey,
+    /// What the issuer vouches for: one hash per human, shared by a replacement wallet.
+    person_hash: [u8; 32],
 }
 
 impl Actor {
@@ -44,16 +46,23 @@ struct Env {
     pool: Pubkey,
     vault: Pubkey,
     network: Pubkey,
+    issuer: Keypair,
+    timelock: i64,
 }
 
-fn params(network: Pubkey, bps: u16) -> PoolParams {
-    PoolParams {
-        gatekeeper_network: network,
-        max_loan: 1_000_000,
-        max_term_days: 90,
-        grace_days: 7,
-        max_guarantees_per_member: 2,
-        cosigner_escrow_bps: bps,
+impl Env {
+    /// Launch-style settings with this pool's issuer and timelock.
+    fn params(&self, bps: u16) -> PoolParams {
+        PoolParams {
+            gatekeeper_network: self.network,
+            max_loan: 1_000_000,
+            max_term_days: 90,
+            grace_days: 7,
+            max_guarantees_per_member: 2,
+            cosigner_escrow_bps: bps,
+            issuer: self.issuer.pubkey(),
+            timelock_seconds: self.timelock,
+        }
     }
 }
 
@@ -102,6 +111,10 @@ fn assert_fails(res: Result<(), String>, err: impl Into<u32>) {
 
 impl Env {
     fn new(bps: u16) -> Self {
+        Self::with_timelock(bps, 0)
+    }
+
+    fn with_timelock(bps: u16, timelock: i64) -> Self {
         let mut svm = LiteSVM::new();
         svm.add_program(
             program_id(),
@@ -110,6 +123,8 @@ impl Env {
         .unwrap();
         let admin = Keypair::new();
         svm.airdrop(&admin.pubkey(), 10_000_000_000).unwrap();
+        let issuer = Keypair::new();
+        svm.airdrop(&issuer.pubkey(), 1_000_000_000).unwrap();
         let mint = Pubkey::new_unique();
         svm.set_account(
             mint,
@@ -131,10 +146,12 @@ impl Env {
             pool,
             vault,
             network: Pubkey::new_unique(),
+            issuer,
+            timelock,
         };
         env.set_time(T0);
-        let res = env.initialize_pool(params(env.network, bps));
-        res.unwrap();
+        let p = env.params(bps);
+        env.initialize_pool(p).unwrap();
         env
     }
 
@@ -179,10 +196,16 @@ impl Env {
         self.send(ix, &admin, &[])
     }
 
+    /// A settings change end to end: schedule, then apply (instant when the timelock is zero).
     fn update_pool(&mut self, signer: &Keypair, p: PoolParams) -> Result<(), String> {
+        self.schedule_params(signer, p)?;
+        self.apply_params()
+    }
+
+    fn schedule_params(&mut self, signer: &Keypair, p: PoolParams) -> Result<(), String> {
         let ix = Instruction::new_with_bytes(
             program_id(),
-            &goodfaith::instruction::UpdatePool { params: p }.data(),
+            &goodfaith::instruction::ScheduleParams { params: p }.data(),
             goodfaith::accounts::UpdatePool {
                 authority: signer.pubkey(),
                 pool: self.pool,
@@ -239,7 +262,33 @@ impl Env {
             .unwrap();
         let gateway = Pubkey::new_unique();
         self.set_gateway(gateway, gateway_data(&kp.pubkey(), &self.network, 0, None));
-        Actor { kp, token, gateway }
+        Actor {
+            kp,
+            token,
+            gateway,
+            person_hash: Pubkey::new_unique().to_bytes(),
+        }
+    }
+
+    /// A fresh wallet (SOL, tokens, gateway token) for the same person as `a`, tracked for `token_of`.
+    fn new_wallet_for(&mut self, a: &Actor, tokens: u64) -> Actor {
+        let mut n = self.actor(tokens);
+        n.person_hash = a.person_hash;
+        TOKEN_ACCOUNTS.with(|m| m.borrow_mut().insert(n.key(), n.token));
+        n
+    }
+
+    fn person_addr(&self, hash: &[u8; 32]) -> Pubkey {
+        Pubkey::find_program_address(
+            &[b"person", self.pool.as_ref(), hash.as_ref()],
+            &program_id(),
+        )
+        .0
+    }
+
+    /// The wallet currently bound to a person account.
+    fn wallet_of(&self, person: &Pubkey) -> Pubkey {
+        self.read::<Person>(person).wallet
     }
 
     fn member_addr(&self, wallet: &Pubkey) -> Pubkey {
@@ -264,14 +313,34 @@ impl Env {
         gateway: Pubkey,
         payer: Option<&Keypair>,
     ) -> Result<(), String> {
+        let issuer = self.issuer.insecure_clone();
+        self.register_full(a, gateway, payer, &issuer)
+    }
+
+    fn register_as(&mut self, a: &Actor, issuer: &Keypair) -> Result<(), String> {
+        self.register_full(a, a.gateway, None, issuer)
+    }
+
+    fn register_full(
+        &mut self,
+        a: &Actor,
+        gateway: Pubkey,
+        payer: Option<&Keypair>,
+        issuer: &Keypair,
+    ) -> Result<(), String> {
         let payer_key = payer.map_or(a.key(), |p| p.pubkey());
         let ix = Instruction::new_with_bytes(
             program_id(),
-            &goodfaith::instruction::RegisterMember {}.data(),
+            &goodfaith::instruction::RegisterMember {
+                person_hash: a.person_hash,
+            }
+            .data(),
             goodfaith::accounts::RegisterMember {
                 wallet: a.key(),
                 payer: payer_key,
+                issuer: issuer.pubkey(),
                 pool: self.pool,
+                person: self.person_addr(&a.person_hash),
                 member: self.member_addr(&a.key()),
                 gateway_token: gateway,
                 system_program: system_program::ID,
@@ -279,8 +348,8 @@ impl Env {
             .to_account_metas(None),
         );
         match payer {
-            Some(p) => self.send(ix, p, &[&a.kp]),
-            None => self.send(ix, &a.kp, &[]),
+            Some(p) => self.send(ix, p, &[&a.kp, issuer]),
+            None => self.send(ix, &a.kp, &[issuer]),
         }
     }
 
@@ -316,7 +385,12 @@ impl Env {
         self.read(&self.pool)
     }
 
-    fn member(&self, a: &Actor) -> Member {
+    /// The person behind an actor: eligibility, open loan and guarantees live here.
+    fn person(&self, a: &Actor) -> Person {
+        self.read(&self.person_addr(&a.person_hash))
+    }
+
+    fn member_of(&self, a: &Actor) -> Member {
         self.read(&self.member_addr(&a.key()))
     }
 
@@ -375,7 +449,8 @@ impl Env {
                 borrower: borrower.key(),
                 pool: self.pool,
                 mint: self.mint,
-                borrower_member: self.member_addr(&borrower.key()),
+                borrower_person: self.person_addr(&borrower.person_hash),
+                cosigner_member: self.member_addr(cosigner),
                 borrower_gateway_token: borrower.gateway,
                 request: self.request_addr(&borrower.key()),
                 system_program: system_program::ID,
@@ -426,8 +501,8 @@ impl Env {
                 vault: self.vault,
                 request: request_addr,
                 request_rent_payer: rent_payer,
-                borrower_member: self.member_addr(&borrower.key()),
-                cosigner_member: self.member_addr(&cosigner.key()),
+                borrower_person: self.person_addr(&borrower.person_hash),
+                cosigner_person: self.person_addr(&cosigner.person_hash),
                 borrower_token: borrower.token,
                 cosigner_token: cosigner.token,
                 loan,
@@ -506,9 +581,9 @@ impl Env {
                 loan: loan_addr,
                 escrow: self.escrow_addr(&loan_addr),
                 payer_token: payer.token,
-                cosigner_token: self.token_of(&loan.cosigner),
-                borrower_member: self.member_addr(&loan.borrower),
-                cosigner_member: self.member_addr(&loan.cosigner),
+                cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
+                borrower_person: loan.borrower_person,
+                cosigner_person: loan.cosigner_person,
                 rent_payer: loan.rent_payer,
                 token_program: TOKEN_PROGRAM,
             }
@@ -530,9 +605,9 @@ impl Env {
                 vault: self.vault,
                 loan: loan_addr,
                 escrow: self.escrow_addr(&loan_addr),
-                cosigner_token: self.token_of(&loan.cosigner),
-                borrower_member: self.member_addr(&loan.borrower),
-                cosigner_member: self.member_addr(&loan.cosigner),
+                cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
+                borrower_person: loan.borrower_person,
+                cosigner_person: loan.cosigner_person,
                 rent_payer: loan.rent_payer,
                 token_program: TOKEN_PROGRAM,
             }
@@ -632,20 +707,31 @@ impl Env {
             &program_id(),
         )
         .0;
+        let person = Pubkey::find_program_address(
+            &[b"person", pool.as_ref(), a.person_hash.as_ref()],
+            &program_id(),
+        )
+        .0;
         let ix = Instruction::new_with_bytes(
             program_id(),
-            &goodfaith::instruction::RegisterMember {}.data(),
+            &goodfaith::instruction::RegisterMember {
+                person_hash: a.person_hash,
+            }
+            .data(),
             goodfaith::accounts::RegisterMember {
                 wallet: a.key(),
                 payer: a.key(),
+                issuer: self.issuer.pubkey(),
                 pool,
+                person,
                 member,
                 gateway_token: a.gateway,
                 system_program: system_program::ID,
             }
             .to_account_metas(None),
         );
-        self.send(ix, &a.kp, &[])
+        let issuer = self.issuer.insecure_clone();
+        self.send(ix, &a.kp, &[&issuer])
     }
 
     fn repay_accounts(&self, payer: &Actor, id: u64) -> goodfaith::accounts::Repay {
@@ -659,9 +745,9 @@ impl Env {
             loan: loan_addr,
             escrow: self.escrow_addr(&loan_addr),
             payer_token: payer.token,
-            cosigner_token: self.token_of(&loan.cosigner),
-            borrower_member: self.member_addr(&loan.borrower),
-            cosigner_member: self.member_addr(&loan.cosigner),
+            cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
+            borrower_person: loan.borrower_person,
+            cosigner_person: loan.cosigner_person,
             rent_payer: loan.rent_payer,
             token_program: TOKEN_PROGRAM,
         }
@@ -691,9 +777,9 @@ impl Env {
             vault: self.vault,
             loan: loan_addr,
             escrow: self.escrow_addr(&loan_addr),
-            cosigner_token: self.token_of(&loan.cosigner),
-            borrower_member: self.member_addr(&loan.borrower),
-            cosigner_member: self.member_addr(&loan.cosigner),
+            cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
+            borrower_person: loan.borrower_person,
+            cosigner_person: loan.cosigner_person,
             rent_payer: loan.rent_payer,
             token_program: TOKEN_PROGRAM,
         }
@@ -729,8 +815,8 @@ impl Env {
             vault: self.vault,
             request: request_addr,
             request_rent_payer: rent_payer,
-            borrower_member: self.member_addr(&borrower.key()),
-            cosigner_member: self.member_addr(&cosigner.key()),
+            borrower_person: self.person_addr(&borrower.person_hash),
+            cosigner_person: self.person_addr(&cosigner.person_hash),
             borrower_token: borrower.token,
             cosigner_token: cosigner.token,
             loan,
@@ -763,6 +849,152 @@ impl Env {
     }
 }
 
+impl Env {
+    fn apply_params(&mut self) -> Result<(), String> {
+        let admin = self.admin.insecure_clone();
+        self.apply_params_by(&admin)
+    }
+
+    /// Anyone may apply a scheduled change; `payer` only covers the fee.
+    fn apply_params_by(&mut self, payer: &Keypair) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::ApplyParams {}.data(),
+            goodfaith::accounts::ApplyParams { pool: self.pool }.to_account_metas(None),
+        );
+        self.send(ix, payer, &[])
+    }
+
+    fn authority_ix(&self, signer: &Keypair, data: Vec<u8>) -> Instruction {
+        Instruction::new_with_bytes(
+            program_id(),
+            &data,
+            goodfaith::accounts::UpdatePool {
+                authority: signer.pubkey(),
+                pool: self.pool,
+            }
+            .to_account_metas(None),
+        )
+    }
+
+    fn cancel_params(&mut self, signer: &Keypair) -> Result<(), String> {
+        let ix = self.authority_ix(signer, goodfaith::instruction::CancelParams {}.data());
+        self.send(ix, signer, &[])
+    }
+
+    fn suspend_issuer(&mut self, signer: &Keypair) -> Result<(), String> {
+        let ix = self.authority_ix(signer, goodfaith::instruction::SuspendIssuer {}.data());
+        self.send(ix, signer, &[])
+    }
+
+    /// A token account of the pool mint owned by a fresh key: a valid successor.
+    fn successor_token(&mut self) -> Pubkey {
+        self.token_for_mint(self.mint)
+    }
+
+    fn token_for_mint(&mut self, mint: Pubkey) -> Pubkey {
+        let token = Pubkey::new_unique();
+        self.svm
+            .set_account(
+                token,
+                Account {
+                    lamports: 2_000_000,
+                    data: token_account_data(&mint, &Pubkey::new_unique(), 0),
+                    owner: TOKEN_PROGRAM,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .unwrap();
+        token
+    }
+
+    fn announce_wind_down(&mut self, signer: &Keypair, successor: Pubkey) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::AnnounceWindDown {}.data(),
+            goodfaith::accounts::AnnounceWindDown {
+                authority: signer.pubkey(),
+                pool: self.pool,
+                successor_vault: successor,
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, signer, &[])
+    }
+
+    fn cancel_wind_down(&mut self, signer: &Keypair) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::CancelWindDown {}.data(),
+            goodfaith::accounts::CancelWindDown {
+                authority: signer.pubkey(),
+                pool: self.pool,
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, signer, &[])
+    }
+
+    fn sweep(&mut self, successor: Pubkey) -> Result<(), String> {
+        let admin = self.admin.insecure_clone();
+        self.sweep_by(&admin, successor)
+    }
+
+    fn sweep_by(&mut self, payer: &Keypair, successor: Pubkey) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::SweepToSuccessor {}.data(),
+            goodfaith::accounts::SweepToSuccessor {
+                pool: self.pool,
+                mint: self.mint,
+                vault: self.vault,
+                successor_vault: successor,
+                token_program: TOKEN_PROGRAM,
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, payer, &[])
+    }
+
+    /// Binds `new` (same person hash) as the person's wallet; the old wallet is read on chain.
+    fn rebind_wallet(&mut self, new: &Actor) -> Result<(), String> {
+        let issuer = self.issuer.insecure_clone();
+        self.rebind_wallet_as(new, &issuer)
+    }
+
+    fn rebind_wallet_as(&mut self, new: &Actor, issuer: &Keypair) -> Result<(), String> {
+        let person = self.person_addr(&new.person_hash);
+        let old_wallet = self
+            .svm
+            .get_account(&person)
+            .filter(|a| !a.data.is_empty())
+            .map_or(Pubkey::new_unique(), |_| self.wallet_of(&person));
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::RebindWallet {}.data(),
+            goodfaith::accounts::RebindWallet {
+                new_wallet: new.key(),
+                payer: new.key(),
+                issuer: issuer.pubkey(),
+                pool: self.pool,
+                person,
+                old_member: self.member_addr(&old_wallet),
+                new_member: self.member_addr(&new.key()),
+                gateway_token: new.gateway,
+                system_program: system_program::ID,
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, &new.kp, &[issuer])
+    }
+
+    fn after_grace(&mut self, id: u64) {
+        let loan = self.loan(id);
+        self.set_time(loan.due_at + i64::from(loan.grace_days) * DAY + 1);
+    }
+}
+
 thread_local! {
     static TOKEN_ACCOUNTS: std::cell::RefCell<std::collections::HashMap<Pubkey, Pubkey>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
@@ -778,7 +1010,7 @@ fn init_update_freeze() {
     assert_eq!(pool.cosigner_escrow_bps, 2500);
     assert_eq!(pool.loan_count, 0);
 
-    let mut p = params(env.network, 5000);
+    let mut p = env.params(5000);
     p.max_loan = 42;
     let admin = env.admin.insecure_clone();
     env.update_pool(&admin, p).unwrap();
@@ -816,7 +1048,7 @@ fn register_with_valid_token() {
     let mut env = Env::new(2500);
     let a = env.actor(0);
     env.register(&a).unwrap();
-    let m = env.member(&a);
+    let m = env.person(&a);
     assert_eq!(m.wallet, a.key());
     assert_eq!(m.active_loan, None);
     assert_eq!(m.active_guarantees, 0);
@@ -834,7 +1066,7 @@ fn register_with_separate_payer() {
     env.register_paid(&a, a.gateway, Some(&sponsor)).unwrap();
     assert_eq!(env.svm.get_balance(&a.key()), wallet_before);
     assert!(env.svm.get_balance(&sponsor.pubkey()) < sponsor_before);
-    assert_eq!(env.member(&a).wallet, a.key());
+    assert_eq!(env.person(&a).wallet, a.key());
 }
 
 #[test]
@@ -933,8 +1165,8 @@ fn open_loan_within_cap() {
     assert_eq!(env.balance(&env.vault), 9_000);
     assert_eq!(env.pool_state().loan_count, 1);
     assert_eq!(env.pool_state().total_lent, 1_000);
-    assert_eq!(env.member(&borrower).active_loan, Some(env.loan_addr(0)));
-    assert_eq!(env.member(&cosigner).active_guarantees, 1);
+    assert_eq!(env.person(&borrower).active_loan, Some(env.loan_addr(0)));
+    assert_eq!(env.person(&cosigner).active_guarantees, 1);
 }
 
 #[test]
@@ -1127,7 +1359,7 @@ fn partial_then_full_repay_by_third_party() {
     assert_eq!(loan.status, LoanStatus::Active);
     assert_eq!(env.balance(&borrower_pays), 600);
     assert_eq!(env.balance(&env.vault), 9_400);
-    assert!(env.member(&borrower).active_loan.is_some());
+    assert!(env.person(&borrower).active_loan.is_some());
     assert!(env
         .svm
         .get_account(&env.escrow_addr(&env.loan_addr(id)))
@@ -1154,8 +1386,8 @@ fn partial_then_full_repay_by_third_party() {
         .get_account(&env.escrow_addr(&env.loan_addr(id)))
         .is_none());
     assert!(env.svm.get_account(&payer.key()).unwrap().lamports > payer_lamports);
-    assert_eq!(env.member(&borrower).active_loan, None);
-    assert_eq!(env.member(&cosigner).active_guarantees, 0);
+    assert_eq!(env.person(&borrower).active_loan, None);
+    assert_eq!(env.person(&cosigner).active_guarantees, 0);
 
     // the loan is finished; paying again fails
     assert!(env.repay(&stranger, id, 1).is_err());
@@ -1216,7 +1448,7 @@ fn default_only_after_grace() {
     env.set_time(due + 7 * DAY + 1);
     env.mark_default(&caller.kp, id).unwrap();
     assert_eq!(env.loan(id).status, LoanStatus::Defaulted);
-    assert!(env.member(&borrower).ineligible);
+    assert!(env.person(&borrower).ineligible);
     assert!(env.mark_default(&caller.kp, id).is_err());
 }
 
@@ -1235,8 +1467,9 @@ fn default_escrow_fully_covers() {
         .svm
         .get_account(&env.escrow_addr(&env.loan_addr(id)))
         .is_none());
-    let (b, c) = (env.member(&borrower), env.member(&cosigner));
-    assert!(b.ineligible && c.ineligible);
+    let (b, c) = (env.person(&borrower), env.person(&cosigner));
+    // The escrow made the fund whole, so only the borrower loses access.
+    assert!(b.ineligible && !c.ineligible);
     assert_eq!(b.active_loan, None);
     assert_eq!(c.active_guarantees, 0);
 }
@@ -1268,6 +1501,8 @@ fn default_escrow_exceeds_shortfall() {
     assert_eq!(env.balance(&env.vault), 10_000);
     // cosigner gets back the 600 not needed
     assert_eq!(env.balance(&cosigner.token), 10_000 - 400);
+    assert!(env.person(&borrower).ineligible);
+    assert!(!env.person(&cosigner).ineligible);
 }
 
 #[test]
@@ -1289,7 +1524,7 @@ fn ineligible_members_cannot_take_part_in_new_loans() {
         env.open_loan(&f, &fresh_borrower, &cosigner, 100, 30),
         GoodFaithError::Ineligible,
     );
-    assert_eq!(env.member(&borrower).active_loan, None);
+    assert_eq!(env.person(&borrower).active_loan, None);
 }
 
 #[test]
@@ -1423,7 +1658,7 @@ fn stale_request_after_borrower_became_ineligible() {
     let caller = env.actor(0);
     env.set_time(T0 + 30 * DAY + 7 * DAY + 1);
     env.mark_default(&caller.kp, id).unwrap();
-    assert!(env.member(&risky).ineligible);
+    assert!(env.person(&risky).ineligible);
 
     let h = helper.kp.insecure_clone();
     assert_fails(
@@ -1500,7 +1735,7 @@ fn audit_pool_rejects_token_2022_mints() {
         let ix = Instruction::new_with_bytes(
             program_id(),
             &goodfaith::instruction::InitializePool {
-                params: params(env.network, 2500),
+                params: env.params(2500),
             }
             .data(),
             goodfaith::accounts::InitializePool {
@@ -1544,13 +1779,12 @@ fn audit_cosign_binds_to_approved_terms() {
     );
     // Pool raises the escrow rate after the cosigner looked.
     let admin = env.admin.insecure_clone();
-    env.update_pool(&admin, params(env.network, 10_000))
-        .unwrap();
+    env.update_pool(&admin, env.params(10_000)).unwrap();
     assert_fails(
         env.cosign_loan_with(&b, &borrower, &cosigner, (900, 30, 225)),
         GoodFaithError::EscrowTooHigh,
     );
-    env.update_pool(&admin, params(env.network, 2500)).unwrap();
+    env.update_pool(&admin, env.params(2500)).unwrap();
     env.cosign_loan_with(&b, &borrower, &cosigner, (900, 30, 225))
         .unwrap();
     assert_eq!(env.loan(0).escrowed, 225);
@@ -1561,7 +1795,7 @@ fn audit_grace_period_is_fixed_at_open() {
     let (mut env, _borrower, _cosigner, id) = setup_default(2500, 1_000);
     assert_eq!(env.loan(id).grace_days, 7);
     let admin = env.admin.insecure_clone();
-    let mut p = params(env.network, 2500);
+    let mut p = env.params(2500);
     p.grace_days = 0;
     env.update_pool(&admin, p).unwrap();
     let caller = env.actor(0);
@@ -1582,7 +1816,7 @@ fn audit_lowering_limits_mid_loan_keeps_loan_repayable() {
     let cosigner = env.tracked_actor(10_000);
     let id = env.open_simple(&borrower, &cosigner, 1_000);
     let admin = env.admin.insecure_clone();
-    let mut p = params(env.network, 0);
+    let mut p = env.params(0);
     p.max_loan = 1;
     p.max_term_days = 1;
     p.max_guarantees_per_member = 1;
@@ -1633,7 +1867,7 @@ fn audit_frozen_pool_cannot_be_updated_or_refrozen() {
     let admin = env.admin.insecure_clone();
     env.freeze_pool(&admin).unwrap();
     assert_fails(
-        env.update_pool(&admin, params(env.network, 1)),
+        env.update_pool(&admin, env.params(1)),
         GoodFaithError::Unauthorized,
     );
     assert_fails(env.freeze_pool(&admin), GoodFaithError::Unauthorized);
@@ -1659,8 +1893,8 @@ fn audit_cannot_substitute_vault_escrow_or_mint() {
         escrow: env.escrow_addr(&loan_addr),
         payer_token: cosigner.token,
         cosigner_token: cosigner.token,
-        borrower_member: env.member_addr(&loan.borrower),
-        cosigner_member: env.member_addr(&loan.cosigner),
+        borrower_person: loan.borrower_person,
+        cosigner_person: loan.cosigner_person,
         rent_payer: loan.rent_payer,
         token_program: TOKEN_PROGRAM,
     };
@@ -1696,11 +1930,11 @@ fn update_rejects_bad_params() {
         |p| p.grace_days = goodfaith::MAX_GRACE_DAYS + 1,
     ];
     for tweak in cases {
-        let mut bad = params(env.network, 100);
+        let mut bad = env.params(100);
         tweak(&mut bad);
         assert_fails(env.update_pool(&admin, bad), GoodFaithError::InvalidParams);
     }
-    let mut edge = params(env.network, 100);
+    let mut edge = env.params(100);
     edge.max_term_days = goodfaith::MAX_TERM_DAYS;
     edge.grace_days = goodfaith::MAX_GRACE_DAYS;
     env.update_pool(&admin, edge).unwrap();
@@ -1710,15 +1944,15 @@ fn update_rejects_bad_params() {
 #[test]
 fn initialize_rejects_bad_params() {
     let mut env = Env::new(2500);
-    let mut bad = params(env.network, 2500);
+    let mut bad = env.params(2500);
     bad.max_loan = 0;
     let (pool, res) = env.init_pool_on_new_mint(bad);
     assert_fails(res, GoodFaithError::InvalidParams);
     assert!(env.svm.get_account(&pool).is_none());
-    let (pool, res) = env.init_pool_on_new_mint(params(env.network, 10_001));
+    let (pool, res) = env.init_pool_on_new_mint(env.params(10_001));
     assert_fails(res, GoodFaithError::InvalidBps);
     assert!(env.svm.get_account(&pool).is_none());
-    let (pool, res) = env.init_pool_on_new_mint(params(env.network, 2500));
+    let (pool, res) = env.init_pool_on_new_mint(env.params(2500));
     res.unwrap();
     let p: Pool = env.read(&pool);
     assert_eq!(p.authority, Some(env.admin.pubkey()));
@@ -1729,7 +1963,7 @@ fn initialize_rejects_bad_params() {
 fn initialize_twice_and_register_twice_fail() {
     let mut env = Env::new(2500);
     let before = env.pool_state();
-    assert_fails(env.initialize_pool(params(env.network, 100)), 0u32);
+    assert_fails(env.initialize_pool(env.params(100)), 0u32);
     assert_eq!(env.pool_state().authority, before.authority);
     let a = env.member_actor(0);
     assert_fails(env.register(&a), 0u32);
@@ -1766,7 +2000,7 @@ fn authority_handover_is_two_step() {
     assert_eq!(env.pool_state().pending_authority, Some(next.pubkey()));
     assert_eq!(env.pool_state().authority, Some(admin.pubkey()));
     // Still the admin's pool until the new key accepts.
-    env.update_pool(&admin, params(env.network, 3000)).unwrap();
+    env.update_pool(&admin, env.params(3000)).unwrap();
     assert_fails(
         env.accept_authority(&stranger),
         GoodFaithError::Unauthorized,
@@ -1777,10 +2011,10 @@ fn authority_handover_is_two_step() {
     assert_eq!(p.authority, Some(next.pubkey()));
     assert_eq!(p.pending_authority, None);
     assert_fails(
-        env.update_pool(&admin, params(env.network, 100)),
+        env.update_pool(&admin, env.params(100)),
         GoodFaithError::Unauthorized,
     );
-    env.update_pool(&next, params(env.network, 100)).unwrap();
+    env.update_pool(&next, env.params(100)).unwrap();
     assert_fails(env.accept_authority(&next), GoodFaithError::Unauthorized);
 
     // A proposal can be withdrawn, after which the named key can no longer accept.
@@ -1813,13 +2047,13 @@ fn member_from_another_pool_is_rejected() {
     use anchor_lang::error::ErrorCode;
     let mut env = Env::new(2500);
     env.fund(10_000);
-    let (pool_b, res) = env.init_pool_on_new_mint(params(env.network, 2500));
+    let (pool_b, res) = env.init_pool_on_new_mint(env.params(2500));
     res.unwrap();
     let borrower = env.actor(0);
     env.register_in_pool(&borrower, pool_b).unwrap();
     let cosigner = env.member_actor(1_000);
-    let member_b = Pubkey::find_program_address(
-        &[b"member", pool_b.as_ref(), borrower.key().as_ref()],
+    let person_b = Pubkey::find_program_address(
+        &[b"person", pool_b.as_ref(), borrower.person_hash.as_ref()],
         &program_id(),
     )
     .0;
@@ -1836,7 +2070,8 @@ fn member_from_another_pool_is_rejected() {
             borrower: borrower.key(),
             pool: env.pool,
             mint: env.mint,
-            borrower_member: member_b,
+            borrower_person: person_b,
+            cosigner_member: env.member_addr(&cosigner.key()),
             borrower_gateway_token: borrower.gateway,
             request: env.request_addr(&borrower.key()),
             system_program: system_program::ID,
@@ -1977,7 +2212,7 @@ fn default_with_zero_escrow_and_repay_after_grace() {
         .get_account(&env.escrow_addr(&env.loan_addr(id)))
         .is_none());
     assert!(env.svm.get_account(&rent_payer).unwrap().lamports > before);
-    assert!(env.member(&borrower).ineligible && env.member(&cosigner).ineligible);
+    assert!(env.person(&borrower).ineligible && env.person(&cosigner).ineligible);
 
     // Repaying late, but before anyone marks the default, still closes the loan normally.
     let (mut env, borrower, cosigner, id) = setup_default(2500, 1_000);
@@ -1985,7 +2220,7 @@ fn default_with_zero_escrow_and_repay_after_grace() {
     env.set_time(T0 + 30 * DAY + 7 * DAY + 100 * DAY);
     env.repay(&payer, id, 1_000).unwrap();
     assert_eq!(env.loan(id).status, LoanStatus::Repaid);
-    assert!(!env.member(&borrower).ineligible && !env.member(&cosigner).ineligible);
+    assert!(!env.person(&borrower).ineligible && !env.person(&cosigner).ineligible);
     assert_eq!(env.balance(&cosigner.token), 10_000);
 }
 
@@ -2021,12 +2256,426 @@ fn malformed_gateway_data_is_rejected() {
 
 // ---- property tests (random instruction sequences over LiteSVM) ----
 
+#[test]
+fn register_binds_wallet_to_person_and_needs_the_issuer() {
+    let mut env = Env::new(2500);
+    let a = env.actor(0);
+    let impostor = Keypair::new();
+    env.svm.airdrop(&impostor.pubkey(), 1_000_000_000).unwrap();
+    assert_fails(env.register_as(&a, &impostor), GoodFaithError::Unauthorized);
+    env.register(&a).unwrap();
+    let person = env.person(&a);
+    assert_eq!(person.person_hash, a.person_hash);
+    assert_eq!(person.wallet, a.key());
+    let member = env.member_of(&a);
+    assert_eq!(member.wallet, a.key());
+    assert_eq!(member.person, env.person_addr(&a.person_hash));
+    assert!(!member.retired);
+    assert_eq!(env.pool_state().issuer, env.issuer.pubkey());
+}
+
+#[test]
+fn one_person_one_wallet_in_both_directions() {
+    let mut env = Env::new(2500);
+    let a = env.member_actor(0);
+    // Same person, second wallet: the Person account already exists.
+    let second = env.new_wallet_for(&a, 0);
+    assert!(env.register(&second).is_err());
+    // Same wallet, different person: the Member account already exists.
+    let mut again = env.actor(0);
+    again.kp = a.kp.insecure_clone();
+    again.gateway = a.gateway;
+    assert!(env.register(&again).is_err());
+    assert_eq!(env.person(&a).wallet, a.key());
+}
+
+#[test]
+fn rebind_moves_the_person_and_their_open_loan_to_a_new_wallet() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    let borrower = env.tracked_actor(0);
+    let cosigner = env.tracked_actor(10_000);
+    let id = env.open_simple(&borrower, &cosigner, 1_000);
+
+    let borrower2 = env.new_wallet_for(&borrower, 0);
+    let cosigner2 = env.new_wallet_for(&cosigner, 0);
+    env.rebind_wallet(&borrower2).unwrap();
+    env.rebind_wallet(&cosigner2).unwrap();
+    assert_eq!(env.person(&borrower).wallet, borrower2.key());
+    assert!(env.member_of(&borrower).retired);
+    assert!(!env.member_of(&borrower2).retired);
+    assert_eq!(
+        env.member_of(&borrower2).person,
+        env.person_addr(&borrower.person_hash)
+    );
+    // The loan still belongs to the person: the new wallet cannot borrow again.
+    let b2 = borrower2.kp.insecure_clone();
+    assert_fails(
+        env.request_loan(&b2, &borrower2, &cosigner2.key(), 100, 30),
+        GoodFaithError::BorrowerHasLoan,
+    );
+    // Retired wallets are out: as borrower (no longer the person's wallet) and as co-signer.
+    let b = borrower.kp.insecure_clone();
+    assert_fails(
+        env.request_loan(&b, &borrower, &cosigner2.key(), 100, 30),
+        GoodFaithError::WalletNotBound,
+    );
+    let fresh = env.member_actor(0);
+    let f = fresh.kp.insecure_clone();
+    assert_fails(
+        env.request_loan(&f, &fresh, &cosigner.key(), 100, 30),
+        GoodFaithError::WalletRetired,
+    );
+    // Repayment by a third party returns the escrow to the co-signer's new wallet.
+    let payer = env.tracked_actor(5_000);
+    env.repay(&payer, id, 1_000).unwrap();
+    assert_eq!(env.balance(&cosigner2.token), 250);
+    assert_eq!(env.balance(&cosigner.token), 10_000 - 250);
+    assert_eq!(env.person(&borrower).active_loan, None);
+    assert_eq!(env.person(&cosigner).active_guarantees, 0);
+    // Both people can take part again, from their new wallets.
+    env.open_loan(&b2, &borrower2, &cosigner2, 500, 30).unwrap();
+    assert_eq!(env.pool_state().active_loans, 1);
+}
+
+#[test]
+fn rebind_default_pays_the_new_wallet_and_follows_the_policy() {
+    let mut env = Env::new(10_000);
+    env.fund(10_000);
+    let borrower = env.tracked_actor(0);
+    let cosigner = env.tracked_actor(10_000);
+    let id = env.open_simple(&borrower, &cosigner, 1_000);
+    env.repay(&borrower, id, 400).unwrap();
+    let cosigner2 = env.new_wallet_for(&cosigner, 0);
+    env.rebind_wallet(&cosigner2).unwrap();
+    env.after_grace(id);
+    let caller = env.actor(0);
+    env.mark_default(&caller.kp, id).unwrap();
+    // 600 owed came from the 1_000 escrow; the 400 left goes to the current wallet.
+    assert_eq!(env.balance(&cosigner2.token), 400);
+    assert_eq!(env.balance(&cosigner.token), 9_000);
+    assert_eq!(env.pool_state().total_lost, 0);
+    assert!(env.person(&borrower).ineligible);
+    assert!(!env.person(&cosigner).ineligible);
+    assert_eq!(env.pool_state().active_loans, 0);
+}
+
+#[test]
+fn rebind_rejections() {
+    let mut env = Env::new(2500);
+    let a = env.member_actor(0);
+    let other = env.member_actor(0);
+    let impostor = Keypair::new();
+    env.svm.airdrop(&impostor.pubkey(), 1_000_000_000).unwrap();
+
+    let new = env.new_wallet_for(&a, 0);
+    assert_fails(
+        env.rebind_wallet_as(&new, &impostor),
+        GoodFaithError::Unauthorized,
+    );
+
+    // A wallet that already belongs to someone cannot be bound to a second person.
+    let mut taken = env.new_wallet_for(&a, 0);
+    taken.kp = other.kp.insecure_clone();
+    taken.gateway = other.gateway;
+    assert!(env.rebind_wallet(&taken).is_err());
+
+    // The new wallet needs its own valid gateway token.
+    let mut untokened = env.new_wallet_for(&a, 0);
+    untokened.gateway = Pubkey::new_unique();
+    assert_fails(
+        env.rebind_wallet(&untokened),
+        GoodFaithError::InvalidGatewayToken,
+    );
+
+    // Unknown person.
+    let nobody = env.actor(0);
+    assert!(env.rebind_wallet(&nobody).is_err());
+
+    env.rebind_wallet(&new).unwrap();
+    // The retired wallet cannot be re-bound: its Member stays retired for good.
+    let mut back = env.new_wallet_for(&a, 0);
+    back.kp = a.kp.insecure_clone();
+    back.gateway = a.gateway;
+    assert!(env.rebind_wallet(&back).is_err());
+    assert!(env.member_of(&a).retired);
+    assert_eq!(env.person(&a).wallet, new.key());
+}
+
+#[test]
+fn covered_default_leaves_the_cosigner_in_good_standing() {
+    let (mut env, borrower, cosigner, id) = setup_default(10_000, 1_000);
+    env.after_grace(id);
+    let caller = env.actor(0);
+    env.mark_default(&caller.kp, id).unwrap();
+    assert!(!env.person(&cosigner).ineligible);
+    // ... and they can co-sign again, while the borrower cannot borrow.
+    let next = env.member_actor(0);
+    let n = next.kp.insecure_clone();
+    env.open_loan(&n, &next, &cosigner, 500, 30).unwrap();
+    let b = borrower.kp.insecure_clone();
+    assert_fails(
+        env.open_loan(&b, &borrower, &cosigner, 100, 30),
+        GoodFaithError::Ineligible,
+    );
+}
+
+#[test]
+fn timelock_lifecycle() {
+    let mut env = Env::with_timelock(2500, 3 * DAY);
+    let admin = env.admin.insecure_clone();
+    let stranger = Keypair::new();
+    env.svm.airdrop(&stranger.pubkey(), 1_000_000_000).unwrap();
+    assert_eq!(env.pool_state().timelock_seconds, 3 * DAY);
+
+    assert_fails(env.apply_params(), GoodFaithError::NothingPending);
+    assert_fails(env.cancel_params(&admin), GoodFaithError::NothingPending);
+
+    let mut p = env.params(5000);
+    p.max_loan = 42;
+    assert_fails(
+        env.schedule_params(&stranger, p),
+        GoodFaithError::Unauthorized,
+    );
+    env.schedule_params(&admin, p).unwrap();
+    let pool = env.pool_state();
+    assert_eq!(pool.max_loan, 1_000_000, "nothing changes at scheduling");
+    assert_eq!(pool.pending_params, Some(p));
+    assert_eq!(pool.params_effective_at, T0 + 3 * DAY);
+
+    env.set_time(T0 + 3 * DAY - 1);
+    assert_fails(env.apply_params(), GoodFaithError::TimelockNotElapsed);
+    assert_fails(env.cancel_params(&stranger), GoodFaithError::Unauthorized);
+    env.set_time(T0 + 3 * DAY);
+    env.apply_params_by(&stranger).unwrap();
+    let pool = env.pool_state();
+    assert_eq!(pool.max_loan, 42);
+    assert_eq!(pool.cosigner_escrow_bps, 5000);
+    assert_eq!(pool.pending_params, None);
+    assert_fails(env.apply_params(), GoodFaithError::NothingPending);
+
+    // Rescheduling replaces the pending change; cancelling drops it.
+    let mut q = p;
+    q.max_loan = 7;
+    env.schedule_params(&admin, q).unwrap();
+    q.max_loan = 8;
+    env.set_time(T0 + 4 * DAY);
+    env.schedule_params(&admin, q).unwrap();
+    assert_eq!(env.pool_state().pending_params, Some(q));
+    assert_eq!(env.pool_state().params_effective_at, T0 + 7 * DAY);
+    env.cancel_params(&admin).unwrap();
+    assert_eq!(env.pool_state().pending_params, None);
+    assert_eq!(env.pool_state().max_loan, 42);
+
+    // Lowering the timelock itself waits the old delay; afterwards changes are instant.
+    let mut fast = q;
+    fast.timelock_seconds = 0;
+    env.schedule_params(&admin, fast).unwrap();
+    assert_fails(env.apply_params(), GoodFaithError::TimelockNotElapsed);
+    env.set_time(T0 + 7 * DAY);
+    env.apply_params().unwrap();
+    assert_eq!(env.pool_state().timelock_seconds, 0);
+    fast.max_loan = 9;
+    env.update_pool(&admin, fast).unwrap();
+    assert_eq!(env.pool_state().max_loan, 9);
+
+    // Bounds: the timelock has a ceiling and cannot be negative.
+    let mut too_long = fast;
+    too_long.timelock_seconds = goodfaith::MAX_TIMELOCK_SECONDS + 1;
+    assert_fails(
+        env.schedule_params(&admin, too_long),
+        GoodFaithError::InvalidParams,
+    );
+    let mut negative = fast;
+    negative.timelock_seconds = -1;
+    assert_fails(
+        env.schedule_params(&admin, negative),
+        GoodFaithError::InvalidParams,
+    );
+    let mut max = fast;
+    max.timelock_seconds = goodfaith::MAX_TIMELOCK_SECONDS;
+    env.update_pool(&admin, max).unwrap();
+
+    // Freezing discards a scheduled change.
+    let mut pending = max;
+    pending.max_loan = 1;
+    env.schedule_params(&admin, pending).unwrap();
+    env.freeze_pool(&admin).unwrap();
+    assert_eq!(env.pool_state().pending_params, None);
+    env.set_time(T0 + 200 * DAY);
+    assert_fails(env.apply_params(), GoodFaithError::NothingPending);
+    assert_eq!(env.pool_state().max_loan, 9);
+}
+
+#[test]
+fn wind_down_lifecycle() {
+    let mut env = Env::with_timelock(2500, 3 * DAY);
+    env.fund(10_000);
+    let admin = env.admin.insecure_clone();
+    let stranger = Keypair::new();
+    env.svm.airdrop(&stranger.pubkey(), 1_000_000_000).unwrap();
+    let successor = env.successor_token();
+    let borrower = env.tracked_actor(0);
+    let cosigner = env.tracked_actor(10_000);
+
+    assert_fails(env.cancel_wind_down(&admin), GoodFaithError::NotWindingDown);
+    // No successor named yet: the account check fires before the state check.
+    assert_fails(env.sweep(successor), GoodFaithError::InvalidSuccessor);
+    assert_fails(
+        env.announce_wind_down(&stranger, successor),
+        GoodFaithError::Unauthorized,
+    );
+    // The vault, an escrow, or an account of another mint are not successors.
+    let vault = env.vault;
+    assert_fails(
+        env.announce_wind_down(&admin, vault),
+        GoodFaithError::InvalidSuccessor,
+    );
+    let id = env.open_simple(&borrower, &cosigner, 1_000);
+    let escrow = env.escrow_addr(&env.loan_addr(id));
+    assert_fails(
+        env.announce_wind_down(&admin, escrow),
+        GoodFaithError::InvalidSuccessor,
+    );
+    let other_mint = env.token_for_mint(Pubkey::new_unique());
+    assert_fails(
+        env.announce_wind_down(&admin, other_mint),
+        GoodFaithError::InvalidSuccessor,
+    );
+
+    env.announce_wind_down(&admin, successor).unwrap();
+    let pool = env.pool_state();
+    assert_eq!(pool.wind_down_at, Some(T0 + 3 * DAY));
+    assert_eq!(pool.successor, Some(successor));
+    assert_fails(
+        env.announce_wind_down(&admin, successor),
+        GoodFaithError::InvalidParams,
+    );
+    // Before it takes effect, business as usual, and the authority can change its mind.
+    let donor = env.actor(500);
+    env.donate(&donor, 500).unwrap();
+    env.cancel_wind_down(&admin).unwrap();
+    assert_eq!(env.pool_state().wind_down_at, None);
+    assert_eq!(env.pool_state().successor, None);
+    env.set_time(T0 + DAY);
+    env.announce_wind_down(&admin, successor).unwrap();
+    env.set_time(T0 + 4 * DAY - 1);
+    assert_fails(env.sweep(successor), GoodFaithError::NotWindingDown);
+    let b2 = env.tracked_actor(0);
+    let c2 = env.tracked_actor(1_000);
+    let b2k = b2.kp.insecure_clone();
+    env.request_loan(&b2k, &b2, &c2.key(), 200, 30).unwrap();
+
+    // In effect: no donations, requests or co-signs; no going back.
+    env.set_time(T0 + 4 * DAY);
+    assert_fails(env.donate(&donor, 1), GoodFaithError::WindingDown);
+    let f = env.tracked_actor(0);
+    let fk = f.kp.insecure_clone();
+    assert_fails(
+        env.request_loan(&fk, &f, &c2.key(), 100, 30),
+        GoodFaithError::WindingDown,
+    );
+    let c2k = c2.kp.insecure_clone();
+    assert_fails(env.cosign_loan(&c2k, &b2, &c2), GoodFaithError::WindingDown);
+    env.cancel_request(&b2k, &b2.key()).unwrap();
+    assert_fails(env.cancel_wind_down(&admin), GoodFaithError::WindingDown);
+    assert_fails(env.sweep(successor), GoodFaithError::LoansOutstanding);
+    // Members can still join and replace wallets; open loans run their course.
+    let late = env.actor(0);
+    env.register(&late).unwrap();
+    let moved = env.new_wallet_for(&late, 0);
+    env.rebind_wallet(&moved).unwrap();
+    env.repay(&cosigner, id, 600).unwrap();
+    env.set_time(T0 + 30 * DAY + 7 * DAY + 1);
+    env.mark_default(&stranger, id).unwrap();
+    assert_eq!(env.pool_state().active_loans, 0);
+
+    // Everyone can see it is over; anyone can move the balance on.
+    let wrong = env.successor_token();
+    assert_fails(env.sweep(wrong), GoodFaithError::InvalidSuccessor);
+    let before = env.balance(&env.vault);
+    assert_eq!(before, 10_000 + 500 - 1_000 + 600 + 250);
+    env.sweep_by(&stranger, successor).unwrap();
+    assert_eq!(env.balance(&env.vault), 0);
+    assert_eq!(env.balance(&successor), before);
+    assert_eq!(env.pool_state().total_swept, before);
+    assert_fails(env.sweep(successor), GoodFaithError::AmountZero);
+}
+
+#[test]
+fn frozen_pool_keeps_an_announced_wind_down() {
+    let mut env = Env::with_timelock(2500, 3 * DAY);
+    env.fund(1_000);
+    let admin = env.admin.insecure_clone();
+    let successor = env.successor_token();
+    env.announce_wind_down(&admin, successor).unwrap();
+    env.freeze_pool(&admin).unwrap();
+    assert_eq!(env.pool_state().wind_down_at, Some(T0 + 3 * DAY));
+    assert_fails(env.cancel_wind_down(&admin), GoodFaithError::Unauthorized);
+    env.set_time(T0 + 3 * DAY);
+    env.sweep(successor).unwrap();
+    assert_eq!(env.balance(&successor), 1_000);
+}
+
+#[test]
+fn suspending_the_issuer_stops_joins_until_a_new_issuer_is_set() {
+    let mut env = Env::with_timelock(2500, DAY);
+    let admin = env.admin.insecure_clone();
+    let stranger = Keypair::new();
+    env.svm.airdrop(&stranger.pubkey(), 1_000_000_000).unwrap();
+    let existing = env.member_actor(1_000);
+    let other = env.member_actor(0);
+    assert_fails(env.suspend_issuer(&stranger), GoodFaithError::Unauthorized);
+    env.suspend_issuer(&admin).unwrap();
+    assert_eq!(env.pool_state().issuer, Pubkey::default());
+    let a = env.actor(0);
+    assert_fails(env.register(&a), GoodFaithError::Unauthorized);
+    let moved = env.new_wallet_for(&existing, 0);
+    assert_fails(env.rebind_wallet(&moved), GoodFaithError::Unauthorized);
+    // Existing members are unaffected.
+    env.fund(1_000);
+    let ok = other.kp.insecure_clone();
+    env.open_loan(&ok, &other, &existing, 100, 30).unwrap();
+    // A replacement issuer goes through the timelock like any setting.
+    let fresh = Keypair::new();
+    env.svm.airdrop(&fresh.pubkey(), 1_000_000_000).unwrap();
+    let mut p = env.params(2500);
+    p.issuer = fresh.pubkey();
+    env.schedule_params(&admin, p).unwrap();
+    assert_fails(env.register(&a), GoodFaithError::Unauthorized);
+    env.set_time(T0 + DAY);
+    env.apply_params().unwrap();
+    assert_fails(env.register(&a), GoodFaithError::Unauthorized);
+    env.register_as(&a, &fresh).unwrap();
+    assert_eq!(env.person(&a).wallet, a.key());
+}
+
+#[test]
+fn active_loans_counts_open_loans() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    let b1 = env.tracked_actor(0);
+    let b2 = env.tracked_actor(0);
+    let c = env.tracked_actor(10_000);
+    let id1 = env.open_simple(&b1, &c, 1_000);
+    assert_eq!(env.pool_state().active_loans, 1);
+    let id2 = env.open_simple(&b2, &c, 1_000);
+    assert_eq!(env.pool_state().active_loans, 2);
+    env.repay(&c, id1, 1_000).unwrap();
+    assert_eq!(env.pool_state().active_loans, 1);
+    env.after_grace(id2);
+    env.mark_default(&c.kp.insecure_clone(), id2).unwrap();
+    assert_eq!(env.pool_state().active_loans, 0);
+}
+
 mod props {
     use super::*;
     use proptest::prelude::*;
 
     const ACTORS: usize = 4;
     const START: u64 = 50_000;
+    const REBIND_TOKENS: u64 = 1_000;
+    const TIMELOCK: i64 = 3 * DAY;
 
     #[derive(Clone, Debug)]
     enum Op {
@@ -2037,40 +2686,57 @@ mod props {
         Repay(usize, u64, u64),
         Default(u64),
         Wait(u8),
-        Update {
+        Schedule {
             bps: u16,
             grace: u16,
             max_loan: u64,
             max_g: u8,
+            restore_issuer: bool,
         },
+        Apply,
+        CancelParams,
+        Rebind(usize),
+        AnnounceWindDown,
+        CancelWindDown,
+        Sweep,
+        SuspendIssuer,
     }
 
     fn op() -> impl Strategy<Value = Op> {
         let a = 0..ACTORS;
         prop_oneof![
-            (a.clone(), 0..5_000u64).prop_map(|(x, n)| Op::Donate(x, n)),
-            (a.clone(), a.clone(), 0..4_000u64, 0..100u16)
+            4 => (a.clone(), 0..5_000u64).prop_map(|(x, n)| Op::Donate(x, n)),
+            6 => (a.clone(), a.clone(), 0..4_000u64, 0..100u16)
                 .prop_map(|(b, c, n, t)| Op::Request(b, c, n, t)),
-            a.clone().prop_map(Op::Cosign),
-            (a.clone(), any::<bool>()).prop_map(|(x, y)| Op::Cancel(x, y)),
-            (a.clone(), 0..6u64, 0..4_000u64).prop_map(|(x, l, n)| Op::Repay(x, l, n)),
-            (0..6u64).prop_map(Op::Default),
-            (0..60u8).prop_map(Op::Wait),
-            (0..=10_000u16, 0..10u16, 0..5_000u64, 0..4u8).prop_map(
-                |(bps, grace, max_loan, max_g)| Op::Update {
+            6 => a.clone().prop_map(Op::Cosign),
+            2 => (a.clone(), any::<bool>()).prop_map(|(x, y)| Op::Cancel(x, y)),
+            6 => (a.clone(), 0..6u64, 0..4_000u64).prop_map(|(x, l, n)| Op::Repay(x, l, n)),
+            3 => (0..6u64).prop_map(Op::Default),
+            6 => (0..60u8).prop_map(Op::Wait),
+            3 => (0..=10_000u16, 0..10u16, 0..5_000u64, 0..4u8, any::<bool>()).prop_map(
+                |(bps, grace, max_loan, max_g, restore_issuer)| Op::Schedule {
                     bps,
                     grace,
                     max_loan,
-                    max_g
+                    max_g,
+                    restore_issuer,
                 }
             ),
+            3 => Just(Op::Apply),
+            1 => Just(Op::CancelParams),
+            2 => a.clone().prop_map(Op::Rebind),
+            1 => Just(Op::AnnounceWindDown),
+            1 => Just(Op::CancelWindDown),
+            2 => Just(Op::Sweep),
+            1 => Just(Op::SuspendIssuer),
         ]
     }
 
-    fn token_balance_sum(env: &Env, actors: &[Actor]) -> u64 {
+    /// Everything the harness has handed tokens to, plus the vault, escrows and the successor.
+    fn token_balance_sum(env: &Env, tokens: &[Pubkey]) -> u64 {
         let mut total = env.balance(&env.vault);
-        for a in actors {
-            total += env.balance(&a.token);
+        for t in tokens {
+            total += env.balance(t);
         }
         let n = env.pool_state().loan_count;
         for id in 0..n {
@@ -2083,51 +2749,119 @@ mod props {
         total
     }
 
-    fn check(env: &Env, actors: &[Actor], supply: u64) {
+    struct Model {
+        /// Settings as last applied; the pool may only differ from these through `apply_params`.
+        applied: PoolParams,
+        /// Loan count and donations frozen the moment the wind-down took effect.
+        closed_at: Option<(u64, u64)>,
+        /// Every token account that ever held supply (current and retired wallets, successor).
+        tokens: Vec<Pubkey>,
+        /// Wallets retired by a rebind.
+        retired: Vec<Pubkey>,
+        supply: u64,
+        now: i64,
+    }
+
+    fn check(env: &Env, actors: &[Actor], m: &mut Model) {
         let pool = env.pool_state();
-        // vault == donated + repaid + recovered - lent
+        // vault == donated + repaid + recovered - lent - swept
         assert_eq!(
             u128::from(env.balance(&env.vault)),
             u128::from(pool.total_donated)
                 + u128::from(pool.total_repaid)
                 + u128::from(pool.total_recovered)
                 - u128::from(pool.total_lent)
+                - u128::from(pool.total_swept)
         );
-        // tokens are conserved
-        assert_eq!(token_balance_sum(env, actors), supply);
+        // tokens are conserved across wallets, escrows and the successor
+        assert_eq!(token_balance_sum(env, &m.tokens), m.supply);
+        // settings only move through apply_params
+        let live = PoolParams {
+            gatekeeper_network: pool.gatekeeper_network,
+            max_loan: pool.max_loan,
+            max_term_days: pool.max_term_days,
+            grace_days: pool.grace_days,
+            max_guarantees_per_member: pool.max_guarantees_per_member,
+            cosigner_escrow_bps: pool.cosigner_escrow_bps,
+            issuer: pool.issuer,
+            timelock_seconds: pool.timelock_seconds,
+        };
+        assert_eq!(live, m.applied, "settings changed without apply_params");
+        if let Some(p) = pool.pending_params {
+            assert!(p.validate().is_ok());
+        }
+        // once winding down: no new loans, no new donations, and no way back
+        if pool.winding_down(m.now) {
+            let snap = *m
+                .closed_at
+                .get_or_insert((pool.loan_count, pool.total_donated));
+            assert_eq!((pool.loan_count, pool.total_donated), snap);
+            assert!(pool.successor.is_some());
+        } else {
+            assert!(m.closed_at.is_none(), "a wind-down in effect was undone");
+        }
+        if pool.total_swept > 0 {
+            assert_eq!(pool.active_loans, 0);
+        }
+
+        let persons: Vec<Pubkey> = actors
+            .iter()
+            .map(|a| env.person_addr(&a.person_hash))
+            .collect();
         let mut guarantees = vec![0u8; actors.len()];
         let mut active: Vec<Option<Pubkey>> = vec![None; actors.len()];
+        let mut open = 0u64;
         for id in 0..pool.loan_count {
             let loan = env.loan(id);
             assert!(loan.repaid <= loan.principal);
+            assert_ne!(loan.borrower_person, loan.cosigner_person);
+            let b = persons
+                .iter()
+                .position(|p| *p == loan.borrower_person)
+                .unwrap();
+            let c = persons
+                .iter()
+                .position(|p| *p == loan.cosigner_person)
+                .unwrap();
             let escrow = env.escrow_addr(&env.loan_addr(id));
             let acc = env.svm.get_account(&escrow);
             let live = acc.as_ref().is_some_and(|a| !a.data.is_empty());
-            if loan.status == LoanStatus::Active {
-                assert!(live);
-                assert_eq!(env.balance(&escrow), loan.escrowed);
-                let b = actors
-                    .iter()
-                    .position(|a| a.key() == loan.borrower)
-                    .unwrap();
-                let c = actors
-                    .iter()
-                    .position(|a| a.key() == loan.cosigner)
-                    .unwrap();
-                assert!(active[b].is_none(), "two active loans for one member");
-                active[b] = Some(env.loan_addr(id));
-                guarantees[c] += 1;
-            } else {
-                assert!(!live, "escrow left open after loan closed");
-            }
-            if loan.status == LoanStatus::Repaid {
-                assert_eq!(loan.repaid, loan.principal);
+            match loan.status {
+                LoanStatus::Active => {
+                    open += 1;
+                    assert!(live);
+                    assert_eq!(env.balance(&escrow), loan.escrowed);
+                    assert!(active[b].is_none(), "two active loans for one person");
+                    active[b] = Some(env.loan_addr(id));
+                    guarantees[c] += 1;
+                }
+                LoanStatus::Repaid => {
+                    assert!(!live, "escrow left open after loan closed");
+                    assert_eq!(loan.repaid, loan.principal);
+                }
+                LoanStatus::Defaulted => {
+                    assert!(!live, "escrow left open after loan closed");
+                    assert!(env.person(&actors[b]).ineligible);
+                    let shortfall = loan.principal - loan.repaid;
+                    if shortfall > loan.escrowed {
+                        assert!(env.person(&actors[c]).ineligible);
+                    }
+                }
             }
         }
+        assert_eq!(pool.active_loans, open);
         for (i, a) in actors.iter().enumerate() {
-            let m = env.member(a);
-            assert_eq!(m.active_loan, active[i]);
-            assert_eq!(m.active_guarantees, guarantees[i]);
+            let p = env.person(a);
+            assert_eq!(p.active_loan, active[i]);
+            assert_eq!(p.active_guarantees, guarantees[i]);
+            assert_eq!(p.wallet, a.key());
+            let member = env.member_of(a);
+            assert!(!member.retired);
+            assert_eq!(member.person, persons[i]);
+        }
+        for w in &m.retired {
+            let member: Member = env.read(&env.member_addr(w));
+            assert!(member.retired);
         }
     }
 
@@ -2135,11 +2869,18 @@ mod props {
         #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
         #[test]
         fn invariants_hold(ops in proptest::collection::vec(op(), 1..40)) {
-            let mut env = Env::new(2500);
-            let actors: Vec<Actor> = (0..ACTORS).map(|_| env.tracked_actor(START)).collect();
-            let supply = ACTORS as u64 * START;
+            let mut env = Env::with_timelock(2500, TIMELOCK);
+            let mut actors: Vec<Actor> = (0..ACTORS).map(|_| env.tracked_actor(START)).collect();
+            let successor = env.successor_token();
+            let mut m = Model {
+                applied: env.params(2500),
+                closed_at: None,
+                tokens: actors.iter().map(|a| a.token).chain([successor]).collect(),
+                retired: Vec::new(),
+                supply: ACTORS as u64 * START,
+                now: T0,
+            };
             let admin = env.admin.insecure_clone();
-            let mut now = T0;
             for o in ops {
                 match o {
                     Op::Donate(a, n) => { let _ = env.donate(&actors[a], n); }
@@ -2181,18 +2922,45 @@ mod props {
                         }
                     }
                     Op::Wait(d) => {
-                        now += i64::from(d) * DAY;
-                        env.set_time(now);
+                        m.now += i64::from(d) * DAY;
+                        env.set_time(m.now);
                     }
-                    Op::Update { bps, grace, max_loan, max_g } => {
-                        let mut p = params(env.network, bps);
+                    Op::Schedule { bps, grace, max_loan, max_g, restore_issuer } => {
+                        let mut p = env.params(bps);
                         p.grace_days = grace;
                         p.max_loan = max_loan;
                         p.max_guarantees_per_member = max_g;
-                        let _ = env.update_pool(&admin, p);
+                        if !restore_issuer {
+                            p.issuer = env.pool_state().issuer;
+                        }
+                        let _ = env.schedule_params(&admin, p);
+                    }
+                    Op::Apply => {
+                        let pending = env.pool_state().pending_params;
+                        if env.apply_params().is_ok() {
+                            m.applied = pending.expect("applied without a pending change");
+                        }
+                    }
+                    Op::CancelParams => { let _ = env.cancel_params(&admin); }
+                    Op::Rebind(i) => {
+                        let n = env.new_wallet_for(&actors[i], REBIND_TOKENS);
+                        m.tokens.push(n.token);
+                        m.supply += REBIND_TOKENS;
+                        if env.rebind_wallet(&n).is_ok() {
+                            m.retired.push(actors[i].key());
+                            actors[i] = n;
+                        }
+                    }
+                    Op::AnnounceWindDown => { let _ = env.announce_wind_down(&admin, successor); }
+                    Op::CancelWindDown => { let _ = env.cancel_wind_down(&admin); }
+                    Op::Sweep => { let _ = env.sweep(successor); }
+                    Op::SuspendIssuer => {
+                        if env.suspend_issuer(&admin).is_ok() {
+                            m.applied.issuer = Pubkey::default();
+                        }
                     }
                 }
-                check(&env, &actors, supply);
+                check(&env, &actors, &mut m);
             }
         }
     }

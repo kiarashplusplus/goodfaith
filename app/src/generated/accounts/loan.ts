@@ -15,20 +15,24 @@ export function getLoanDiscriminatorBytes(): ReadonlyUint8Array { return fixEnco
 
 export type Loan = { discriminator: ReadonlyUint8Array; id: bigint; borrower: Address; cosigner: Address; rentPayer: Address; principal: bigint; repaid: bigint; escrowed: bigint; openedAt: bigint; dueAt: bigint; 
 /** Grace period fixed when the loan opened; later pool changes do not apply. */
-graceDays: number; status: LoanStatus; bump: number; escrowBump: number;  };
+graceDays: number; status: LoanStatus; bump: number; escrowBump: number; 
+/** The people behind the wallets at opening; eligibility and escrow returns follow these. */
+borrowerPerson: Address; cosignerPerson: Address;  };
 
 export type LoanArgs = { id: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; rentPayer: Address | HasAddress; principal: number | bigint; repaid: number | bigint; escrowed: number | bigint; openedAt: number | bigint; dueAt: number | bigint; 
 /** Grace period fixed when the loan opened; later pool changes do not apply. */
-graceDays: number; status: LoanStatusArgs; bump: number; escrowBump: number;  };
+graceDays: number; status: LoanStatusArgs; bump: number; escrowBump: number; 
+/** The people behind the wallets at opening; eligibility and escrow returns follow these. */
+borrowerPerson: Address | HasAddress; cosignerPerson: Address | HasAddress;  };
 
 /** Gets the encoder for {@link LoanArgs} account data. */
 export function getLoanEncoder(): FixedSizeEncoder<LoanArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['id', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['rentPayer', getAddressEncoder()], ['principal', getU64Encoder()], ['repaid', getU64Encoder()], ['escrowed', getU64Encoder()], ['openedAt', getI64Encoder()], ['dueAt', getI64Encoder()], ['graceDays', getU16Encoder()], ['status', getLoanStatusEncoder()], ['bump', getU8Encoder()], ['escrowBump', getU8Encoder()]]), (value) => ({ ...value, discriminator: LOAN_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['id', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['rentPayer', getAddressEncoder()], ['principal', getU64Encoder()], ['repaid', getU64Encoder()], ['escrowed', getU64Encoder()], ['openedAt', getI64Encoder()], ['dueAt', getI64Encoder()], ['graceDays', getU16Encoder()], ['status', getLoanStatusEncoder()], ['bump', getU8Encoder()], ['escrowBump', getU8Encoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()]]), (value) => ({ ...value, discriminator: LOAN_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Loan} account data. */
 export function getLoanDecoder(): FixedSizeDecoder<Loan> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['id', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['rentPayer', getAddressDecoder()], ['principal', getU64Decoder()], ['repaid', getU64Decoder()], ['escrowed', getU64Decoder()], ['openedAt', getI64Decoder()], ['dueAt', getI64Decoder()], ['graceDays', getU16Decoder()], ['status', getLoanStatusDecoder()], ['bump', getU8Decoder()], ['escrowBump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['id', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['rentPayer', getAddressDecoder()], ['principal', getU64Decoder()], ['repaid', getU64Decoder()], ['escrowed', getU64Decoder()], ['openedAt', getI64Decoder()], ['dueAt', getI64Decoder()], ['graceDays', getU16Decoder()], ['status', getLoanStatusDecoder()], ['bump', getU8Decoder()], ['escrowBump', getU8Decoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()]]);
 }
 
 /** Gets the codec for {@link Loan} account data. */
@@ -81,5 +85,5 @@ export async function fetchAllMaybeLoan(
 }
 
 export function getLoanSize(): number {
-  return 157;
+  return 221;
 }

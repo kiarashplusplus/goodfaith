@@ -41,6 +41,7 @@ function Request({ wallet }: { wallet: Address }) {
   const member = useMember(wallet);
   const vault = useVaultBalance(pool.data?.vault);
   if (!pool.data || !member.data) return null;
+  if (member.data.retired) return <Notice tone="warn">This wallet was replaced. Use the wallet now linked to your membership.</Notice>;
   if (member.data.ineligible) return <Notice tone="warn">Your membership is on hold, so you can&apos;t borrow right now.</Notice>;
   if (member.data.activeLoan)
     return (
@@ -154,6 +155,7 @@ function RequestForm({
   onCreated: () => void;
 }) {
   const { rpc, signer } = useApp();
+  const me = useMember(wallet);
   const [amt, setAmt] = useState("");
   const [days, setDays] = useState("30");
   const [co, setCo] = useState("");
@@ -183,11 +185,15 @@ function RequestForm({
         ? "You can't co-sign your own loan."
         : coMember.data === null
           ? "Your co-signer needs to verify and join first. Send them to the Join page."
-          : coMember.data?.ineligible
-            ? "Your co-signer's membership is on hold, so they can't co-sign."
-            : coMember.data && coMember.data.activeGuarantees >= pool.maxGuaranteesPerMember
-              ? "Your co-signer is already backing as many loans as allowed."
-              : null;
+          : coMember.data?.retired
+            ? "That wallet was replaced. Ask your co-signer for their current wallet address."
+            : coMember.data && coMember.data.person === me.data?.person
+              ? "A borrower and their co-signer must be different people."
+              : coMember.data?.ineligible
+                ? "Your co-signer's membership is on hold, so they can't co-sign."
+                : coMember.data && coMember.data.activeGuarantees >= pool.maxGuaranteesPerMember
+                  ? "Your co-signer is already backing as many loans as allowed."
+                  : null;
   const ready = amountOk && termOk && !!cosigner && !cosignerError && !!coMember.data && available !== undefined && !!signer;
   const edit = (set: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
     if (error) reset();
@@ -242,12 +248,14 @@ function RequestForm({
           onClick={() =>
             run(async () => {
               const network = pool.gatekeeperNetwork ?? GATEKEEPER_NETWORK;
-              const cm = await fetchMember(rpc, pool.address, cosigner!);
+              const [mine, cm] = await Promise.all([fetchMember(rpc, pool.address, wallet), fetchMember(rpc, pool.address, cosigner!)]);
+              if (!mine) throw new Error("Join the fund first.");
               if (!cm) throw new Error("Your co-signer needs to verify and join first. Send them to the Join page.");
               const sig = await sendInstructions(rpc, signer!, async (feePayer) => [
                 await requestLoanIx({
                   payer: feePayer,
                   borrower: wallet,
+                  borrowerPerson: mine.person,
                   pool,
                   borrowerGatewayToken: gatewayTokenAddress(wallet, network),
                   amount: amount!,

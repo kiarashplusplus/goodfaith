@@ -16,7 +16,11 @@ export const MAX_GRACE_DAYS: number = 365;
 
 export const MAX_TERM_DAYS: number = 3650;
 
+export const MAX_TIMELOCK_SECONDS: bigint = 7776000n;
+
 export const MEMBER_SEED: ReadonlyUint8Array = new Uint8Array([109, 101, 109, 98, 101, 114]);
+
+export const PERSON_SEED: ReadonlyUint8Array = new Uint8Array([112, 101, 114, 115, 111, 110]);
 
 export const POOL_SEED: ReadonlyUint8Array = new Uint8Array([112, 111, 111, 108]);
 

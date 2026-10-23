@@ -5,7 +5,7 @@ import { RequireWallet } from "@/components/connect-button";
 import { LoanList } from "@/components/loan-list";
 import { Button, Card, Field, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
 import { useApp, useBalances, useLoans, useNow, usePool } from "@/lib/hooks";
-import { fetchLoanById, findAta, repayIx, type Loan, type Pool } from "@/lib/program";
+import { cosignerWalletOf, fetchLoanById, findAta, repayIx, type Loan, type Pool } from "@/lib/program";
 import { loanTiming } from "@/lib/loan-status";
 import { sendInstructions } from "@/lib/tx";
 import { formatAmount, formatUsdc, parseAmount, shortAddress } from "@/lib/format";
@@ -149,14 +149,15 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
               run(async () => {
                 // The program loads the co-signer's token account on every repayment (it receives the escrow at the end).
                 // Re-create it if the co-signer closed it, so a repayment can never be blocked by that.
+                const cosignerWallet = await cosignerWalletOf(rpc, loan);
                 const sig = await sendInstructions(rpc, signer!, async (feePayer) => [
                   getCreateAssociatedTokenIdempotentInstruction({
                     payer: createNoopSigner(feePayer),
-                    ata: await findAta(loan.cosigner, pool.mint),
-                    owner: loan.cosigner,
+                    ata: await findAta(cosignerWallet, pool.mint),
+                    owner: cosignerWallet,
                     mint: pool.mint,
                   }),
-                  await repayIx({ payer: wallet, pool, loan, amount: amount! }),
+                  await repayIx({ payer: wallet, pool, loan, amount: amount!, cosignerWallet }),
                 ]);
                 setAmt("");
                 balances.mutate();

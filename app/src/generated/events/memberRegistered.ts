@@ -12,18 +12,18 @@ export const MEMBER_REGISTERED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uin
 
 export function getMemberRegisteredEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(MEMBER_REGISTERED_EVENT_DISCRIMINATOR); }
 
-export type MemberRegisteredEvent = { pool: Address; wallet: Address;  };
+export type MemberRegisteredEvent = { pool: Address; wallet: Address; person: Address;  };
 
-export type MemberRegisteredEventArgs = { pool: Address | HasAddress; wallet: Address | HasAddress;  };
+export type MemberRegisteredEventArgs = { pool: Address | HasAddress; wallet: Address | HasAddress; person: Address | HasAddress;  };
 
 /** Gets the encoder for {@link MemberRegisteredEventArgs} event data. */
 export function getMemberRegisteredEventEncoder(): FixedSizeEncoder<MemberRegisteredEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['wallet', getAddressEncoder()]]), [getConstantEncoder(MEMBER_REGISTERED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['wallet', getAddressEncoder()], ['person', getAddressEncoder()]]), [getConstantEncoder(MEMBER_REGISTERED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link MemberRegisteredEvent} event data. */
 export function getMemberRegisteredEventDecoder(): FixedSizeDecoder<MemberRegisteredEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['wallet', getAddressDecoder()]]), [getConstantDecoder(MEMBER_REGISTERED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['wallet', getAddressDecoder()], ['person', getAddressDecoder()]]), [getConstantDecoder(MEMBER_REGISTERED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link MemberRegisteredEvent} event data. */

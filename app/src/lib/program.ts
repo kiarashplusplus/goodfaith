@@ -29,6 +29,7 @@ import {
   identifyGoodfaithAccount,
   decodeLoan,
   decodeMember,
+  decodePerson,
   decodePool,
   getDonateInstruction,
   getRequestLoanInstruction,
@@ -39,10 +40,14 @@ import {
   type Loan as LoanData,
   getLoanRequestDiscriminatorBytes,
   getRegisterMemberInstruction,
+  getRebindWalletInstruction,
   getRepayInstruction,
   getMarkDefaultInstruction,
+  getApplyParamsInstruction,
+  getSweepToSuccessorInstruction,
   getLoanDiscriminatorBytes,
   getLoanSize,
+  type PoolParams as PoolParamsData,
 } from "@/generated";
 import { CONFIG_ERRORS, GATEKEEPER_NETWORK, POOL_ADDRESS, POOL_AUTHORITY, POOL_MINT, PROGRAM_ID } from "./config";
 import { KORA_CODES, KoraError } from "./kora";
@@ -56,6 +61,18 @@ const signer = (a: Address) => createNoopSigner(a);
 
 // ---------- types ----------
 export type LoanStatus = "Active" | "Repaid" | "Defaulted";
+
+/** Settings the authority can schedule (applied after the timelock). */
+export type PoolParams = {
+  gatekeeperNetwork: Address;
+  maxLoan: bigint;
+  maxTermDays: number;
+  graceDays: number;
+  maxGuaranteesPerMember: number;
+  cosignerEscrowBps: number;
+  issuer: Address;
+  timelockSeconds: bigint;
+};
 
 export type Pool = {
   address: Address;
@@ -76,11 +93,35 @@ export type Pool = {
   totalRepaid: bigint;
   totalRecovered: bigint;
   totalLost: bigint;
+  /** Key that vouches for people at registration; the zero address means suspended. */
+  issuer: Address;
+  timelockSeconds: bigint;
+  /** A scheduled settings change and when anyone may apply it. */
+  pendingParams: PoolParams | null;
+  paramsEffectiveAt: bigint;
+  /** When set and reached, no new loans or donations. */
+  windDownAt: bigint | null;
+  successor: Address | null;
+  activeLoans: bigint;
+  totalSwept: bigint;
 };
 
+/** One verified human; eligibility and open positions live here and follow a replaced wallet. */
+export type Person = {
+  address: Address;
+  wallet: Address;
+  activeLoan: Address | null;
+  activeGuarantees: number;
+  ineligible: boolean;
+};
+
+/** A wallet's membership together with the standing of the person behind it. */
 export type Member = {
   address: Address;
   wallet: Address;
+  person: Address;
+  /** True once the wallet was replaced; it can no longer take part. */
+  retired: boolean;
   activeLoan: Address | null;
   activeGuarantees: number;
   ineligible: boolean;
@@ -92,6 +133,8 @@ export type Loan = {
   id: bigint;
   borrower: Address;
   cosigner: Address;
+  borrowerPerson: Address;
+  cosignerPerson: Address;
   rentPayer: Address;
   principal: bigint;
   repaid: bigint;
@@ -127,6 +170,13 @@ export const findMemberPda = (pool: Address, wallet: Address) =>
     programAddress: PROGRAM_ID,
     seeds: [enc.encode("member"), addr.encode(pool), addr.encode(wallet)],
   });
+export const findPersonPda = (pool: Address, personHash: Uint8Array) => {
+  if (personHash.length !== 32) throw new Error("A person hash is 32 bytes.");
+  return getProgramDerivedAddress({
+    programAddress: PROGRAM_ID,
+    seeds: [enc.encode("person"), addr.encode(pool), personHash],
+  });
+};
 export const findLoanPda = (pool: Address, id: bigint) => {
   const idBytes = new Uint8Array(8);
   new DataView(idBytes.buffer).setBigUint64(0, id, true);
@@ -142,7 +192,17 @@ export async function findAta(owner: Address, mint: Address): Promise<Address> {
   return a;
 }
 
-const unwrap = (o: Option<Address>): Address | null => (isSome(o) ? o.value : null);
+const unwrap = <T>(o: Option<T>): T | null => (isSome(o) ? o.value : null);
+const toParams = (d: PoolParamsData): PoolParams => ({
+  gatekeeperNetwork: d.gatekeeperNetwork,
+  maxLoan: d.maxLoan,
+  maxTermDays: d.maxTermDays,
+  graceDays: d.graceDays,
+  maxGuaranteesPerMember: d.maxGuaranteesPerMember,
+  cosignerEscrowBps: d.cosignerEscrowBps,
+  issuer: d.issuer,
+  timelockSeconds: d.timelockSeconds,
+});
 const STATUSES: LoanStatus[] = ["Active", "Repaid", "Defaulted"];
 
 type ReadRpc = Rpc<GetAccountInfoApi>;
@@ -203,20 +263,50 @@ export async function fetchPool(rpc: ReadRpc, a: Address): Promise<Pool | null> 
     totalRepaid: d.totalRepaid,
     totalRecovered: d.totalRecovered,
     totalLost: d.totalLost,
+    issuer: d.issuer,
+    timelockSeconds: d.timelockSeconds,
+    pendingParams: isSome(d.pendingParams) ? toParams(d.pendingParams.value) : null,
+    paramsEffectiveAt: d.paramsEffectiveAt,
+    windDownAt: unwrap(d.windDownAt),
+    successor: unwrap(d.successor),
+    activeLoans: d.activeLoans,
+    totalSwept: d.totalSwept,
   };
 }
+
+/** True once an announced wind-down has taken effect: no new loans or donations. */
+export const windingDown = (pool: Pool, now: bigint) => pool.windDownAt !== null && now >= pool.windDownAt;
+
+export async function fetchPerson(rpc: ReadRpc, a: Address): Promise<Person | null> {
+  const acc = await fetchChecked(rpc, a, GoodfaithAccount.Person);
+  if (!acc) return null;
+  const d = decodePerson(acc).data;
+  return { address: a, wallet: d.wallet, activeLoan: unwrap(d.activeLoan), activeGuarantees: d.activeGuarantees, ineligible: d.ineligible };
+}
+
+/** The wallet's membership merged with its person's standing; null when the wallet never joined. */
 export async function fetchMember(rpc: ReadRpc, pool: Address, wallet: Address): Promise<Member | null> {
   const [a] = await findMemberPda(pool, wallet);
   const acc = await fetchChecked(rpc, a, GoodfaithAccount.Member);
   if (!acc) return null;
   const d = decodeMember(acc).data;
+  const person = await fetchPerson(rpc, d.person);
+  if (!person) throw new Error("Member account points at a missing person.");
   return {
     address: a,
     wallet: d.wallet,
-    activeLoan: unwrap(d.activeLoan),
-    activeGuarantees: d.activeGuarantees,
-    ineligible: d.ineligible,
+    person: d.person,
+    retired: d.retired,
+    activeLoan: person.activeLoan,
+    activeGuarantees: person.activeGuarantees,
+    ineligible: person.ineligible,
   };
+}
+
+/** The co-signer's current wallet (the escrow goes there), which differs from `loan.cosigner` after a wallet replacement. */
+export async function cosignerWalletOf(rpc: ReadRpc, loan: Loan): Promise<Address> {
+  const p = await fetchPerson(rpc, loan.cosignerPerson);
+  return p?.wallet ?? loan.cosigner;
 }
 export async function fetchLoan(rpc: ReadRpc, loan: Address): Promise<Loan | null> {
   const acc = await fetchChecked(rpc, loan, GoodfaithAccount.Loan);
@@ -266,6 +356,8 @@ function toLoan(address: Address, d: LoanData): Loan {
     id: d.id,
     borrower: d.borrower,
     cosigner: d.cosigner,
+    borrowerPerson: d.borrowerPerson,
+    cosignerPerson: d.cosignerPerson,
     rentPayer: d.rentPayer,
     principal: d.principal,
     repaid: d.repaid,
@@ -277,21 +369,21 @@ function toLoan(address: Address, d: LoanData): Loan {
   };
 }
 
-/** Loan account layout: discriminator 0..8, id 8..16, borrower 16..48, cosigner 48..80. */
-const LOAN_BORROWER_OFFSET = 16n;
-const LOAN_COSIGNER_OFFSET = 48n;
+/** Loan account layout: the person keys sit after escrow_bump, at 157 (borrower) and 189 (co-signer). */
+const LOAN_BORROWER_PERSON_OFFSET = 157n;
+const LOAN_COSIGNER_PERSON_OFFSET = 189n;
 
 /**
- * Every loan a wallet took or co-signed, newest first. Two getProgramAccounts calls (borrower and
- * co-signer) instead of scanning loan ids one by one; `fetchLoanById` remains the fallback for an
- * RPC that disables getProgramAccounts.
+ * Every loan a person took or co-signed, newest first, whichever wallet they used at the time. Two
+ * getProgramAccounts calls instead of scanning loan ids one by one; `fetchLoanById` remains the
+ * fallback for an RPC that disables getProgramAccounts.
  */
-export async function fetchLoansFor(rpc: ScanRpc, pool: Pool, wallet: Address): Promise<Loan[]> {
+export async function fetchLoansForPerson(rpc: ScanRpc, pool: Pool, person: Address): Promise<Loan[]> {
   const disc = b58(getLoanDiscriminatorBytes());
   const base: Filter[] = [{ dataSize: BigInt(getLoanSize()) }, { memcmp: { offset: 0n, bytes: disc, encoding: "base58" } }];
   const [asBorrower, asCosigner] = await Promise.all([
-    scanProgramAccounts(rpc, [...base, { memcmp: { offset: LOAN_BORROWER_OFFSET, bytes: wallet, encoding: "base58" } }]),
-    scanProgramAccounts(rpc, [...base, { memcmp: { offset: LOAN_COSIGNER_OFFSET, bytes: wallet, encoding: "base58" } }]),
+    scanProgramAccounts(rpc, [...base, { memcmp: { offset: LOAN_BORROWER_PERSON_OFFSET, bytes: person, encoding: "base58" } }]),
+    scanProgramAccounts(rpc, [...base, { memcmp: { offset: LOAN_COSIGNER_PERSON_OFFSET, bytes: person, encoding: "base58" } }]),
   ]);
   const seen = new Set<Address>();
   const out: Loan[] = [];
@@ -303,6 +395,12 @@ export async function fetchLoansFor(rpc: ScanRpc, pool: Pool, wallet: Address): 
     if (expected === l.address) out.push(l);
   }
   return out.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+
+/** The loans of the person behind `wallet`; empty when the wallet never joined. */
+export async function fetchLoansFor(rpc: ScanRpc & ReadRpc, pool: Pool, wallet: Address): Promise<Loan[]> {
+  const m = await fetchMember(rpc, pool.address, wallet);
+  return m ? fetchLoansForPerson(rpc, pool, m.person) : [];
 }
 
 /** The pool's newest loans (any borrower), for the public fund page. */
@@ -375,14 +473,53 @@ export async function donateIx(a: { donor: Address; pool: Pool; amount: bigint }
   );
 }
 
-export async function registerMemberIx(a: { wallet: Address; payer: Address; pool: Pool; gatewayToken: Address }): Promise<Instruction> {
+/** Joining: the wallet, the fee payer and the pool's issuer all sign (the issuer vouches for `personHash`). */
+export async function registerMemberIx(a: {
+  wallet: Address;
+  payer: Address;
+  issuer: Address;
+  pool: Pool;
+  gatewayToken: Address;
+  personHash: Uint8Array;
+}): Promise<Instruction> {
   const [member] = await findMemberPda(a.pool.address, a.wallet);
+  const [person] = await findPersonPda(a.pool.address, a.personHash);
   return getRegisterMemberInstruction(
     {
       wallet: signer(a.wallet),
       payer: signer(a.payer),
+      issuer: signer(a.issuer),
       pool: a.pool.address,
+      person,
       member,
+      gatewayToken: a.gatewayToken,
+      systemProgram: SYSTEM_PROGRAM_ADDRESS,
+      personHash: a.personHash,
+    },
+    cfg,
+  );
+}
+
+/** Wallet replacement: the new wallet, the fee payer and the issuer sign; the old wallet is retired. */
+export async function rebindWalletIx(a: {
+  newWallet: Address;
+  payer: Address;
+  issuer: Address;
+  pool: Pool;
+  person: Person;
+  gatewayToken: Address;
+}): Promise<Instruction> {
+  const [oldMember] = await findMemberPda(a.pool.address, a.person.wallet);
+  const [newMember] = await findMemberPda(a.pool.address, a.newWallet);
+  return getRebindWalletInstruction(
+    {
+      newWallet: signer(a.newWallet),
+      payer: signer(a.payer),
+      issuer: signer(a.issuer),
+      pool: a.pool.address,
+      person: a.person.address,
+      oldMember,
+      newMember,
       gatewayToken: a.gatewayToken,
       systemProgram: SYSTEM_PROGRAM_ADDRESS,
     },
@@ -390,16 +527,32 @@ export async function registerMemberIx(a: { wallet: Address; payer: Address; poo
   );
 }
 
+/** Permissionless: applies a scheduled settings change once its timelock has elapsed. */
+export function applyParamsIx(pool: Pool): Instruction {
+  return getApplyParamsInstruction({ pool: pool.address }, cfg);
+}
+
+/** Permissionless: moves the vault balance to the successor once a wind-down is in effect and no loan is open. */
+export function sweepToSuccessorIx(pool: Pool): Instruction {
+  if (!pool.successor) throw new Error("No successor has been named.");
+  return getSweepToSuccessorInstruction(
+    { pool: pool.address, mint: pool.mint, vault: pool.vault, successorVault: pool.successor, tokenProgram: TOKEN_PROGRAM_ADDRESS },
+    cfg,
+  );
+}
+
 export async function requestLoanIx(a: {
   payer: Address;
   borrower: Address;
+  /** The borrower's person account (`Member.person`). */
+  borrowerPerson: Address;
   pool: Pool;
   borrowerGatewayToken: Address;
   amount: bigint;
   termDays: number;
   cosigner: Address;
 }): Promise<Instruction> {
-  const [borrowerMember] = await findMemberPda(a.pool.address, a.borrower);
+  const [cosignerMember] = await findMemberPda(a.pool.address, a.cosigner);
   const [request] = await findRequestPda(a.pool.address, a.borrower);
   return getRequestLoanInstruction(
     {
@@ -407,7 +560,8 @@ export async function requestLoanIx(a: {
       borrower: signer(a.borrower),
       pool: a.pool.address,
       mint: a.pool.mint,
-      borrowerMember,
+      borrowerPerson: a.borrowerPerson,
+      cosignerMember,
       borrowerGatewayToken: a.borrowerGatewayToken,
       request,
       systemProgram: SYSTEM_PROGRAM_ADDRESS,
@@ -423,6 +577,9 @@ export async function cosignLoanIx(a: {
   payer: Address;
   pool: Pool;
   request: LoanRequest;
+  /** Person accounts of the two wallets (`Member.person`). */
+  borrowerPerson: Address;
+  cosignerPerson: Address;
   borrowerGatewayToken: Address;
   cosignerGatewayToken: Address;
   /** exactly what the co-signer was shown; the program rejects the tx if the request no longer matches */
@@ -432,8 +589,6 @@ export async function cosignLoanIx(a: {
 }): Promise<{ ix: Instruction; borrowerToken: Address }> {
   const p = a.pool;
   const r = a.request;
-  const [borrowerMember] = await findMemberPda(p.address, r.borrower);
-  const [cosignerMember] = await findMemberPda(p.address, r.cosigner);
   const [loan] = await findLoanPda(p.address, p.loanCount);
   const [escrow] = await findEscrowPda(loan);
   const borrowerToken = await findAta(r.borrower, p.mint);
@@ -446,8 +601,8 @@ export async function cosignLoanIx(a: {
       vault: p.vault,
       request: r.address,
       requestRentPayer: r.rentPayer,
-      borrowerMember,
-      cosignerMember,
+      borrowerPerson: a.borrowerPerson,
+      cosignerPerson: a.cosignerPerson,
       borrowerToken,
       cosignerToken: await findAta(r.cosigner, p.mint),
       loan,
@@ -472,9 +627,14 @@ export function cancelRequestIx(a: { canceller: Address; pool: Address; request:
   );
 }
 
-export async function repayIx(a: { payer: Address; pool: Pool; loan: Loan; amount: bigint }): Promise<Instruction> {
-  const [borrowerMember] = await findMemberPda(a.pool.address, a.loan.borrower);
-  const [cosignerMember] = await findMemberPda(a.pool.address, a.loan.cosigner);
+/** `cosignerWallet` is the co-signer's current wallet (see `cosignerWalletOf`): the escrow refund goes to its token account. */
+export async function repayIx(a: {
+  payer: Address;
+  pool: Pool;
+  loan: Loan;
+  amount: bigint;
+  cosignerWallet: Address;
+}): Promise<Instruction> {
   const [escrow] = await findEscrowPda(a.loan.address);
   return getRepayInstruction(
     {
@@ -485,9 +645,9 @@ export async function repayIx(a: { payer: Address; pool: Pool; loan: Loan; amoun
       loan: a.loan.address,
       escrow,
       payerToken: await findAta(a.payer, a.pool.mint),
-      cosignerToken: await findAta(a.loan.cosigner, a.pool.mint),
-      borrowerMember,
-      cosignerMember,
+      cosignerToken: await findAta(a.cosignerWallet, a.pool.mint),
+      borrowerPerson: a.loan.borrowerPerson,
+      cosignerPerson: a.loan.cosignerPerson,
       rentPayer: a.loan.rentPayer,
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
       amount: a.amount,
@@ -496,12 +656,18 @@ export async function repayIx(a: { payer: Address; pool: Pool; loan: Loan; amoun
   );
 }
 
-/** Anyone may call this once a loan is past due plus its grace period. The co-signer's token account must exist. */
-export async function markDefaultIx(a: { caller: Address; pool: Pool; loan: Loan }): Promise<{ ix: Instruction; cosignerToken: Address }> {
-  const [borrowerMember] = await findMemberPda(a.pool.address, a.loan.borrower);
-  const [cosignerMember] = await findMemberPda(a.pool.address, a.loan.cosigner);
+/**
+ * Anyone may call this once a loan is past due plus its grace period. The co-signer's current wallet
+ * (`cosignerWalletOf`) must have a token account; the caller creates it when needed.
+ */
+export async function markDefaultIx(a: {
+  caller: Address;
+  pool: Pool;
+  loan: Loan;
+  cosignerWallet: Address;
+}): Promise<{ ix: Instruction; cosignerToken: Address }> {
   const [escrow] = await findEscrowPda(a.loan.address);
-  const cosignerToken = await findAta(a.loan.cosigner, a.pool.mint);
+  const cosignerToken = await findAta(a.cosignerWallet, a.pool.mint);
   const ix = getMarkDefaultInstruction(
     {
       caller: signer(a.caller),
@@ -511,8 +677,8 @@ export async function markDefaultIx(a: { caller: Address; pool: Pool; loan: Loan
       loan: a.loan.address,
       escrow,
       cosignerToken,
-      borrowerMember,
-      cosignerMember,
+      borrowerPerson: a.loan.borrowerPerson,
+      cosignerPerson: a.loan.cosignerPerson,
       rentPayer: a.loan.rentPayer,
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
     },
@@ -541,16 +707,24 @@ const ERROR_NAMES = [
   "RequestMismatch",
   "EscrowTooHigh",
   "InvalidParams",
+  "WalletNotBound",
+  "WalletRetired",
+  "WindingDown",
+  "NotWindingDown",
+  "TimelockNotElapsed",
+  "NothingPending",
+  "LoansOutstanding",
+  "InvalidSuccessor",
 ];
 const ERROR_COPY: Record<string, string> = {
   AmountZero: "Enter an amount greater than zero.",
   OverLoanCap: "That is more than the loan limit.",
   TermTooLong: "That term is longer than allowed.",
-  SelfCosign: "You can't co-sign your own loan.",
+  SelfCosign: "A borrower and their co-signer must be different people.",
   BorrowerHasLoan: "This borrower already has an open loan.",
   CosignerLimit: "This co-signer is already backing as many loans as allowed.",
   Ineligible: "This member can't take part right now.",
-  InvalidGatewayToken: "A valid Civic Pass is needed (it may have expired).",
+  InvalidGatewayToken: "A valid verification pass is needed (it may have expired).",
   InsufficientFund: "The fund doesn't have enough to cover this loan right now.",
   OverRepay: "That is more than what is still owed.",
   LoanNotActive: "This loan is no longer active.",
@@ -561,6 +735,14 @@ const ERROR_COPY: Record<string, string> = {
   RequestMismatch: "The request changed. Please review again.",
   EscrowTooHigh: "The escrow is higher than what you were shown. Please review again.",
   InvalidParams: "Invalid settings.",
+  WalletNotBound: "This wallet is no longer the one linked to your membership.",
+  WalletRetired: "This wallet was replaced and can't be used any more.",
+  WindingDown: "The fund is winding down, so it no longer takes new loans or donations.",
+  NotWindingDown: "The fund isn't winding down.",
+  TimelockNotElapsed: "This change isn't in effect yet.",
+  NothingPending: "There is no scheduled change.",
+  LoansOutstanding: "Some loans are still open.",
+  InvalidSuccessor: "That isn't a valid successor account.",
 };
 
 const WALLET_REJECTED = /user rejected|rejected the request|user denied|user declined|declined by user|rejected by user/i;

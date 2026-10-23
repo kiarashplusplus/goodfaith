@@ -4,8 +4,8 @@ use anchor_spl::token_interface::{
 };
 
 use crate::{
-    error::GoodFaithError, events::LoanDefaulted, state::*, ESCROW_SEED, LOAN_SEED, MEMBER_SEED,
-    POOL_SEED, SECONDS_PER_DAY,
+    error::GoodFaithError, events::LoanDefaulted, state::*, ESCROW_SEED, LOAN_SEED, POOL_SEED,
+    SECONDS_PER_DAY,
 };
 
 #[derive(Accounts)]
@@ -40,24 +40,17 @@ pub struct MarkDefault<'info> {
         token::authority = pool,
     )]
     pub escrow: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, address = loan.borrower_person)]
+    pub borrower_person: Box<Account<'info, Person>>,
+    #[account(mut, address = loan.cosigner_person)]
+    pub cosigner_person: Box<Account<'info, Person>>,
+    // Any escrow left over goes to the co-signer's current wallet.
     #[account(
         mut,
         token::mint = mint,
-        token::authority = loan.cosigner,
+        token::authority = cosigner_person.wallet,
     )]
     pub cosigner_token: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(
-        mut,
-        seeds = [MEMBER_SEED, pool.key().as_ref(), loan.borrower.as_ref()],
-        bump = borrower_member.bump,
-    )]
-    pub borrower_member: Box<Account<'info, Member>>,
-    #[account(
-        mut,
-        seeds = [MEMBER_SEED, pool.key().as_ref(), loan.cosigner.as_ref()],
-        bump = cosigner_member.bump,
-    )]
-    pub cosigner_member: Box<Account<'info, Member>>,
     /// CHECK: receives the escrow account rent; must match `loan.rent_payer`.
     #[account(mut, address = loan.rent_payer)]
     pub rent_payer: UncheckedAccount<'info>,
@@ -135,13 +128,22 @@ pub fn mark_default_handler(mut ctx: Context<MarkDefault>) -> Result<()> {
         .total_lost
         .checked_add(lost)
         .ok_or(GoodFaithError::MathOverflow)?;
+    a.pool.active_loans = a
+        .pool
+        .active_loans
+        .checked_sub(1)
+        .ok_or(GoodFaithError::MathOverflow)?;
 
     a.loan.status = LoanStatus::Defaulted;
-    a.borrower_member.ineligible = true;
-    a.borrower_member.active_loan = None;
-    a.cosigner_member.ineligible = true;
-    a.cosigner_member.active_guarantees = a
-        .cosigner_member
+    a.borrower_person.ineligible = true;
+    a.borrower_person.active_loan = None;
+    // The co-signer's deposit did its job: if the fund was made whole, they keep their standing.
+    let cosigner_barred = lost > 0;
+    if cosigner_barred {
+        a.cosigner_person.ineligible = true;
+    }
+    a.cosigner_person.active_guarantees = a
+        .cosigner_person
         .active_guarantees
         .checked_sub(1)
         .ok_or(GoodFaithError::MathOverflow)?;
@@ -155,6 +157,7 @@ pub fn mark_default_handler(mut ctx: Context<MarkDefault>) -> Result<()> {
         recovered,
         lost,
         escrow_returned: returned,
+        cosigner_barred,
     });
     Ok(())
 }

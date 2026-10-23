@@ -28,7 +28,7 @@ State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch paramete
 - Toolchain installed in a clean Linux container with `scripts/toolchain.sh` (Solana 4.3.2, Anchor 1.2.1 prebuilt, Surfpool 1.6.1); `anchor build --arch v2` works with the declared program id even though the original keypair is absent.
 - Program: 39 Rust LiteSVM + property tests pass; `cargo clippy --all-targets` clean.
 - App: `cd app && npm run test:svm` runs 14 scenarios that send the app's own instruction builders through `tx.ts` into LiteSVM (`app/src/lib/onchain.svm.test.ts`): pool pinning, donate, register (incl. sponsored payer), pool-scoped co-sign inbox across two pools, co-sign term binding, repay, loan history, cancel, mark-default and the exact grace boundary against `loanTiming`.
-- Surfpool fork: `npm run deploy-fork` plants the `.so` at the declared id (`surfnet_writeProgram`); `npm run e2e` passes with the new cancel, `update_pool` and `freeze_pool` rows.
+- Surfpool fork: `npm run deploy-fork` plants the `.so` at the declared id (`surfnet_writeProgram`); `npm run e2e` passes with the cancel, wallet-replacement, timelock, issuer-suspension, wind-down and `freeze_pool` rows.
 - CI: `program-tests` (Anchor build, Rust suite, clippy, `test:svm`), `app` (lint, types, Prettier, unit tests, build, audit, Playwright smoke) on every push and PR; `e2e` (Surfpool fork, loan cycle, Kora direct and through the sponsor proxy with auth, smoke) on `main` and manual dispatch. Toolchain and Kora cached.
 
 ## Completed: program additions and Kora hardening

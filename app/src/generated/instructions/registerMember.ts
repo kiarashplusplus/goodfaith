@@ -6,45 +6,48 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, SolanaError, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
-import { getAccountMetaFactory, getAddressFromResolvedInstructionAccount, type InstructionAccountInput, type InstructionAccountInputAddress, type InstructionSignerInput, type ResolvedInstructionAccount, type ResolvedInstructionAccountMeta } from '@solana/program-client-core';
-import { findMemberPda } from '../pdas';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, SolanaError, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
+import { getAccountMetaFactory, getAddressFromResolvedInstructionAccount, getNonNullResolvedInstructionInput, type InstructionAccountInput, type InstructionAccountInputAddress, type InstructionSignerInput, type ResolvedInstructionAccount, type ResolvedInstructionAccountMeta } from '@solana/program-client-core';
+import { findMemberPda, findPersonPda } from '../pdas';
 import { GOODFAITH_PROGRAM_ADDRESS } from '../programs';
 
 export const REGISTER_MEMBER_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([44, 19, 160, 59, 17, 122, 38, 16]);
 
 export function getRegisterMemberDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(REGISTER_MEMBER_DISCRIMINATOR); }
 
-export type RegisterMemberInstruction<TProgram extends string = typeof GOODFAITH_PROGRAM_ADDRESS, TAccountWallet extends string | AccountMeta<string> = string, TAccountPayer extends string | AccountMeta<string> = string, TAccountPool extends string | AccountMeta<string> = string, TAccountMember extends string | AccountMeta<string> = string, TAccountGatewayToken extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
-Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountWallet extends string ? WritableSignerAccount<TAccountWallet> & AccountSignerMeta<TAccountWallet> : TAccountWallet, TAccountPayer extends string ? WritableSignerAccount<TAccountPayer> & AccountSignerMeta<TAccountPayer> : TAccountPayer, TAccountPool extends string ? ReadonlyAccount<TAccountPool> : TAccountPool, TAccountMember extends string ? WritableAccount<TAccountMember> : TAccountMember, TAccountGatewayToken extends string ? ReadonlyAccount<TAccountGatewayToken> : TAccountGatewayToken, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, ...TRemainingAccounts]>;
+export type RegisterMemberInstruction<TProgram extends string = typeof GOODFAITH_PROGRAM_ADDRESS, TAccountWallet extends string | AccountMeta<string> = string, TAccountPayer extends string | AccountMeta<string> = string, TAccountIssuer extends string | AccountMeta<string> = string, TAccountPool extends string | AccountMeta<string> = string, TAccountPerson extends string | AccountMeta<string> = string, TAccountMember extends string | AccountMeta<string> = string, TAccountGatewayToken extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountWallet extends string ? ReadonlySignerAccount<TAccountWallet> & AccountSignerMeta<TAccountWallet> : TAccountWallet, TAccountPayer extends string ? WritableSignerAccount<TAccountPayer> & AccountSignerMeta<TAccountPayer> : TAccountPayer, TAccountIssuer extends string ? ReadonlySignerAccount<TAccountIssuer> & AccountSignerMeta<TAccountIssuer> : TAccountIssuer, TAccountPool extends string ? ReadonlyAccount<TAccountPool> : TAccountPool, TAccountPerson extends string ? WritableAccount<TAccountPerson> : TAccountPerson, TAccountMember extends string ? WritableAccount<TAccountMember> : TAccountMember, TAccountGatewayToken extends string ? ReadonlyAccount<TAccountGatewayToken> : TAccountGatewayToken, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, ...TRemainingAccounts]>;
 
-export type RegisterMemberInstructionData = { discriminator: ReadonlyUint8Array;  };
+export type RegisterMemberInstructionData = { discriminator: ReadonlyUint8Array; personHash: ReadonlyUint8Array;  };
 
-export type RegisterMemberInstructionDataArgs = {  };
+export type RegisterMemberInstructionDataArgs = { personHash: ReadonlyUint8Array;  };
 
 export function getRegisterMemberInstructionDataEncoder(): FixedSizeEncoder<RegisterMemberInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)]]), (value) => ({ ...value, discriminator: REGISTER_MEMBER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['personHash', fixEncoderSize(getBytesEncoder(), 32)]]), (value) => ({ ...value, discriminator: REGISTER_MEMBER_DISCRIMINATOR }));
 }
 
 export function getRegisterMemberInstructionDataDecoder(): FixedSizeDecoder<RegisterMemberInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['personHash', fixDecoderSize(getBytesDecoder(), 32)]]);
 }
 
 export function getRegisterMemberInstructionDataCodec(): FixedSizeCodec<RegisterMemberInstructionDataArgs, RegisterMemberInstructionData> {
     return combineCodec(getRegisterMemberInstructionDataEncoder(), getRegisterMemberInstructionDataDecoder());
 }
 
-export type RegisterMemberAsyncInput<TAccountWallet extends InstructionSignerInput = InstructionSignerInput, TAccountPayer extends InstructionSignerInput = InstructionSignerInput, TAccountPool extends InstructionAccountInput = InstructionAccountInput, TAccountMember extends InstructionAccountInput = InstructionAccountInput, TAccountGatewayToken extends InstructionAccountInput = InstructionAccountInput, TAccountSystemProgram extends InstructionAccountInput = InstructionAccountInput> =  {
+export type RegisterMemberAsyncInput<TAccountWallet extends InstructionSignerInput = InstructionSignerInput, TAccountPayer extends InstructionSignerInput = InstructionSignerInput, TAccountIssuer extends InstructionSignerInput = InstructionSignerInput, TAccountPool extends InstructionAccountInput = InstructionAccountInput, TAccountPerson extends InstructionAccountInput = InstructionAccountInput, TAccountMember extends InstructionAccountInput = InstructionAccountInput, TAccountGatewayToken extends InstructionAccountInput = InstructionAccountInput, TAccountSystemProgram extends InstructionAccountInput = InstructionAccountInput> =  {
   wallet: TAccountWallet;
-/** Pays Member account rent (fee sponsor, may equal wallet). */
+/** Pays account rent (fee sponsor, may equal wallet). */
 payer: TAccountPayer;
+issuer: TAccountIssuer;
 pool: TAccountPool;
+person?: TAccountPerson;
 member?: TAccountMember;
 gatewayToken: TAccountGatewayToken;
 systemProgram?: TAccountSystemProgram;
+personHash: RegisterMemberInstructionDataArgs["personHash"];
 }
 
-export async function getRegisterMemberInstructionAsync<TAccountWallet extends InstructionSignerInput, TAccountPayer extends InstructionSignerInput, TAccountPool extends InstructionAccountInput, TAccountMember extends InstructionAccountInput, TAccountGatewayToken extends InstructionAccountInput, TAccountSystemProgram extends InstructionAccountInput, TProgramAddress extends Address = typeof GOODFAITH_PROGRAM_ADDRESS>(input: RegisterMemberAsyncInput<TAccountWallet, TAccountPayer, TAccountPool, TAccountMember, TAccountGatewayToken, TAccountSystemProgram>, config?: { programAddress?: TProgramAddress | { readonly address: TProgramAddress } } ): Promise<RegisterMemberInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountWallet, InstructionAccountInputAddress<TAccountWallet>>, ResolvedInstructionAccountMeta<TAccountPayer, InstructionAccountInputAddress<TAccountPayer>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountMember, InstructionAccountInputAddress<TAccountMember>>, ResolvedInstructionAccountMeta<TAccountGatewayToken, InstructionAccountInputAddress<TAccountGatewayToken>>, ResolvedInstructionAccountMeta<TAccountSystemProgram, InstructionAccountInputAddress<TAccountSystemProgram>>>> {
+export async function getRegisterMemberInstructionAsync<TAccountWallet extends InstructionSignerInput, TAccountPayer extends InstructionSignerInput, TAccountIssuer extends InstructionSignerInput, TAccountPool extends InstructionAccountInput, TAccountPerson extends InstructionAccountInput, TAccountMember extends InstructionAccountInput, TAccountGatewayToken extends InstructionAccountInput, TAccountSystemProgram extends InstructionAccountInput, TProgramAddress extends Address = typeof GOODFAITH_PROGRAM_ADDRESS>(input: RegisterMemberAsyncInput<TAccountWallet, TAccountPayer, TAccountIssuer, TAccountPool, TAccountPerson, TAccountMember, TAccountGatewayToken, TAccountSystemProgram>, config?: { programAddress?: TProgramAddress | { readonly address: TProgramAddress } } ): Promise<RegisterMemberInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountWallet, InstructionAccountInputAddress<TAccountWallet>>, ResolvedInstructionAccountMeta<TAccountPayer, InstructionAccountInputAddress<TAccountPayer>>, ResolvedInstructionAccountMeta<TAccountIssuer, InstructionAccountInputAddress<TAccountIssuer>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountPerson, InstructionAccountInputAddress<TAccountPerson>>, ResolvedInstructionAccountMeta<TAccountMember, InstructionAccountInputAddress<TAccountMember>>, ResolvedInstructionAccountMeta<TAccountGatewayToken, InstructionAccountInputAddress<TAccountGatewayToken>>, ResolvedInstructionAccountMeta<TAccountSystemProgram, InstructionAccountInputAddress<TAccountSystemProgram>>>> {
   // Program address.
 const programAddressInput = config?.programAddress ?? GOODFAITH_PROGRAM_ADDRESS;
 const programAddress = typeof programAddressInput === 'string' ? programAddressInput : programAddressInput.address;
@@ -53,11 +56,18 @@ const programAddress = typeof programAddressInput === 'string' ? programAddressI
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
 
  // Original accounts.
-const originalAccounts = { wallet: { value: input.wallet ?? null, isSigner: true, isWritable: true }, payer: { value: input.payer ?? null, isSigner: true, isWritable: true }, pool: { value: input.pool ?? null, isSigner: false, isWritable: false }, member: { value: input.member ?? null, isSigner: false, isWritable: true }, gatewayToken: { value: input.gatewayToken ?? null, isSigner: false, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isSigner: false, isWritable: false } }
+const originalAccounts = { wallet: { value: input.wallet ?? null, isSigner: true, isWritable: false }, payer: { value: input.payer ?? null, isSigner: true, isWritable: true }, issuer: { value: input.issuer ?? null, isSigner: true, isWritable: false }, pool: { value: input.pool ?? null, isSigner: false, isWritable: false }, person: { value: input.person ?? null, isSigner: false, isWritable: true }, member: { value: input.member ?? null, isSigner: false, isWritable: true }, gatewayToken: { value: input.gatewayToken ?? null, isSigner: false, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isSigner: false, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>;
 
 
+// Original args.
+const args = { ...input,  };
+
+
 // Resolve default values.
+if (!accounts.person.value) {
+accounts.person.value = await findPersonPda({ pool: getAddressFromResolvedInstructionAccount("pool", accounts.pool.value), personHash: getNonNullResolvedInstructionInput("personHash", args.personHash) }, { programAddress });
+}
 if (!accounts.member.value) {
 accounts.member.value = await findMemberPda({ pool: getAddressFromResolvedInstructionAccount("pool", accounts.pool.value), wallet: getAddressFromResolvedInstructionAccount("wallet", accounts.wallet.value) }, { programAddress });
 }
@@ -65,20 +75,23 @@ if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
 }
 
-return Object.freeze({ accounts: [getAccountMeta("wallet", accounts.wallet), getAccountMeta("payer", accounts.payer), getAccountMeta("pool", accounts.pool), getAccountMeta("member", accounts.member), getAccountMeta("gatewayToken", accounts.gatewayToken), getAccountMeta("systemProgram", accounts.systemProgram)], data: getRegisterMemberInstructionDataEncoder().encode({}), programAddress } as RegisterMemberInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountWallet, InstructionAccountInputAddress<TAccountWallet>>, ResolvedInstructionAccountMeta<TAccountPayer, InstructionAccountInputAddress<TAccountPayer>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountMember, InstructionAccountInputAddress<TAccountMember>>, ResolvedInstructionAccountMeta<TAccountGatewayToken, InstructionAccountInputAddress<TAccountGatewayToken>>, ResolvedInstructionAccountMeta<TAccountSystemProgram, InstructionAccountInputAddress<TAccountSystemProgram>>>);
+return Object.freeze({ accounts: [getAccountMeta("wallet", accounts.wallet), getAccountMeta("payer", accounts.payer), getAccountMeta("issuer", accounts.issuer), getAccountMeta("pool", accounts.pool), getAccountMeta("person", accounts.person), getAccountMeta("member", accounts.member), getAccountMeta("gatewayToken", accounts.gatewayToken), getAccountMeta("systemProgram", accounts.systemProgram)], data: getRegisterMemberInstructionDataEncoder().encode(args as RegisterMemberInstructionDataArgs), programAddress } as RegisterMemberInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountWallet, InstructionAccountInputAddress<TAccountWallet>>, ResolvedInstructionAccountMeta<TAccountPayer, InstructionAccountInputAddress<TAccountPayer>>, ResolvedInstructionAccountMeta<TAccountIssuer, InstructionAccountInputAddress<TAccountIssuer>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountPerson, InstructionAccountInputAddress<TAccountPerson>>, ResolvedInstructionAccountMeta<TAccountMember, InstructionAccountInputAddress<TAccountMember>>, ResolvedInstructionAccountMeta<TAccountGatewayToken, InstructionAccountInputAddress<TAccountGatewayToken>>, ResolvedInstructionAccountMeta<TAccountSystemProgram, InstructionAccountInputAddress<TAccountSystemProgram>>>);
 }
 
-export type RegisterMemberInput<TAccountWallet extends InstructionSignerInput = InstructionSignerInput, TAccountPayer extends InstructionSignerInput = InstructionSignerInput, TAccountPool extends InstructionAccountInput = InstructionAccountInput, TAccountMember extends InstructionAccountInput = InstructionAccountInput, TAccountGatewayToken extends InstructionAccountInput = InstructionAccountInput, TAccountSystemProgram extends InstructionAccountInput = InstructionAccountInput> =  {
+export type RegisterMemberInput<TAccountWallet extends InstructionSignerInput = InstructionSignerInput, TAccountPayer extends InstructionSignerInput = InstructionSignerInput, TAccountIssuer extends InstructionSignerInput = InstructionSignerInput, TAccountPool extends InstructionAccountInput = InstructionAccountInput, TAccountPerson extends InstructionAccountInput = InstructionAccountInput, TAccountMember extends InstructionAccountInput = InstructionAccountInput, TAccountGatewayToken extends InstructionAccountInput = InstructionAccountInput, TAccountSystemProgram extends InstructionAccountInput = InstructionAccountInput> =  {
   wallet: TAccountWallet;
-/** Pays Member account rent (fee sponsor, may equal wallet). */
+/** Pays account rent (fee sponsor, may equal wallet). */
 payer: TAccountPayer;
+issuer: TAccountIssuer;
 pool: TAccountPool;
+person: TAccountPerson;
 member: TAccountMember;
 gatewayToken: TAccountGatewayToken;
 systemProgram?: TAccountSystemProgram;
+personHash: RegisterMemberInstructionDataArgs["personHash"];
 }
 
-export function getRegisterMemberInstruction<TAccountWallet extends InstructionSignerInput, TAccountPayer extends InstructionSignerInput, TAccountPool extends InstructionAccountInput, TAccountMember extends InstructionAccountInput, TAccountGatewayToken extends InstructionAccountInput, TAccountSystemProgram extends InstructionAccountInput, TProgramAddress extends Address = typeof GOODFAITH_PROGRAM_ADDRESS>(input: RegisterMemberInput<TAccountWallet, TAccountPayer, TAccountPool, TAccountMember, TAccountGatewayToken, TAccountSystemProgram>, config?: { programAddress?: TProgramAddress | { readonly address: TProgramAddress } } ): RegisterMemberInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountWallet, InstructionAccountInputAddress<TAccountWallet>>, ResolvedInstructionAccountMeta<TAccountPayer, InstructionAccountInputAddress<TAccountPayer>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountMember, InstructionAccountInputAddress<TAccountMember>>, ResolvedInstructionAccountMeta<TAccountGatewayToken, InstructionAccountInputAddress<TAccountGatewayToken>>, ResolvedInstructionAccountMeta<TAccountSystemProgram, InstructionAccountInputAddress<TAccountSystemProgram>>> {
+export function getRegisterMemberInstruction<TAccountWallet extends InstructionSignerInput, TAccountPayer extends InstructionSignerInput, TAccountIssuer extends InstructionSignerInput, TAccountPool extends InstructionAccountInput, TAccountPerson extends InstructionAccountInput, TAccountMember extends InstructionAccountInput, TAccountGatewayToken extends InstructionAccountInput, TAccountSystemProgram extends InstructionAccountInput, TProgramAddress extends Address = typeof GOODFAITH_PROGRAM_ADDRESS>(input: RegisterMemberInput<TAccountWallet, TAccountPayer, TAccountIssuer, TAccountPool, TAccountPerson, TAccountMember, TAccountGatewayToken, TAccountSystemProgram>, config?: { programAddress?: TProgramAddress | { readonly address: TProgramAddress } } ): RegisterMemberInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountWallet, InstructionAccountInputAddress<TAccountWallet>>, ResolvedInstructionAccountMeta<TAccountPayer, InstructionAccountInputAddress<TAccountPayer>>, ResolvedInstructionAccountMeta<TAccountIssuer, InstructionAccountInputAddress<TAccountIssuer>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountPerson, InstructionAccountInputAddress<TAccountPerson>>, ResolvedInstructionAccountMeta<TAccountMember, InstructionAccountInputAddress<TAccountMember>>, ResolvedInstructionAccountMeta<TAccountGatewayToken, InstructionAccountInputAddress<TAccountGatewayToken>>, ResolvedInstructionAccountMeta<TAccountSystemProgram, InstructionAccountInputAddress<TAccountSystemProgram>>> {
   // Program address.
 const programAddressInput = config?.programAddress ?? GOODFAITH_PROGRAM_ADDRESS;
 const programAddress = typeof programAddressInput === 'string' ? programAddressInput : programAddressInput.address;
@@ -87,8 +100,12 @@ const programAddress = typeof programAddressInput === 'string' ? programAddressI
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
 
  // Original accounts.
-const originalAccounts = { wallet: { value: input.wallet ?? null, isSigner: true, isWritable: true }, payer: { value: input.payer ?? null, isSigner: true, isWritable: true }, pool: { value: input.pool ?? null, isSigner: false, isWritable: false }, member: { value: input.member ?? null, isSigner: false, isWritable: true }, gatewayToken: { value: input.gatewayToken ?? null, isSigner: false, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isSigner: false, isWritable: false } }
+const originalAccounts = { wallet: { value: input.wallet ?? null, isSigner: true, isWritable: false }, payer: { value: input.payer ?? null, isSigner: true, isWritable: true }, issuer: { value: input.issuer ?? null, isSigner: true, isWritable: false }, pool: { value: input.pool ?? null, isSigner: false, isWritable: false }, person: { value: input.person ?? null, isSigner: false, isWritable: true }, member: { value: input.member ?? null, isSigner: false, isWritable: true }, gatewayToken: { value: input.gatewayToken ?? null, isSigner: false, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isSigner: false, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>;
+
+
+// Original args.
+const args = { ...input,  };
 
 
 // Resolve default values.
@@ -96,24 +113,26 @@ if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
 }
 
-return Object.freeze({ accounts: [getAccountMeta("wallet", accounts.wallet), getAccountMeta("payer", accounts.payer), getAccountMeta("pool", accounts.pool), getAccountMeta("member", accounts.member), getAccountMeta("gatewayToken", accounts.gatewayToken), getAccountMeta("systemProgram", accounts.systemProgram)], data: getRegisterMemberInstructionDataEncoder().encode({}), programAddress } as RegisterMemberInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountWallet, InstructionAccountInputAddress<TAccountWallet>>, ResolvedInstructionAccountMeta<TAccountPayer, InstructionAccountInputAddress<TAccountPayer>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountMember, InstructionAccountInputAddress<TAccountMember>>, ResolvedInstructionAccountMeta<TAccountGatewayToken, InstructionAccountInputAddress<TAccountGatewayToken>>, ResolvedInstructionAccountMeta<TAccountSystemProgram, InstructionAccountInputAddress<TAccountSystemProgram>>>);
+return Object.freeze({ accounts: [getAccountMeta("wallet", accounts.wallet), getAccountMeta("payer", accounts.payer), getAccountMeta("issuer", accounts.issuer), getAccountMeta("pool", accounts.pool), getAccountMeta("person", accounts.person), getAccountMeta("member", accounts.member), getAccountMeta("gatewayToken", accounts.gatewayToken), getAccountMeta("systemProgram", accounts.systemProgram)], data: getRegisterMemberInstructionDataEncoder().encode(args as RegisterMemberInstructionDataArgs), programAddress } as RegisterMemberInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountWallet, InstructionAccountInputAddress<TAccountWallet>>, ResolvedInstructionAccountMeta<TAccountPayer, InstructionAccountInputAddress<TAccountPayer>>, ResolvedInstructionAccountMeta<TAccountIssuer, InstructionAccountInputAddress<TAccountIssuer>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountPerson, InstructionAccountInputAddress<TAccountPerson>>, ResolvedInstructionAccountMeta<TAccountMember, InstructionAccountInputAddress<TAccountMember>>, ResolvedInstructionAccountMeta<TAccountGatewayToken, InstructionAccountInputAddress<TAccountGatewayToken>>, ResolvedInstructionAccountMeta<TAccountSystemProgram, InstructionAccountInputAddress<TAccountSystemProgram>>>);
 }
 
 export type ParsedRegisterMemberInstruction<TProgram extends string = typeof GOODFAITH_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
 accounts: {
 wallet: TAccountMetas[0];
-/** Pays Member account rent (fee sponsor, may equal wallet). */
+/** Pays account rent (fee sponsor, may equal wallet). */
 payer: TAccountMetas[1];
-pool: TAccountMetas[2];
-member: TAccountMetas[3];
-gatewayToken: TAccountMetas[4];
-systemProgram: TAccountMetas[5];
+issuer: TAccountMetas[2];
+pool: TAccountMetas[3];
+person: TAccountMetas[4];
+member: TAccountMetas[5];
+gatewayToken: TAccountMetas[6];
+systemProgram: TAccountMetas[7];
 };
 data: RegisterMemberInstructionData; };
 
 export function parseRegisterMemberInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedRegisterMemberInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 6) {
-  throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, { actualAccountMetas: instruction.accounts.length, expectedAccountMetas: 6 });
+  if (instruction.accounts.length < 8) {
+  throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, { actualAccountMetas: instruction.accounts.length, expectedAccountMetas: 8 });
 }
 let accountIndex = 0;
 const getNextAccount = () => {
@@ -121,5 +140,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { wallet: getNextAccount(), payer: getNextAccount(), pool: getNextAccount(), member: getNextAccount(), gatewayToken: getNextAccount(), systemProgram: getNextAccount() }, data: getRegisterMemberInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { wallet: getNextAccount(), payer: getNextAccount(), issuer: getNextAccount(), pool: getNextAccount(), person: getNextAccount(), member: getNextAccount(), gatewayToken: getNextAccount(), systemProgram: getNextAccount() }, data: getRegisterMemberInstructionDataDecoder().decode(instruction.data) };
 }

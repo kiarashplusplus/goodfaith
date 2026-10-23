@@ -6,10 +6,11 @@
  * @see https://github.com/codama-idl/codama
  */
 
-export * from './borrowerMember';
 export * from './cosignerMember';
 export * from './escrow';
 export * from './member';
+export * from './newMember';
+export * from './person';
 export * from './pool';
 export * from './request';
 export * from './vault';

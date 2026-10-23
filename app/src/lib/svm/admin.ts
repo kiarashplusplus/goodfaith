@@ -5,3 +5,11 @@ export const TEST_ADMIN_SECRET = [
   109, 61,
 ];
 export const TEST_ADMIN_ADDRESS = "5MhvzaqhN3tqQ2F4tqYwu7MWFoMFzTXFibKvDC3wGqSU";
+
+/** Throwaway identity-issuer keypair for the LiteSVM suite only. Never fund it anywhere real. */
+export const TEST_ISSUER_SECRET = [
+  11, 126, 180, 166, 76, 6, 241, 233, 228, 152, 0, 141, 20, 73, 143, 50, 22, 126, 205, 16, 201, 179, 224, 225, 47, 213, 10, 44, 251, 185, 2,
+  207, 154, 73, 19, 165, 234, 62, 249, 25, 71, 56, 182, 21, 88, 11, 49, 4, 222, 218, 15, 62, 120, 8, 84, 154, 126, 151, 221, 128, 85, 97,
+  198, 234,
+];
+export const TEST_ISSUER_ADDRESS = "BPGR4jhdrFbWd3QxwHEV8AFy3yKR3Uw7WgtT5ibKPivM";
