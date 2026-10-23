@@ -6,7 +6,7 @@ import { Nav } from "@/components/nav";
 import { PoolWarning } from "@/components/pool-warning";
 
 export const metadata: Metadata = {
-  title: "Good Faith — loans with no interest and no fees",
+  title: { default: "Good Faith — loans with no interest and no fees", template: "%s | Good Faith" },
   description: "You pay back exactly what you borrow. No interest. No fees. Texas residents only.",
 };
 
