@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "deploy-fork": "tsx deploy-fork.ts",
     "e2e": "tsx e2e.ts",
     "kora-e2e": "tsx kora-e2e.ts",
     "smoke": "tsx smoke.ts"

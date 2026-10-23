@@ -27,6 +27,47 @@ jobs:
         working-directory: programs/goodfaith
         run: cargo clippy --lib --no-deps -- -D warnings
 
+  program-tests:
+    name: Program tests (Anchor build, Rust + Node LiteSVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SOLANA_VERSION: "4.3.2"
+      ANCHOR_VERSION: "1.2.1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache Solana CLI, platform-tools and Anchor
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/solana/install
+            ~/.cache/solana
+            ~/.local/bin/anchor
+          key: solana-${{ env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_VERSION }}-${{ runner.os }}
+      - name: Install toolchain (Solana CLI + Anchor; platform-tools on first build)
+        run: bash scripts/toolchain.sh --no-surfpool
+      - name: Add toolchain to PATH
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Build program
+        run: anchor build --arch v2
+      - name: Rust tests (LiteSVM + property tests)
+        run: cargo test -p goodfaith
+      - name: Clippy, all targets
+        run: cargo clippy --all-targets -- -D warnings
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: App on-chain tests (LiteSVM)
+        working-directory: app
+        run: npm ci && npm run test:svm
+
   app:
     name: Web app (lint, types, tests, build)
     runs-on: ubuntu-latest

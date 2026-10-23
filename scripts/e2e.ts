@@ -155,21 +155,52 @@ assert.equal(p.totalRepaid, p0.totalRepaid + 100n * USDC);
 assert.ok((await sol(l.rentPayer)) > rentBefore - 1n);
 row('full repay 60', `escrow back to cosigner ${fmt(await tok(ataOf.cosigner))}`, `escrow acct closed`, `vault ${fmt(await tok(vault))}`, `totalRepaid +${fmt(p.totalRepaid - p0.totalRepaid)}`);
 
+// ---------- cancel_request ----------
+{
+  const reqIx = () => gf.getRequestLoanInstructionAsync({ payer: borrower, borrower, mint: MINT, borrowerGatewayToken: gwB, amount: 10n * USDC, termDays: 5, cosigner: cosigner.address });
+  const [request] = await gf.findRequestPda({ pool, borrower: borrower.address });
+  const open = async () => (await rpc.getAccountInfo(request, { encoding: 'base64' }).send()).value !== null;
+  await send([await reqIx()], borrower, 'request (to cancel)');
+  assert.ok(await open());
+  const solBefore = await sol(borrower.address);
+  await send([await gf.getCancelRequestInstruction({ canceller: borrower, pool, request, rentPayer: borrower.address })], borrower, 'cancel by borrower');
+  assert.equal(await open(), false, 'request closed by borrower');
+  assert.ok((await sol(borrower.address)) > solBefore - 10_000n, 'request rent returned to the borrower');
+  row('cancel_request (borrower)', 'request closed, rent back');
+  await send([await reqIx()], borrower, 'request again');
+  const strangerErr = await expectFail(send([await gf.getCancelRequestInstruction({ canceller: third, pool, request, rentPayer: borrower.address })], third, 'cancel by stranger'), 'stranger cancel');
+  row('cancel_request (stranger)', 'rejected', strangerErr.match(/Unauthorized|0x177c|Custom[^"]*/)?.[0] ?? strangerErr.slice(0, 60));
+  await send([await gf.getCancelRequestInstruction({ canceller: cosigner, pool, request, rentPayer: borrower.address })], cosigner, 'cancel by cosigner');
+  assert.equal(await open(), false, 'request closed by cosigner');
+  row('cancel_request (cosigner)', 'request closed');
+}
+
 // ---------- Loan 2 -> default ----------
 const L2 = await openLoan(100n * USDC, 7);
 row('loan#2 100', `escrow ${fmt(L2.escrowAmt)}`, `borrower ${fmt(await tok(ataOf.borrower))}`, `vault ${fmt(await tok(vault))}`);
 l = await loanOf(L2.loan);
+const frozenAtStart = p0.authority.__option === 'None';
+if (frozenAtStart) {
+  row('update_pool', 'skipped: pool already frozen (restart surfpool for a fresh fork)');
+} else {
+  const pBefore = await fetchPool(pool);
+  const newGrace = pBefore.graceDays + 7;
+  await send([gf.getUpdatePoolInstruction({ authority: admin, pool, params: { gatekeeperNetwork: pBefore.gatekeeperNetwork, maxLoan: pBefore.maxLoan, maxTermDays: pBefore.maxTermDays, graceDays: newGrace, maxGuaranteesPerMember: pBefore.maxGuaranteesPerMember, cosignerEscrowBps: pBefore.cosignerEscrowBps } })], admin, 'update_pool');
+  assert.equal((await fetchPool(pool)).graceDays, newGrace, 'pool grace updated');
+  assert.equal((await loanOf(L2.loan)).graceDays, l.graceDays, 'open loan keeps the grace it was opened with');
+  row('update_pool grace +7', `pool grace ${newGrace}d`, `loan#2 keeps ${l.graceDays}d`);
+}
 const early = await expectFail(send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, cosignerToken: ataOf.cosigner, borrowerMember: mB, cosignerMember: mC, rentPayer: l.rentPayer })], third, 'early default'), 'early default');
 row('mark_default too early', 'rejected', early.match(/NotYetDefaultable|0x[0-9a-f]+/)?.[0] ?? '');
 // partial repay 30 so shortfall is 70 < escrow 25? escrow=25, shortfall=70 -> recovered 25, lost 45
 await send([await repayIx(third, ataOf.third, L2.loan, L2.escrow, l.rentPayer, 30n * USDC)], third, 'repay partial 2');
 const now0 = await clockTs();
-const target = Number(l.dueAt) + 3 * 86400 + 3600;
+const target = Number(l.dueAt) + l.graceDays * 86400 + 3600; // the loan's own grace, not the pool's current one
 await cheat('surfnet_timeTravel', [{ absoluteTimestamp: target * 1000 }]);
 await new Promise(r => setTimeout(r, 1500));
 const now1 = await clockTs();
 console.log('clock', now0, '->', now1, 'due', l.dueAt, 'target', target);
-assert.ok(now1 > Number(l.dueAt) + 3 * 86400, 'time travel moved clock past due+grace');
+assert.ok(now1 > Number(l.dueAt) + l.graceDays * 86400, 'time travel moved clock past due+grace');
 const pre = { vault: await tok(vault), c: await tok(ataOf.cosigner), p: await fetchPool(pool) };
 await send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, cosignerToken: ataOf.cosigner, borrowerMember: mB, cosignerMember: mC, rentPayer: l.rentPayer })], third, 'mark_default');
 const shortfall = 70n * USDC, recovered = L2.escrowAmt < shortfall ? L2.escrowAmt : shortfall;
@@ -188,9 +219,18 @@ row('mark_default', `recovered ${fmt(recovered)}`, `lost ${fmt(shortfall - recov
 await expectFail(send([await gf.getRequestLoanInstructionAsync({ payer: borrower, borrower, mint: MINT, borrowerGatewayToken: gwB, amount: 10n * USDC, termDays: 7, cosigner: cosigner.address })], borrower, 'request after default'), 'ineligible request');
 row('request after default', 'rejected (ineligible)');
 
+// ---------- freeze_pool (irreversible) ----------
+if (!frozenAtStart) {
+  await send([gf.getFreezePoolInstruction({ authority: admin, pool })], admin, 'freeze_pool');
+  assert.equal((await fetchPool(pool)).authority.__option, 'None', 'authority cleared');
+  const pf = await fetchPool(pool);
+  const afterFreeze = await expectFail(send([gf.getUpdatePoolInstruction({ authority: admin, pool, params: { gatekeeperNetwork: pf.gatekeeperNetwork, maxLoan: pf.maxLoan, maxTermDays: pf.maxTermDays, graceDays: pf.graceDays, maxGuaranteesPerMember: pf.maxGuaranteesPerMember, cosignerEscrowBps: pf.cosignerEscrowBps } })], admin, 'update after freeze'), 'update after freeze');
+  row('freeze_pool', 'authority = none', `update now ${afterFreeze.match(/Unauthorized|0x177c/)?.[0] ?? 'rejected'}`);
+}
+
 // final totals
 p = await fetchPool(pool);
 console.log('\nPool', pool, { donated: fmt(p.totalDonated), lent: fmt(p.totalLent), repaid: fmt(p.totalRepaid), recovered: fmt(p.totalRecovered), lost: fmt(p.totalLost), loanCount: String(p.loanCount) });
 console.log('\n' + ['step', 'detail...'].join(' | ')); for (const r of rows) console.log(r.join(' | '));
 console.log('\nE2E PASS');
-fs.writeFileSync(path.join(here, 'e2e-result.json'), JSON.stringify({ pool, vault, authority: admin.address, network: NETWORK, mint: MINT }, null, 1));
+fs.writeFileSync(path.join(here, 'e2e-result.json'), JSON.stringify({ pool, vault, authority: (await fetchPool(pool)).authority.__option === 'None' ? 'none' : admin.address, network: NETWORK, mint: MINT }, null, 1));

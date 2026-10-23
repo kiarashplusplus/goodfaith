@@ -24,6 +24,13 @@ State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch paramete
 - `@civic/solana-gateway-ts` declared (it was only a transitive dependency). Prettier config and format check. 27 unit tests.
 - Smoke passes 7/7 on a production build.
 
+## Verified end to end (this session)
+- Toolchain installed in a clean Linux container with `scripts/toolchain.sh` (Solana 4.3.2, Anchor 1.2.1 prebuilt, Surfpool 1.6.1); `anchor build --arch v2` works with the declared program id even though the original keypair is absent.
+- Program: 39 Rust LiteSVM + property tests pass; `cargo clippy --all-targets` clean.
+- App: `cd app && npm run test:svm` runs 14 scenarios that send the app's own instruction builders through `tx.ts` into LiteSVM (`app/src/lib/onchain.svm.test.ts`): pool pinning, donate, register (incl. sponsored payer), pool-scoped co-sign inbox across two pools, co-sign term binding, repay, loan history, cancel, mark-default and the exact grace boundary against `loanTiming`.
+- Surfpool fork: `npm run deploy-fork` plants the `.so` at the declared id (`surfnet_writeProgram`); `npm run e2e` passes with the new cancel, `update_pool` and `freeze_pool` rows.
+- CI: new `program-tests` job builds with Anchor and runs the Rust suite, clippy on all targets and `test:svm` (toolchain cached between runs). Kora e2e remains a local, optional check.
+
 ## Next: replace Civic with our own identity issuer (decided)
 - Keep the on-chain gateway check as is (`programs/goodfaith/src/gateway.rs`); no program change.
 - Create our own gatekeeper network on the Identity.com gateway program (`gatem74V238djXdzWnJf94Wo1DcnuGkfijbf3AuBhfs`); add our gatekeeper key. Set `pool.gatekeeper_network` to it.
@@ -40,6 +47,6 @@ State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch paramete
 
 ## Environment notes
 - PATH: `$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$HOME/.avm/bin`.
-- Toolchain: Solana CLI 4.3.1 (needs `brew install libusb` on macOS), Anchor 1.2.1 via avm, Surfpool 1.6.1, kora-cli 2.0.5.
-- Local fork: `surfpool start --network devnet --no-tui --no-deploy -a $(solana address) -q 100000000000`.
+- Toolchain: `bash scripts/toolchain.sh` on Linux (Solana CLI 4.3.2 tarball, Anchor 1.2.1 prebuilt binary, Surfpool 1.6.1; `--with-kora` for kora-cli 2.0.5). On macOS: Solana CLI (needs `brew install libusb`), Anchor 1.2.1 via avm, Surfpool 1.6.1.
+- Local fork: `surfpool start --network devnet --no-tui --no-deploy -a $(solana address) -q 100000000000`, then `cd scripts && npm run deploy-fork` (no program keypair needed).
 - Kora config needs `[kora.cache]` TTLs and system create/assign/allocate allowed (see `scripts/kora/`). Private key via `KORA_PRIVATE_KEY` env only.

@@ -11,9 +11,12 @@ Proprietary. Copyright (c) 2026 Kiarash Adl. All rights reserved. See [LICENSE](
 
 ## Build and test
 ```sh
-anchor build --arch v2   # devnet does not enable SBPF v3 yet
-anchor test --skip-build
+bash scripts/toolchain.sh   # Solana CLI, Anchor, Surfpool (Linux, no sudo)
+anchor build --arch v2      # devnet does not enable SBPF v3 yet
+anchor test --skip-build    # Rust LiteSVM + property tests
+cd app && npm run test:svm  # the web app's builders against the built program in LiteSVM
 ```
+End-to-end on a Surfpool devnet fork: see [scripts/README.md](scripts/README.md).
 
 ## Web app
 ```sh
