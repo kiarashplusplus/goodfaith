@@ -1,6 +1,4 @@
-import { createRequire } from 'node:module';
-const req = createRequire(import.meta.url);
-const { chromium } = req(process.env.PLAYWRIGHT_CORE ?? '/tmp/tsxinst/node_modules/playwright-core');
+import { chromium } from 'playwright-core';
 const BASE = process.env.APP_URL ?? 'http://127.0.0.1:3100';
 const pages = ['/', '/join', '/borrow', '/cosign', '/repay', '/donate', '/fund'];
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });

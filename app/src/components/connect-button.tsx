@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useConnect, useDisconnect, useWallets, WalletReadyGate } from "@solana/kit-plugin-wallet/react";
-import { useApp } from "@/lib/hooks";
+import { useApp, useMounted } from "@/lib/hooks";
 import { shortAddress } from "@/lib/format";
 import { Button, GhostButton } from "./ui";
 
@@ -55,8 +55,12 @@ function Inner() {
 
 export function ConnectButton() {
   const { client } = useApp();
+  const mounted = useMounted();
+  const fallback = <span className="text-sm text-stone-500">Loading wallets...</span>;
+  // Wallet readiness is client-only state (it may already be "ready" at hydration), so render the gate after mount.
+  if (!mounted) return fallback;
   return (
-    <WalletReadyGate client={client} fallback={<span className="text-sm text-stone-500">Loading wallets...</span>}>
+    <WalletReadyGate client={client} fallback={fallback}>
       <Inner />
     </WalletReadyGate>
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import useSWR from "swr";
 import { address, type Address, type TransactionSigner } from "@solana/kit";
 import { useClient } from "@solana/react";
@@ -9,9 +10,19 @@ import { POOL_MINT } from "./config";
 import { fetchLoan, fetchLoansFor, fetchMember, fetchCanonicalPool, findAta, fetchRequest, fetchRequestsForCosigner } from "./program";
 import type { TxRpc } from "./tx";
 
+const noopSubscribe = () => () => {};
+/** False during SSR and the hydration render, true afterwards. Safe against hydration mismatches. */
+export function useMounted(): boolean {
+  return useSyncExternalStore(noopSubscribe, () => true, () => false);
+}
+
 export function useApp() {
   const client = useClient<AppClient>();
-  const connected = useConnectedWallet(client);
+  const mounted = useMounted();
+  // The wallet client is a module singleton whose state can already differ from the server render
+  // when React hydrates, so wallet state is hidden until after mount.
+  const liveConnected = useConnectedWallet(client);
+  const connected = mounted ? liveConnected : null;
   const signer = (connected?.signer ?? null) as TransactionSigner | null;
   const wallet: Address | null = connected ? address(connected.account.address) : null;
   return { client, rpc: client.rpc as unknown as TxRpc & AppClient["rpc"], connected, signer, wallet };

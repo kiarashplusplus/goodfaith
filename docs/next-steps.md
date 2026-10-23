@@ -3,17 +3,17 @@
 State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch parameters (decided)"), `docs/audit.md` first.
 
 ## Done
-- Program (Anchor 1.2.1): two-step loans (`request_loan` → `cosign_loan`, `cancel_request`), co-signer escrow, repay, default. 38 LiteSVM + property tests, clippy clean. Internal audit in `docs/audit.md`.
+- Program (Anchor 1.2.1): two-step loans (`request_loan` → `cosign_loan`, `cancel_request`), co-signer escrow, repay, default. 39 LiteSVM + property tests, clippy clean. Internal audit in `docs/audit.md`.
 - Build with `anchor build --arch v2` — devnet does not enable SBPF v3.
 - Web app (`app/`): checking, borrow, co-sign, repay, donate, fund stats; Kora fee payer; canonical pool pinning.
-- End-to-end on a Surfpool devnet fork (`scripts/`): full loan cycle passes; real Civic gateway token bytes parse correctly (`scripts/civic-token.json`); Kora sponsorship works (users pay $0 except `register_member`, being fixed).
+- End-to-end on a Surfpool devnet fork (`scripts/`): full loan cycle passes; real Civic gateway token bytes parse correctly (`scripts/civic-token.json`); Kora sponsorship works (users pay $0, including `register_member`).
 - White paper (`docs/whitepaper.md`). License: proprietary, Kiarash Adl.
 
-## In progress when the session ended (verify)
-1. `register_member` gets a separate `payer` signer so Kora covers member rent.
-2. Fix intermittent React hydration error #418 on `/borrow`, `/cosign`, `/fund` (suspect wallet gate in `app/src/components/connect-button.tsx`).
-3. Make `scripts/` reproducible (`tsx`, `playwright-core` as devDependencies; `npm run e2e|kora-e2e|smoke`; `scripts/README.md`).
-Check `git log` / `git status` to see whether these landed; finish and re-run `anchor test`, e2e, kora-e2e, smoke.
+## Completed last session
+1. `register_member` has a separate `payer` signer (Kora covers member rent); app and scripts updated; 39 tests, clippy clean.
+2. Hydration error #418 fixed: wallet state (a client singleton that may already be ready at hydration) is now hidden until after mount (`useMounted` in `app/src/lib/hooks.ts`, used by `useApp` and the connect gate). Smoke passes 5/5.
+3. `scripts/` reproducible: own `package.json` (`tsx`, `playwright-core`, `@solana/kit`), `npm run e2e|kora-e2e|smoke`, `scripts/README.md`.
+Re-deploying to a fork may need `solana program extend <id> 10240` first.
 
 ## Next: replace Civic with our own identity issuer (decided)
 - Keep the on-chain gateway check as is (`programs/goodfaith/src/gateway.rs`); no program change.
