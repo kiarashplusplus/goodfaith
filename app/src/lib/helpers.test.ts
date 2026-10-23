@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAmount, formatUsdc, parseAmount } from "./format";
+import { formatAmount, formatSol, formatUsdc, parseAmount, shortAddress } from "./format";
 import { escrowFor } from "./escrow";
 import { buildCosignLink, parseCosignLink } from "./cosign-link";
 import { solanaPayUrl } from "./solana-pay";
@@ -59,5 +59,18 @@ describe("solana pay", () => {
       "solana:abc?amount=5&spl-token=mint",
     );
     expect(solanaPayUrl({ recipient: "abc" })).toBe("solana:abc");
+  });
+});
+
+describe("sol and addresses", () => {
+  it("formats lamports to at most four decimals", () => {
+    expect(formatSol(1_000_000_000n)).toBe("1");
+    expect(formatSol(1_234_567_890n)).toBe("1.2345");
+    expect(formatSol(5_000n)).toBe("0");
+    expect(formatSol(0n)).toBe("0");
+  });
+  it("shortens long addresses only", () => {
+    expect(shortAddress("2agNDw6soEttnATLgkhxup22GGoeCa7KVNfxyeeuHbve")).toBe("2agN...Hbve");
+    expect(shortAddress("short")).toBe("short");
   });
 });

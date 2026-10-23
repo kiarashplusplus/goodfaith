@@ -19,6 +19,8 @@ import {
   getUtf8Encoder,
   isSome,
   type Option,
+  type EncodedAccount,
+  type ReadonlyUint8Array,
 } from "@solana/kit";
 import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { SYSTEM_PROGRAM_ADDRESS } from "@solana-program/system";
@@ -34,11 +36,15 @@ import {
   getCancelRequestInstruction,
   decodeLoanRequest,
   type LoanRequest as LoanRequestData,
+  type Loan as LoanData,
   getLoanRequestDiscriminatorBytes,
   getRegisterMemberInstruction,
   getRepayInstruction,
+  getMarkDefaultInstruction,
+  getLoanDiscriminatorBytes,
+  getLoanSize,
 } from "@/generated";
-import { GATEKEEPER_NETWORK, POOL_ADDRESS, POOL_AUTHORITY, POOL_MINT, PROGRAM_ID } from "./config";
+import { CONFIG_ERRORS, GATEKEEPER_NETWORK, POOL_ADDRESS, POOL_AUTHORITY, POOL_MINT, PROGRAM_ID } from "./config";
 
 export { TOKEN_PROGRAM_ADDRESS, SYSTEM_PROGRAM_ADDRESS };
 
@@ -151,6 +157,7 @@ async function fetchChecked(rpc: ReadRpc, a: Address, kind: GoodfaithAccount) {
  * Checks address, mint (classic SPL Token only), gatekeeper network and authority against env config.
  */
 export async function fetchCanonicalPool(rpc: ReadRpc): Promise<Pool | null> {
+  if (CONFIG_ERRORS.length) throw new Error(`App isn't configured: ${CONFIG_ERRORS.join(" ")}`);
   const [derived] = await findPoolPda(POOL_MINT);
   const expected = POOL_ADDRESS ? address(POOL_ADDRESS) : derived;
   if (expected !== derived) throw new Error("Configured pool address doesn't match the pool for this mint.");
@@ -207,10 +214,44 @@ export async function fetchMember(rpc: ReadRpc, pool: Address, wallet: Address):
 }
 export async function fetchLoan(rpc: ReadRpc, loan: Address): Promise<Loan | null> {
   const acc = await fetchChecked(rpc, loan, GoodfaithAccount.Loan);
-  if (!acc) return null;
-  const d = decodeLoan(acc).data;
+  return acc ? toLoan(loan, decodeLoan(acc).data) : null;
+}
+export async function fetchLoanById(rpc: ReadRpc, pool: Address, id: bigint): Promise<Loan | null> {
+  const [a] = await findLoanPda(pool, id);
+  return fetchLoan(rpc, a);
+}
+
+type ScanRpc = Rpc<GetProgramAccountsApi>;
+type Filter = { dataSize: bigint } | { memcmp: { offset: bigint; bytes: string; encoding: "base58" } };
+
+/** Program accounts matching `filters`, as encoded accounts ready for the Codama decoders. */
+async function scanProgramAccounts(rpc: ScanRpc, filters: Filter[]): Promise<EncodedAccount[]> {
+  const res = await rpc
+    .getProgramAccounts(PROGRAM_ID, { encoding: "base64", commitment: "confirmed", filters: filters as never })
+    .send();
+  return res.map((item) => {
+    const data = new Uint8Array(getBase64Encoder().encode(item.account.data[0]));
+    return { address: item.pubkey, data, executable: false, lamports: item.account.lamports, programAddress: PROGRAM_ID, space: BigInt(data.length) };
+  });
+}
+
+function decodeAll<T>(accounts: EncodedAccount[], decode: (acc: EncodedAccount) => T): T[] {
+  const out: T[] = [];
+  for (const acc of accounts) {
+    try {
+      out.push(decode(acc));
+    } catch {
+      // ignore accounts that fail to decode
+    }
+  }
+  return out;
+}
+
+const b58 = (bytes: ReadonlyUint8Array) => getBase58Decoder().decode(bytes);
+
+function toLoan(address: Address, d: LoanData): Loan {
   return {
-    address: loan,
+    address,
     id: d.id,
     borrower: d.borrower,
     cosigner: d.cosigner,
@@ -224,20 +265,33 @@ export async function fetchLoan(rpc: ReadRpc, loan: Address): Promise<Loan | nul
     status: STATUSES[Number(d.status)] ?? "Active",
   };
 }
-export async function fetchLoanById(rpc: ReadRpc, pool: Address, id: bigint): Promise<Loan | null> {
-  const [a] = await findLoanPda(pool, id);
-  return fetchLoan(rpc, a);
-}
 
-/** Find a wallet's loans (as borrower or co-signer) among the most recent loans. */
-export async function fetchLoansFor(rpc: ReadRpc, pool: Pool, wallet: Address, max = 25): Promise<Loan[]> {
+/** Loan account layout: discriminator 0..8, id 8..16, borrower 16..48, cosigner 48..80. */
+const LOAN_BORROWER_OFFSET = 16n;
+const LOAN_COSIGNER_OFFSET = 48n;
+
+/**
+ * Every loan a wallet took or co-signed, newest first. Two getProgramAccounts calls (borrower and
+ * co-signer) instead of scanning loan ids one by one; `fetchLoanById` remains the fallback for an
+ * RPC that disables getProgramAccounts.
+ */
+export async function fetchLoansFor(rpc: ScanRpc, pool: Pool, wallet: Address): Promise<Loan[]> {
+  const disc = b58(getLoanDiscriminatorBytes());
+  const base: Filter[] = [{ dataSize: BigInt(getLoanSize()) }, { memcmp: { offset: 0n, bytes: disc, encoding: "base58" } }];
+  const [asBorrower, asCosigner] = await Promise.all([
+    scanProgramAccounts(rpc, [...base, { memcmp: { offset: LOAN_BORROWER_OFFSET, bytes: wallet, encoding: "base58" } }]),
+    scanProgramAccounts(rpc, [...base, { memcmp: { offset: LOAN_COSIGNER_OFFSET, bytes: wallet, encoding: "base58" } }]),
+  ]);
+  const seen = new Set<Address>();
   const out: Loan[] = [];
-  const start = pool.loanCount;
-  for (let i = 0n; i < BigInt(max) && start - 1n - i >= 0n; i++) {
-    const l = await fetchLoanById(rpc, pool.address, start - 1n - i);
-    if (l && (l.borrower === wallet || l.cosigner === wallet)) out.push(l);
+  for (const l of decodeAll([...asBorrower, ...asCosigner], (acc) => toLoan(acc.address, decodeLoan(acc).data))) {
+    if (seen.has(l.address)) continue;
+    seen.add(l.address);
+    // Loans from another pool for the same wallet are filtered by their PDA.
+    const [expected] = await findLoanPda(pool.address, l.id);
+    if (expected === l.address) out.push(l);
   }
-  return out;
+  return out.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
 }
 
 function toRequest(address: Address, d: LoanRequestData): LoanRequest {
@@ -258,31 +312,20 @@ export async function fetchRequest(rpc: ReadRpc, pool: Address, borrower: Addres
   return acc ? toRequest(a, decodeLoanRequest(acc).data) : null;
 }
 
-/** Requests waiting on this co-signer (memcmp on the cosigner field, after 8-byte discriminator + 32-byte borrower). */
-export async function fetchRequestsForCosigner(
-  rpc: Rpc<GetProgramAccountsApi>,
-  cosigner: Address,
-): Promise<LoanRequest[]> {
-  const disc = getBase58Decoder().decode(getLoanRequestDiscriminatorBytes());
-  const res = await rpc
-    .getProgramAccounts(PROGRAM_ID, {
-      encoding: "base64",
-      commitment: "confirmed",
-      filters: [
-        { memcmp: { offset: 0n, bytes: disc as never, encoding: "base58" } },
-        { memcmp: { offset: 40n, bytes: cosigner as never, encoding: "base58" } },
-      ],
-    })
-    .send();
+/**
+ * Requests waiting on this co-signer in this pool. The request account has no pool field, so the
+ * memcmp (cosigner at offset 8 + 32) is followed by a PDA check against the pool.
+ */
+export async function fetchRequestsForCosigner(rpc: ScanRpc, pool: Address, cosigner: Address): Promise<LoanRequest[]> {
+  const disc = b58(getLoanRequestDiscriminatorBytes());
+  const accounts = await scanProgramAccounts(rpc, [
+    { memcmp: { offset: 0n, bytes: disc, encoding: "base58" } },
+    { memcmp: { offset: 40n, bytes: cosigner, encoding: "base58" } },
+  ]);
   const out: LoanRequest[] = [];
-  for (const item of res) {
-    try {
-      const data = new Uint8Array(getBase64Encoder().encode(item.account.data[0]));
-      const acc = { address: item.pubkey, data, executable: false, lamports: item.account.lamports, programAddress: PROGRAM_ID, space: BigInt(data.length) };
-      out.push(toRequest(item.pubkey, decodeLoanRequest(acc as never).data));
-    } catch {
-      // ignore accounts that fail to decode
-    }
+  for (const r of decodeAll(accounts, (acc) => toRequest(acc.address, decodeLoanRequest(acc).data))) {
+    const [expected] = await findRequestPda(pool, r.borrower);
+    if (expected === r.address) out.push(r);
   }
   return out;
 }
@@ -427,6 +470,30 @@ export async function repayIx(a: { payer: Address; pool: Pool; loan: Loan; amoun
   );
 }
 
+/** Anyone may call this once a loan is past due plus its grace period. The co-signer's token account must exist. */
+export async function markDefaultIx(a: { caller: Address; pool: Pool; loan: Loan }): Promise<{ ix: Instruction; cosignerToken: Address }> {
+  const [borrowerMember] = await findMemberPda(a.pool.address, a.loan.borrower);
+  const [cosignerMember] = await findMemberPda(a.pool.address, a.loan.cosigner);
+  const [escrow] = await findEscrowPda(a.loan.address);
+  const cosignerToken = await findAta(a.loan.cosigner, a.pool.mint);
+  const ix = getMarkDefaultInstruction(
+    {
+      caller: signer(a.caller),
+      pool: a.pool.address,
+      mint: a.pool.mint,
+      vault: a.pool.vault,
+      loan: a.loan.address,
+      escrow,
+      cosignerToken,
+      borrowerMember,
+      cosignerMember,
+      rentPayer: a.loan.rentPayer,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    },
+    cfg,
+  );
+  return { ix, cosignerToken };
+}
 
 /** Program error codes per docs/spec.md order (Anchor custom errors start at 6000). */
 const ERROR_NAMES = [
@@ -461,14 +528,16 @@ const ERROR_COPY: Record<string, string> = {
   InsufficientFund: "The fund doesn't have enough to cover this loan right now.",
   OverRepay: "That is more than what is still owed.",
   LoanNotActive: "This loan is no longer active.",
-  NotYetDefaultable: "Not yet.",
-  Unauthorized: "Not allowed.",
+  NotYetDefaultable: "The grace period hasn't ended yet.",
+  Unauthorized: "You're not allowed to do that.",
   InvalidBps: "Invalid setting.",
   MathOverflow: "Number too large.",
   RequestMismatch: "The request changed. Please review again.",
   EscrowTooHigh: "The escrow is higher than what you were shown. Please review again.",
   InvalidParams: "Invalid settings.",
 };
+
+const WALLET_REJECTED = /user rejected|rejected the request|user denied|user declined|declined by user|rejected by user/i;
 
 /** Turn any thrown error into a short human message. */
 export function friendlyError(e: unknown): string {
@@ -479,7 +548,9 @@ export function friendlyError(e: unknown): string {
     const name = ERROR_NAMES[code - 6000];
     if (name) return ERROR_COPY[name] ?? name;
   }
-  if (/reject|denied|cancel/i.test(msg)) return "You cancelled the request.";
+  // Only a wallet prompt rejection counts as "cancelled"; program logs may mention cancel_request.
+  const fromChain = /^(Simulation|Transaction) failed/.test(msg);
+  if (!fromChain && WALLET_REJECTED.test(msg)) return "You cancelled the request.";
   if (/insufficient/i.test(msg)) return "Not enough balance for this.";
   if (/blockhash/i.test(msg)) return "That took too long. Please try again.";
   return msg.length > 200 ? msg.slice(0, 200) + "..." : msg;

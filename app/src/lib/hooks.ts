@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import { address, type Address, type TransactionSigner } from "@solana/kit";
 import { useClient } from "@solana/react";
@@ -98,6 +98,23 @@ export function useRequest(borrower: Address | null) {
 }
 
 export function usePendingForCosigner(wallet: Address | null) {
+  const pool = usePool();
   const { rpc } = useApp();
-  return useSWR(wallet ? ["pending", wallet] : null, () => fetchRequestsForCosigner(rpc, wallet!), POLL);
+  return useSWR(
+    wallet && pool.data ? ["pending", pool.data.address, wallet] : null,
+    () => fetchRequestsForCosigner(rpc, pool.data!.address, wallet!),
+    POLL,
+  );
+}
+
+/** Current unix time in seconds, refreshed every `everyMs`. Starts at 0 on the server render. */
+export function useNow(everyMs = 30_000): bigint {
+  const [now, setNow] = useState(0n);
+  useEffect(() => {
+    const tick = () => setNow(BigInt(Math.floor(Date.now() / 1000)));
+    tick();
+    const id = setInterval(tick, everyMs);
+    return () => clearInterval(id);
+  }, [everyMs]);
+  return now;
 }

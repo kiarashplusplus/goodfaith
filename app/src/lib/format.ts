@@ -24,8 +24,10 @@ export function formatUsdc(base: bigint): string {
   return `$${formatAmount(base, 6)}`;
 }
 
+/** SOL with at most four decimals and no trailing zeros (truncated, not rounded). */
 export function formatSol(lamports: bigint): string {
-  return formatAmount(lamports, 9, { minFraction: 0 }).replace(/(\.\d{4})\d+$/, "$1");
+  const s = formatAmount(lamports, 9, { minFraction: 0 }).replace(/(\.\d{4})\d+$/, "$1");
+  return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }
 
 export function shortAddress(a: string): string {
