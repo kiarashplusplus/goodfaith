@@ -102,8 +102,8 @@ function LoanRow({
         <div className="mt-3">
           <Notice tone="warn">
             <strong>This is final.</strong> The co-signer&apos;s escrow ({formatUsdc(loan.escrowed)}) goes to the fund to cover what is
-            still owed ({formatUsdc(owed)}). Anything left over goes back to the co-signer. Both the borrower and the co-signer lose
-            their membership. Anyone can do this once the grace period has passed.
+            still owed ({formatUsdc(owed)}). Anything left over goes back to the co-signer. Both the borrower and the co-signer lose their
+            membership. Anyone can do this once the grace period has passed.
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 disabled={busy || !signer}

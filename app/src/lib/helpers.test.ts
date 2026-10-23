@@ -53,7 +53,10 @@ describe("cosign link", () => {
     expect(parseCosignLink("pool=abc&borrower=def")).toEqual({ ok: false, reason: "invalid" });
     expect(parseCosignLink(`pool=${ref.pool}`)).toEqual({ ok: false, reason: "invalid" });
     // base58 but not 32 bytes
-    expect(parseCosignLink(`pool=${ref.pool}&borrower=1111111111111111111111111111111111111111111`)).toEqual({ ok: false, reason: "invalid" });
+    expect(parseCosignLink(`pool=${ref.pool}&borrower=1111111111111111111111111111111111111111111`)).toEqual({
+      ok: false,
+      reason: "invalid",
+    });
   });
 });
 
@@ -65,9 +68,7 @@ describe("clipboard", () => {
 
 describe("solana pay", () => {
   it("builds a url", () => {
-    expect(solanaPayUrl({ recipient: "abc", amount: "5", splToken: "mint" })).toBe(
-      "solana:abc?amount=5&spl-token=mint",
-    );
+    expect(solanaPayUrl({ recipient: "abc", amount: "5", splToken: "mint" })).toBe("solana:abc?amount=5&spl-token=mint");
     expect(solanaPayUrl({ recipient: "abc" })).toBe("solana:abc");
   });
 });

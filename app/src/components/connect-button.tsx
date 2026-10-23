@@ -54,12 +54,13 @@ function Inner() {
         {isRunning ? "Connecting..." : "Connect wallet"}
       </Button>
       {open && (
-        <div id={menuId} role="menu" aria-label="Choose a wallet" className="absolute right-0 z-10 mt-2 w-64 rounded-xl border border-stone-200 bg-white p-2 shadow-lg">
-          {wallets.length === 0 && (
-            <p className="p-2 text-sm text-stone-600">
-              No wallet found. Install Phantom or Solflare, then reload.
-            </p>
-          )}
+        <div
+          id={menuId}
+          role="menu"
+          aria-label="Choose a wallet"
+          className="absolute right-0 z-10 mt-2 w-64 rounded-xl border border-stone-200 bg-white p-2 shadow-lg"
+        >
+          {wallets.length === 0 && <p className="p-2 text-sm text-stone-600">No wallet found. Install Phantom or Solflare, then reload.</p>}
           {wallets.map((w) => (
             <button
               key={w.name}

@@ -122,21 +122,29 @@ function Terms({ wallet, pool, request, onDone }: { wallet: Address; pool: Pool;
 
       <Notice tone="warn">
         <strong>What you&apos;re agreeing to.</strong> {formatUsdc(escrow)} leaves your wallet and is held in escrow. You get all of it back
-        when the loan is fully repaid. If the borrower does not repay on time, the escrow goes to the fund to cover what&apos;s missing (up to
-        the escrow amount), any leftover comes back to you, and both of you lose your membership.
+        when the loan is fully repaid. If the borrower does not repay on time, the escrow goes to the fund to cover what&apos;s missing (up
+        to the escrow amount), any leftover comes back to you, and both of you lose your membership.
       </Notice>
 
       {!isCosigner && !isBorrower && (
-        <Notice tone="error">This request is for a different wallet ({shortAddress(request.cosigner)}). Switch to that wallet to continue.</Notice>
+        <Notice tone="error">
+          This request is for a different wallet ({shortAddress(request.cosigner)}). Switch to that wallet to continue.
+        </Notice>
       )}
       {isCosigner && member.data === null && (
         <Notice tone="warn">
-          You need to verify and join first. <Link className="underline" href="/join">Go to Join</Link>, then come back.
+          You need to verify and join first.{" "}
+          <Link className="underline" href="/join">
+            Go to Join
+          </Link>
+          , then come back.
         </Notice>
       )}
       {isCosigner && onHold && <Notice tone="warn">Your membership is on hold, so you can&apos;t co-sign right now.</Notice>}
       {isCosigner && atLimit && (
-        <Notice tone="warn">You&apos;re already backing as many loans as allowed ({pool.maxGuaranteesPerMember}). Wait for one to be repaid.</Notice>
+        <Notice tone="warn">
+          You&apos;re already backing as many loans as allowed ({pool.maxGuaranteesPerMember}). Wait for one to be repaid.
+        </Notice>
       )}
       {isCosigner && short && (
         <Notice tone="warn">

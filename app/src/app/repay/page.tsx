@@ -106,12 +106,18 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
         {timing.label && ` · ${timing.label}`}
       </p>
       {loan.status !== "Active" ? (
-        <Notice tone="info">This loan is {loan.status === "Repaid" ? "repaid in full" : "defaulted"}. Nothing more can be paid on it.</Notice>
+        <Notice tone="info">
+          This loan is {loan.status === "Repaid" ? "repaid in full" : "defaulted"}. Nothing more can be paid on it.
+        </Notice>
       ) : (
         <>
-          {timing.state === "overdue" && <Notice tone="warn">{timing.label} Repay before then to protect the co-signer&apos;s escrow.</Notice>}
+          {timing.state === "overdue" && (
+            <Notice tone="warn">{timing.label} Repay before then to protect the co-signer&apos;s escrow.</Notice>
+          )}
           {timing.state === "defaultable" && (
-            <Notice tone="error">The grace period has passed. Repaying in full right now still closes the loan, unless someone marks it as defaulted first.</Notice>
+            <Notice tone="error">
+              The grace period has passed. Repaying in full right now still closes the loan, unless someone marks it as defaulted first.
+            </Notice>
           )}
           <div className="flex items-end gap-2">
             <div className="flex-1">
@@ -140,7 +146,9 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
             disabled={!ok || busy}
             onClick={() =>
               run(async () => {
-                const sig = await sendInstructions(rpc, signer!, async () => [await repayIx({ payer: wallet, pool, loan, amount: amount! })]);
+                const sig = await sendInstructions(rpc, signer!, async () => [
+                  await repayIx({ payer: wallet, pool, loan, amount: amount! }),
+                ]);
                 setAmt("");
                 balances.mutate();
                 onPaid();

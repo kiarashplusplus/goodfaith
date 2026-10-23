@@ -25,5 +25,14 @@ export function useRun<T = string>() {
       setBusy(false);
     }
   }, []);
-  return { run, busy, error, result, reset: () => { setResult(null); setError(null); } };
+  return {
+    run,
+    busy,
+    error,
+    result,
+    reset: () => {
+      setResult(null);
+      setError(null);
+    },
+  };
 }

@@ -165,8 +165,9 @@ export async function fetchCanonicalPool(rpc: ReadRpc): Promise<Pool | null> {
   if (!pool) return null;
   if (pool.mint !== POOL_MINT) throw new Error("This pool uses a different token than expected. Not safe to use.");
   if (!GATEKEEPER_NETWORK) throw new Error("App isn't configured: set NEXT_PUBLIC_GATEKEEPER_NETWORK.");
-  if (pool.gatekeeperNetwork !== GATEKEEPER_NETWORK) throw new Error("This pool uses a different verification network than expected. Not safe to use.");
-  if (!POOL_AUTHORITY) throw new Error("App isn't configured: set NEXT_PUBLIC_POOL_AUTHORITY (an address, or \"none\" if frozen).");
+  if (pool.gatekeeperNetwork !== GATEKEEPER_NETWORK)
+    throw new Error("This pool uses a different verification network than expected. Not safe to use.");
+  if (!POOL_AUTHORITY) throw new Error('App isn\'t configured: set NEXT_PUBLIC_POOL_AUTHORITY (an address, or "none" if frozen).');
   const wantAuthority = POOL_AUTHORITY === "none" ? null : address(POOL_AUTHORITY);
   if (pool.authority !== wantAuthority) throw new Error("This pool is controlled by a different authority than expected. Not safe to use.");
   const mintAcc = await fetchEncodedAccount(rpc, pool.mint, { commitment: "confirmed" });
@@ -226,12 +227,17 @@ type Filter = { dataSize: bigint } | { memcmp: { offset: bigint; bytes: string; 
 
 /** Program accounts matching `filters`, as encoded accounts ready for the Codama decoders. */
 async function scanProgramAccounts(rpc: ScanRpc, filters: Filter[]): Promise<EncodedAccount[]> {
-  const res = await rpc
-    .getProgramAccounts(PROGRAM_ID, { encoding: "base64", commitment: "confirmed", filters: filters as never })
-    .send();
+  const res = await rpc.getProgramAccounts(PROGRAM_ID, { encoding: "base64", commitment: "confirmed", filters: filters as never }).send();
   return res.map((item) => {
     const data = new Uint8Array(getBase64Encoder().encode(item.account.data[0]));
-    return { address: item.pubkey, data, executable: false, lamports: item.account.lamports, programAddress: PROGRAM_ID, space: BigInt(data.length) };
+    return {
+      address: item.pubkey,
+      data,
+      executable: false,
+      lamports: item.account.lamports,
+      programAddress: PROGRAM_ID,
+      space: BigInt(data.length),
+    };
   });
 }
 

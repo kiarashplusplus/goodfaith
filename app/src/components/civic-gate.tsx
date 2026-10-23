@@ -49,13 +49,7 @@ function Bridge({ children }: { children: (s: CivicState) => ReactNode }) {
   return <>{children(state)}</>;
 }
 
-export default function CivicGate({
-  network,
-  children,
-}: {
-  network: string;
-  children: (s: CivicState) => ReactNode;
-}) {
+export default function CivicGate({ network, children }: { network: string; children: (s: CivicState) => ReactNode }) {
   const { signer, wallet } = useApp();
   const connection = useMemo(() => new Connection(RPC_URL, "processed"), []);
   const adapter = useMemo(

@@ -42,7 +42,13 @@ describe("parseConfig", () => {
   });
 
   it("never throws on bad addresses and keeps the defaults", () => {
-    const c = parseConfig({ poolMint: "not-an-address", programId: "xyz", gatekeeperNetwork: "??", poolAddress: "0", poolAuthority: "frozen" });
+    const c = parseConfig({
+      poolMint: "not-an-address",
+      programId: "xyz",
+      gatekeeperNetwork: "??",
+      poolAddress: "0",
+      poolAuthority: "frozen",
+    });
     expect(c.poolMint).toBe(DEFAULT_POOL_MINT);
     expect(c.programId).toBe(DEFAULT_PROGRAM_ID);
     expect(c.gatekeeperNetwork).toBe("");

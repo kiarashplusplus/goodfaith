@@ -13,7 +13,11 @@ import type { TxRpc } from "./tx";
 const noopSubscribe = () => () => {};
 /** False during SSR and the hydration render, true afterwards. Safe against hydration mismatches. */
 export function useMounted(): boolean {
-  return useSyncExternalStore(noopSubscribe, () => true, () => false);
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
 }
 
 export function useApp() {
@@ -37,10 +41,14 @@ export function usePool() {
 
 export function useVaultBalance(vault: Address | undefined) {
   const { rpc } = useApp();
-  return useSWR(vault ? ["vault", vault] : null, async () => {
-    const r = await rpc.getTokenAccountBalance(vault!, { commitment: "confirmed" }).send();
-    return BigInt(r.value.amount);
-  }, POLL);
+  return useSWR(
+    vault ? ["vault", vault] : null,
+    async () => {
+      const r = await rpc.getTokenAccountBalance(vault!, { commitment: "confirmed" }).send();
+      return BigInt(r.value.amount);
+    },
+    POLL,
+  );
 }
 
 export function useMember(wallet: Address | null) {

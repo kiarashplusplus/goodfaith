@@ -8,9 +8,7 @@ export const COSIGN_PATH = "/cosign";
 
 export type CosignRef = { pool: Address; borrower: Address };
 
-export type ParsedCosignLink =
-  | { ok: true; ref: CosignRef }
-  | { ok: false; reason: "missing" | "invalid" };
+export type ParsedCosignLink = { ok: true; ref: CosignRef } | { ok: false; reason: "missing" | "invalid" };
 
 export function buildCosignLink(origin: string, ref: { pool: string; borrower: string }): string {
   const q = new URLSearchParams({ pool: ref.pool, borrower: ref.borrower });

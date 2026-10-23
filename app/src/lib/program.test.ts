@@ -39,7 +39,7 @@ describe("friendlyError", () => {
     expect(friendlyError(new Error('Simulation failed: {"InstructionError":[0,{"Custom":6011}]}'))).toBe(
       "The grace period hasn't ended yet.",
     );
-    expect(friendlyError("Transaction failed: {\"InstructionError\":[1,{\"Custom\":6016}]}")).toBe(
+    expect(friendlyError('Transaction failed: {"InstructionError":[1,{"Custom":6016}]}')).toBe(
       "The escrow is higher than what you were shown. Please review again.",
     );
   });
@@ -47,7 +47,7 @@ describe("friendlyError", () => {
     const msg =
       'Simulation failed: {"InstructionError":[0,{"Custom":6012}]} Program log: Instruction: CancelRequest | Program log: AnchorError ... Not authorized';
     expect(friendlyError(new Error(msg))).toBe("You're not allowed to do that.");
-    const noCode = "Simulation failed: {\"InstructionError\":[0,\"InvalidAccountData\"]} Program log: Instruction: CancelRequest";
+    const noCode = 'Simulation failed: {"InstructionError":[0,"InvalidAccountData"]} Program log: Instruction: CancelRequest';
     expect(friendlyError(new Error(noCode))).not.toBe("You cancelled the request.");
   });
   it("recognises a wallet rejection", () => {

@@ -46,7 +46,12 @@ export default function FundPage() {
                   : "These rules can still be changed by the fund's administrator. Changes never affect loans that are already open."}
               </li>
             </ul>
-            <a className="mt-3 inline-block text-xs text-stone-500 underline" href={explorerAddress(p.address)} target="_blank" rel="noreferrer">
+            <a
+              className="mt-3 inline-block text-xs text-stone-500 underline"
+              href={explorerAddress(p.address)}
+              target="_blank"
+              rel="noreferrer"
+            >
               View fund account
             </a>
           </Card>

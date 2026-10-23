@@ -19,9 +19,12 @@ export type CopyState = "idle" | "copied" | "failed";
 export function useCopy(resetMs = 1500) {
   const [state, setState] = useState<CopyState>("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
   const copy = useCallback(
     async (text: string) => {
       const ok = await copyText(text);

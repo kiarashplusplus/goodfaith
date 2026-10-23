@@ -45,7 +45,11 @@ function Request({ wallet }: { wallet: Address }) {
   if (member.data.activeLoan)
     return (
       <Notice tone="info">
-        You already have an open loan. <Link className="underline" href="/repay">Go to Repay</Link>.
+        You already have an open loan.{" "}
+        <Link className="underline" href="/repay">
+          Go to Repay
+        </Link>
+        .
       </Notice>
     );
   return <RequestSection wallet={wallet} pool={pool.data} available={vault.data} />;
@@ -109,7 +113,12 @@ function PendingRequest({
         <p className="text-sm text-stone-600">
           Co-signer: <span className="font-mono">{shortAddress(request.cosigner)}</span>. Send them this link. It doesn&apos;t expire.
         </p>
-        <textarea readOnly aria-label="Co-sign link" value={link} className="h-20 w-full rounded-xl border border-stone-300 p-2 font-mono text-xs" />
+        <textarea
+          readOnly
+          aria-label="Co-sign link"
+          value={link}
+          className="h-20 w-full rounded-xl border border-stone-300 p-2 font-mono text-xs"
+        />
         <div className="flex flex-wrap gap-2">
           <GhostButton onClick={() => copy.copy(link)}>{copyLabel(copy.state, "Copy link")}</GhostButton>
           <GhostButton
@@ -133,7 +142,17 @@ function PendingRequest({
   );
 }
 
-function RequestForm({ wallet, pool, available, onCreated }: { wallet: Address; pool: Pool; available: bigint | undefined; onCreated: () => void }) {
+function RequestForm({
+  wallet,
+  pool,
+  available,
+  onCreated,
+}: {
+  wallet: Address;
+  pool: Pool;
+  available: bigint | undefined;
+  onCreated: () => void;
+}) {
   const { rpc, signer } = useApp();
   const [amt, setAmt] = useState("");
   const [days, setDays] = useState("30");

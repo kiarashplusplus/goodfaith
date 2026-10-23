@@ -26,12 +26,7 @@ import {
 } from "@solana/kit";
 import { kora, getKoraPayer } from "./kora";
 
-export type TxRpc = Rpc<
-  GetLatestBlockhashApi &
-    SendTransactionApi &
-    SimulateTransactionApi &
-    GetSignatureStatusesApi
->;
+export type TxRpc = Rpc<GetLatestBlockhashApi & SendTransactionApi & SimulateTransactionApi & GetSignatureStatusesApi>;
 
 /** Who pays network fees: Kora when configured and reachable, otherwise the user. */
 export async function resolveFeePayer(user: Address): Promise<{ feePayer: Address; sponsored: boolean }> {
@@ -109,9 +104,7 @@ export async function submit(rpc: TxRpc, tx: Transaction, sponsored: boolean): P
     const r = await kora.signAndSendTransaction({ transaction: b64 });
     sig = r.signature;
   } else {
-    sig = await rpc
-      .sendTransaction(b64, { encoding: "base64", preflightCommitment: "confirmed" })
-      .send();
+    sig = await rpc.sendTransaction(b64, { encoding: "base64", preflightCommitment: "confirmed" }).send();
   }
   await confirm(rpc, sig);
   return sig;

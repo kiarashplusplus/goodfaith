@@ -169,7 +169,9 @@ function History({ wallet }: { wallet: Address }) {
               .getTransaction(s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" })
               .send();
             const sum = (arr?: readonly { mint: string; owner?: string; uiTokenAmount: { amount: string } }[]) =>
-              (arr ?? []).filter((b) => b.mint === POOL_MINT && b.owner === wallet).reduce((n, b) => n + BigInt(b.uiTokenAmount.amount), 0n);
+              (arr ?? [])
+                .filter((b) => b.mint === POOL_MINT && b.owner === wallet)
+                .reduce((n, b) => n + BigInt(b.uiTokenAmount.amount), 0n);
             delta = sum(tx?.meta?.postTokenBalances as never) - sum(tx?.meta?.preTokenBalances as never);
           } catch {
             // leave delta at zero if the transaction can't be read

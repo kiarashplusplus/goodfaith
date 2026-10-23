@@ -29,7 +29,8 @@ function DonateForm({ wallet }: { wallet: Address }) {
   const { run, busy, error, result, reset } = useRun();
   const amount = parseAmount(amt, TOKEN_DECIMALS);
   const enough = !amount || !balances.data || balances.data.usdc >= amount;
-  const amountError = amt && (!amount || amount <= 0n) ? "Enter an amount greater than zero." : !enough ? "Your wallet doesn't have enough for that." : null;
+  const amountError =
+    amt && (!amount || amount <= 0n) ? "Enter an amount greater than zero." : !enough ? "Your wallet doesn't have enough for that." : null;
 
   return (
     <Card>
@@ -59,7 +60,9 @@ function DonateForm({ wallet }: { wallet: Address }) {
           disabled={!agree || !amount || amount <= 0n || !enough || !pool.data || !signer || busy}
           onClick={() =>
             run(async () => {
-              const sig = await sendInstructions(rpc, signer!, async () => [await donateIx({ donor: wallet, pool: pool.data!, amount: amount! })]);
+              const sig = await sendInstructions(rpc, signer!, async () => [
+                await donateIx({ donor: wallet, pool: pool.data!, amount: amount! }),
+              ]);
               setAmt("");
               setAgree(false);
               balances.mutate();
