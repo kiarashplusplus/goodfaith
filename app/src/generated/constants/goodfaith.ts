@@ -12,6 +12,10 @@ export const ESCROW_SEED: ReadonlyUint8Array = new Uint8Array([101, 115, 99, 114
 
 export const LOAN_SEED: ReadonlyUint8Array = new Uint8Array([108, 111, 97, 110]);
 
+export const MAX_GRACE_DAYS: number = 365;
+
+export const MAX_TERM_DAYS: number = 3650;
+
 export const MEMBER_SEED: ReadonlyUint8Array = new Uint8Array([109, 101, 109, 98, 101, 114]);
 
 export const POOL_SEED: ReadonlyUint8Array = new Uint8Array([112, 111, 111, 108]);

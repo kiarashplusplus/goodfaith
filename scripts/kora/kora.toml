@@ -1,26 +1,43 @@
-# Local sponsored (free) config for the Good Faith e2e. Do not use as-is in production.
+# Kora fee-sponsor config for Good Faith (kora-cli 2.0.5). Sponsorship is free for users; policy below
+# limits what the sponsor will pay for. Check it with: kora config validate --config scripts/kora/kora.toml
+#
+# For mainnet change: the program id in allowed_programs, the mint in allowed_tokens, rate_limit (it is a
+# single global requests-per-second cap, lower it), the signer type in signers.toml (memory -> Turnkey/Privy),
+# and turn on [kora.cache] with a Redis URL.
+#
+# Network exposure: Kora 2.0.5 answers any origin (CORS is allow-any and not configurable). Do not expose
+# this port publicly. The web app's /api/sponsor route is the origin and auth boundary: it forwards only
+# getPayerSigner, signAndSendTransaction and liveness, rate-limits per client, and signs requests with
+# the credentials Kora reads from the environment: KORA_API_KEY and/or KORA_HMAC_SECRET (HMAC-SHA256 of
+# timestamp + body, accepted within 300 s). Set the same values for the app server and for Kora.
+
 [kora]
-rate_limit = 1000
+rate_limit = 100
 
 [kora.cache]
 enabled = false
 default_ttl = 300
 account_ttl = 60
 
+# Only what the app calls. get_config would publish this policy; the rest is unused.
 [kora.enabled_methods]
 liveness = true
-estimate_transaction_fee = true
-get_supported_tokens = true
-sign_transaction = true
+estimate_transaction_fee = false
+get_supported_tokens = false
+sign_transaction = false
 sign_and_send_transaction = true
-transfer_transaction = true
-get_blockhash = true
-get_config = true
+transfer_transaction = false
+get_blockhash = false
+get_config = false
 get_payer_signer = true
 
 [validation]
-max_allowed_lamports = 5000000
-max_signatures = 10
+# Fee payer outflow per transaction, rent created through CPI included. The largest sponsored transaction is a
+# first co-sign: borrower token account 2_039_280 + Loan 1_983_600 + escrow 2_039_280 = 6_062_160 lamports,
+# plus fee headroom. Rent returned by closing accounts does not count against this.
+max_allowed_lamports = 7_000_000
+# Kora + the wallet, one spare.
+max_signatures = 3
 price_source = "Mock"
 allow_durable_transactions = false
 allowed_programs = [
@@ -34,6 +51,7 @@ allowed_tokens = ["4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"]
 allowed_spl_paid_tokens = ["4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"]
 disallowed_accounts = []
 
+# What the fee payer itself may do inside a sponsored transaction: pay rent (create/assign/allocate), nothing else.
 [validation.fee_payer_policy.system]
 allow_transfer = false
 allow_assign = true
@@ -58,11 +76,24 @@ allow_thaw_account = false
 type = "free"
 
 [validation.token2022]
-blocked_mint_extensions = []
+# Classic USDC only, but block the one Token-2022 extension that lets an issuer seize funds anyway.
+blocked_mint_extensions = ["permanent_delegate"]
 blocked_account_extensions = []
 
+# Lifetime count per wallet with no time window: a member would be locked out after a few actions.
+# Keep off; per-client limiting lives in the app's /api/sponsor proxy.
 [kora.usage_limit]
 enabled = false
 cache_url = "redis://localhost:6379"
-max_transactions = 2
+max_transactions = 0
 fallback_if_unavailable = true
+
+[metrics]
+enabled = true
+endpoint = "/metrics"
+port = 8081
+scrape_interval = 30
+
+[metrics.fee_payer_balance]
+enabled = true
+expiry_seconds = 30

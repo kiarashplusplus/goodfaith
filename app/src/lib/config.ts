@@ -59,6 +59,20 @@ function requiredAddress(name: string, value: string | undefined, fallback: stri
   return address(fallback);
 }
 
+/** "" (off), an absolute http(s) URL (Kora itself), or a path such as "/api/sponsor" (this app's proxy). */
+function koraUrlOf(value: string | undefined, errors: string[]): string {
+  const v = clean(value);
+  if (!v || v.startsWith("/")) return v;
+  try {
+    const u = new URL(v);
+    if (u.protocol === "http:" || u.protocol === "https:") return v;
+  } catch {
+    // reported below
+  }
+  errors.push('NEXT_PUBLIC_KORA_URL must be an http(s) URL or a path such as "/api/sponsor".');
+  return "";
+}
+
 function optionalAddress(name: string, value: string | undefined, errors: string[]): string {
   const v = clean(value);
   if (!v || isAddress(v)) return v;
@@ -84,7 +98,7 @@ export function parseConfig(raw: RawConfig): AppConfig {
   return {
     cluster,
     rpcUrl: clean(raw.rpcUrl) || DEFAULT_RPC_URL,
-    koraUrl: clean(raw.koraUrl),
+    koraUrl: koraUrlOf(raw.koraUrl, errors),
     poolMint: requiredAddress("NEXT_PUBLIC_POOL_MINT", raw.poolMint, DEFAULT_POOL_MINT, errors),
     programId: requiredAddress("NEXT_PUBLIC_PROGRAM_ID", raw.programId, DEFAULT_PROGRAM_ID, errors),
     gatekeeperNetwork: optionalAddress("NEXT_PUBLIC_GATEKEEPER_NETWORK", raw.gatekeeperNetwork, errors),

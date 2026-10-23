@@ -10,11 +10,32 @@ pub struct PoolInitialized {
 #[event]
 pub struct PoolUpdated {
     pub pool: Pubkey,
+    pub params: crate::state::PoolParams,
 }
 
 #[event]
 pub struct PoolFrozen {
     pub pool: Pubkey,
+}
+
+#[event]
+pub struct AuthorityProposed {
+    pub pool: Pubkey,
+    pub current: Pubkey,
+    pub proposed: Pubkey,
+}
+
+#[event]
+pub struct AuthorityProposalCancelled {
+    pub pool: Pubkey,
+    pub cancelled: Pubkey,
+}
+
+#[event]
+pub struct AuthorityChanged {
+    pub pool: Pubkey,
+    pub old: Pubkey,
+    pub new: Pubkey,
 }
 
 #[event]
@@ -44,7 +65,11 @@ pub struct LoanOpened {
 
 #[event]
 pub struct Repaid {
+    pub pool: Pubkey,
     pub loan: Pubkey,
+    pub loan_id: u64,
+    pub borrower: Pubkey,
+    pub cosigner: Pubkey,
     pub payer: Pubkey,
     pub amount: u64,
     pub total_repaid: u64,
@@ -53,7 +78,11 @@ pub struct Repaid {
 
 #[event]
 pub struct LoanDefaulted {
+    pub pool: Pubkey,
     pub loan: Pubkey,
+    pub loan_id: u64,
+    pub borrower: Pubkey,
+    pub cosigner: Pubkey,
     pub recovered: u64,
     pub lost: u64,
     pub escrow_returned: u64,

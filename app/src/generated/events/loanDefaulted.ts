@@ -12,18 +12,18 @@ export const LOAN_DEFAULTED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8A
 
 export function getLoanDefaultedEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(LOAN_DEFAULTED_EVENT_DISCRIMINATOR); }
 
-export type LoanDefaultedEvent = { loan: Address; recovered: bigint; lost: bigint; escrowReturned: bigint;  };
+export type LoanDefaultedEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; recovered: bigint; lost: bigint; escrowReturned: bigint;  };
 
-export type LoanDefaultedEventArgs = { loan: Address | HasAddress; recovered: number | bigint; lost: number | bigint; escrowReturned: number | bigint;  };
+export type LoanDefaultedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; recovered: number | bigint; lost: number | bigint; escrowReturned: number | bigint;  };
 
 /** Gets the encoder for {@link LoanDefaultedEventArgs} event data. */
 export function getLoanDefaultedEventEncoder(): FixedSizeEncoder<LoanDefaultedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['loan', getAddressEncoder()], ['recovered', getU64Encoder()], ['lost', getU64Encoder()], ['escrowReturned', getU64Encoder()]]), [getConstantEncoder(LOAN_DEFAULTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['recovered', getU64Encoder()], ['lost', getU64Encoder()], ['escrowReturned', getU64Encoder()]]), [getConstantEncoder(LOAN_DEFAULTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link LoanDefaultedEvent} event data. */
 export function getLoanDefaultedEventDecoder(): FixedSizeDecoder<LoanDefaultedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['loan', getAddressDecoder()], ['recovered', getU64Decoder()], ['lost', getU64Decoder()], ['escrowReturned', getU64Decoder()]]), [getConstantDecoder(LOAN_DEFAULTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['recovered', getU64Decoder()], ['lost', getU64Decoder()], ['escrowReturned', getU64Decoder()]]), [getConstantDecoder(LOAN_DEFAULTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link LoanDefaultedEvent} event data. */

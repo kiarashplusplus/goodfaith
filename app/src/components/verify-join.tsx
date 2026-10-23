@@ -4,7 +4,7 @@ import { useState } from "react";
 import dynamic from "next/dynamic";
 import { Button, Card, Notice, TxStatus } from "./ui";
 import { GATEKEEPER_NETWORK } from "@/lib/config";
-import { useApp, useMember, usePool } from "@/lib/hooks";
+import { useApp, useMember, usePool, useSponsor } from "@/lib/hooks";
 import { friendlyError, registerMemberIx } from "@/lib/program";
 import { sendInstructions } from "@/lib/tx";
 import { useRun } from "@/lib/use-run";
@@ -21,6 +21,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
   const pool = usePool();
   const member = useMember(wallet);
   const { run, busy, error, result } = useRun();
+  const sponsor = useSponsor();
   const [civicError, setCivicError] = useState<string | null>(null);
   const network = pool.data?.gatekeeperNetwork ?? GATEKEEPER_NETWORK;
 
@@ -62,7 +63,10 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
                 <Notice tone="ok">You&apos;re a member.{member.data.ineligible && " Your membership is currently on hold."}</Notice>
               ) : (
                 <>
-                  <p className="mb-3 text-sm text-stone-600">One small step, no cost to you. This links your wallet to your pass.</p>
+                  <p className="mb-3 text-sm text-stone-600">
+                    This links your wallet to your pass.{" "}
+                    {sponsor.available ? "No cost to you." : "It creates a small account; about 0.0015 SOL of rent is paid by you."}
+                  </p>
                   <Button
                     disabled={!civic.active || !civic.gatewayToken || !signer || busy}
                     onClick={() =>

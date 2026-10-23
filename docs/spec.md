@@ -23,6 +23,7 @@ Plain English everywhere: no religious or non-English finance terms in code, UI 
 | loan_count | u64 | next loan id |
 | total_donated, total_lent, total_repaid, total_recovered, total_lost | u64 | stats |
 | bump, vault_bump | u8 | |
+| pending_authority | Option<Pubkey> | key named by `propose_authority`, cleared on accept, cancel or freeze |
 
 **Member** — PDA `["member", pool, wallet]`
 | wallet | Pubkey |
@@ -51,8 +52,9 @@ Plain English everywhere: no religious or non-English finance terms in code, UI 
 **Escrow** — token account PDA `["escrow", loan]`, authority = pool.
 
 ### Instructions
-1. `initialize_pool(params)` — payer becomes authority; creates Pool + vault. Validate bps ≤ 10000, max_loan > 0, terms > 0.
-2. `update_pool(params)` — authority only. `freeze_pool()` — sets authority None (irreversible).
+1. `initialize_pool(params)` — payer becomes authority; creates Pool + vault. Validate bps ≤ 10000, max_loan > 0, terms > 0, max_term_days ≤ 3650, grace_days ≤ 365.
+2. `update_pool(params)` — authority only. `freeze_pool()` — sets authority None and clears any pending handover (irreversible).
+   `propose_authority(new)` — authority only; records `pending_authority` (not the zero key, not the current authority). `cancel_authority_proposal()` — authority only. `accept_authority()` — signed by the pending key; it becomes the authority. Two steps so a mistyped key cannot lock the pool.
 3. `donate(amount)` — any signer; donor token account → vault. Non-refundable. amount > 0.
 4. `register_member()` — signers: wallet, payer (pays Member rent; fee sponsor, may equal wallet); requires a valid Civic gateway token (see below); creates Member.
 5. `request_loan(amount, term_days, cosigner)` — signers: borrower, payer (fee sponsor, may equal borrower).
@@ -71,7 +73,7 @@ Plain English everywhere: no religious or non-English finance terms in code, UI 
    - status Defaulted; borrower and cosigner Members ineligible = true; clear active_loan / decrement guarantees.
    - total_recovered += recovered; total_lost += shortfall − recovered.
 
-Rules: checked math only (no `+`/`-`/`*` on u64 without checked_*); every token account constrained by mint and owner; no fee, interest or penalty fields anywhere. Emit an event per instruction.
+Rules: checked math only (no `+`/`-`/`*` on u64 without checked_*); every token account constrained by mint and owner; no fee, interest or penalty fields anywhere. Emit an event per instruction; `PoolUpdated` carries the new params, `Repaid` and `LoanDefaulted` carry pool, loan id, borrower and co-signer.
 
 ### Civic gateway token check
 Implement in `gateway.rs` without the `solana-gateway` crate unless it builds cleanly with Anchor 1.x. Parse the gateway token account per Civic's on-chain layout (verify against github.com/identity-com/on-chain-identity-gateway source): owner program = Civic gateway program id, `owner_wallet` = member wallet, `gatekeeper_network` = pool.gatekeeper_network, state Active, expiry None or > now. Tests may plant fake accounts owned by the gateway program id in LiteSVM.

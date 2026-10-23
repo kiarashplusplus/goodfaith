@@ -147,7 +147,11 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
     }
 
     emit!(Repaid {
+        pool: a.pool.key(),
         loan: a.loan.key(),
+        loan_id: a.loan.id,
+        borrower: a.loan.borrower,
+        cosigner: a.loan.cosigner,
         payer: a.payer.key(),
         amount,
         total_repaid: a.loan.repaid,

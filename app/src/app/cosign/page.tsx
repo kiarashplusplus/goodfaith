@@ -6,7 +6,7 @@ import { createNoopSigner, type Address } from "@solana/kit";
 import { getCreateAssociatedTokenIdempotentInstruction } from "@solana-program/token";
 import { RequireWallet } from "@/components/connect-button";
 import { Button, Card, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
-import { useApp, useBalances, useMember, usePendingForCosigner, usePool, useRequest } from "@/lib/hooks";
+import { useApp, useBalances, useMember, usePendingForCosigner, usePool, useRequest, useSponsor } from "@/lib/hooks";
 import { parseCosignLink } from "@/lib/cosign-link";
 import { cancelRequestIx, cosignLoanIx, type LoanRequest, type Pool } from "@/lib/program";
 import { sendInstructions } from "@/lib/tx";
@@ -97,6 +97,7 @@ function Terms({ wallet, pool, request, onDone }: { wallet: Address; pool: Pool;
   const member = useMember(wallet);
   const balances = useBalances(wallet);
   const { run, busy, error, result } = useRun();
+  const sponsor = useSponsor();
   const escrow = escrowFor(request.amount, pool.cosignerEscrowBps);
   const isCosigner = wallet === request.cosigner;
   const isBorrower = wallet === request.borrower;
@@ -152,6 +153,11 @@ function Terms({ wallet, pool, request, onDone }: { wallet: Address; pool: Pool;
         </Notice>
       )}
 
+      {isCosigner && !sponsor.available && (
+        <p className="text-xs text-stone-500">
+          Fees aren&apos;t covered right now: about 0.004 to 0.006 SOL of rent is paid by you, mostly refunded when the loan closes.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={!canCosign}

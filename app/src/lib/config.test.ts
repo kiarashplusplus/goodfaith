@@ -67,3 +67,16 @@ describe("parseConfig", () => {
     expect(parseConfig({ cluster: " devnet ", poolMint: ` ${MINT} ` }).errors).toEqual([]);
   });
 });
+
+describe("kora url", () => {
+  it("accepts an absolute http(s) URL or an app path, rejects the rest", () => {
+    expect(parseConfig({ koraUrl: "http://127.0.0.1:8080" })).toMatchObject({ koraUrl: "http://127.0.0.1:8080", errors: [] });
+    expect(parseConfig({ koraUrl: "/api/sponsor" })).toMatchObject({ koraUrl: "/api/sponsor", errors: [] });
+    expect(parseConfig({ koraUrl: "" })).toMatchObject({ koraUrl: "" });
+    for (const bad of ["api/sponsor", "ftp://x", "kora"]) {
+      const c = parseConfig({ koraUrl: bad });
+      expect(c.koraUrl).toBe("");
+      expect(c.errors[0]).toMatch(/NEXT_PUBLIC_KORA_URL/);
+    }
+  });
+});

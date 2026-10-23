@@ -219,6 +219,26 @@ row('mark_default', `recovered ${fmt(recovered)}`, `lost ${fmt(shortfall - recov
 await expectFail(send([await gf.getRequestLoanInstructionAsync({ payer: borrower, borrower, mint: MINT, borrowerGatewayToken: gwB, amount: 10n * USDC, termDays: 7, cosigner: cosigner.address })], borrower, 'request after default'), 'ineligible request');
 row('request after default', 'rejected (ineligible)');
 
+// ---------- authority handover (two-step) ----------
+if (!frozenAtStart) {
+  const next = await wallet();
+  await setSol(next.address, 1_000_000_000n);
+  const strangerErr = await expectFail(send([gf.getProposeAuthorityInstruction({ authority: next, pool, newAuthority: next.address })], next, 'propose by stranger'), 'stranger propose');
+  await send([gf.getProposeAuthorityInstruction({ authority: admin, pool, newAuthority: next.address })], admin, 'propose_authority');
+  assert.equal((await fetchPool(pool)).pendingAuthority.__option, 'Some', 'proposal recorded');
+  await expectFail(send([gf.getAcceptAuthorityInstruction({ newAuthority: third, pool })], third, 'accept by stranger'), 'stranger accept');
+  await send([gf.getAcceptAuthorityInstruction({ newAuthority: next, pool })], next, 'accept_authority');
+  let pa = await fetchPool(pool);
+  assert.equal(pa.authority.__option === 'Some' ? pa.authority.value : null, next.address, 'authority changed');
+  assert.equal(pa.pendingAuthority.__option, 'None');
+  // and back, so the rest of the run (freeze) keeps using the admin key
+  await send([gf.getProposeAuthorityInstruction({ authority: next, pool, newAuthority: admin.address })], next, 'propose back');
+  await send([gf.getAcceptAuthorityInstruction({ newAuthority: admin, pool })], admin, 'accept back');
+  pa = await fetchPool(pool);
+  assert.equal(pa.authority.__option === 'Some' ? pa.authority.value : null, admin.address);
+  row('authority handover', `stranger ${strangerErr.match(/Unauthorized|0x177c/)?.[0] ?? 'rejected'}`, 'propose+accept to a new key and back');
+}
+
 // ---------- freeze_pool (irreversible) ----------
 if (!frozenAtStart) {
   await send([gf.getFreezePoolInstruction({ authority: admin, pool })], admin, 'freeze_pool');

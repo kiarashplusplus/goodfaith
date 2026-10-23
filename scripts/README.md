@@ -37,14 +37,24 @@ directly, so neither needs a keypair or a running fork.
   errors). Needs `cd app && npm run build && PORT=3100 npm start`. Override the URL with `APP_URL`; set `CHROMIUM_PATH` if no
   Playwright browser is installed (`playwright-core` doesn't download one).
 
-## Kora
+## Kora (fee sponsor)
+Install with `bash scripts/toolchain.sh --with-kora` (compiles `kora-cli` 2.0.5, 10-20 min). Run against the fork:
 ```
 export KORA_PRIVATE_KEY="$(cat some-throwaway-keypair.json)"
+kora --config scripts/kora/kora.toml config validate          # offline policy check; read its warnings
 kora --config scripts/kora/kora.toml --rpc-url http://127.0.0.1:8899 rpc start --signers-config scripts/kora/signers.toml
 ```
-Config notes (`kora/kora.toml`):
-- `[kora.cache]` needs `default_ttl` and `account_ttl` set even when `enabled = false`.
-- Fee payer policy must allow system `create_account`, `assign` and `allocate` (account rent and ATA creation).
-- `[validation.price] type = "free"` so users pay nothing.
-- Allow the program id, token programs, and the pool mint.
-- Private key only via `KORA_PRIVATE_KEY`; never commit it.
+- `npm run kora-e2e` drives the web app's own sponsored path (`app/src/lib/tx.ts`, `kora.ts`, `program.ts`) through a
+  running Kora: register, request, co-sign for a borrower with no token account, repay, donate, cancel, mark default,
+  the Checking-page send (sender pays when the recipient has no token account), a Memo instruction refused by Kora,
+  and a check that users paid nothing while Kora's spend matches the rent it should have paid. Set
+  `KORA_URL=http://localhost:3000/api/sponsor` to go through the app's proxy instead (start the app with `KORA_URL`
+  and `KORA_API_KEY`/`KORA_HMAC_SECRET` in its environment).
+- `kora/kora.toml` is the deployable policy; its header lists what to change for mainnet. Kora 2.0.5 answers any
+  origin, so never expose its port: the app's `/api/sponsor` route is the origin and auth boundary.
+- `max_allowed_lamports` is the fee payer's outflow per transaction, CPI-created rent included. A first co-sign costs
+  6,062,160 lamports (borrower token account + Loan + escrow), hence 7,000,000.
+- `[kora.usage_limit]` counts transactions per wallet for ever (no window); keep it off.
+- Auth: Kora reads `KORA_API_KEY` / `KORA_HMAC_SECRET` from its environment; the proxy sends them. `config validate`
+  warns about missing auth because it only looks at the file.
+- Private key only via `KORA_PRIVATE_KEY`; never commit it. Use Turnkey or Privy signers for hosting.

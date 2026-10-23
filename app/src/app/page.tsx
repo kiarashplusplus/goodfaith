@@ -4,14 +4,13 @@ import { useState } from "react";
 import useSWR from "swr";
 import { QRCodeSVG } from "qrcode.react";
 import { address, type Address } from "@solana/kit";
-import { getCreateAssociatedTokenIdempotentInstruction, getTransferCheckedInstruction } from "@solana-program/token";
-import { createNoopSigner } from "@solana/kit";
 import { RequireWallet } from "@/components/connect-button";
 import { Button, Card, Field, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
-import { useApp, useBalances } from "@/lib/hooks";
+import { useApp, useBalances, useSponsor } from "@/lib/hooks";
 import { explorerAddress, explorerTx, POOL_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/config";
 import { formatAmount, formatSol, formatUsdc, parseAmount, shortAddress } from "@/lib/format";
 import { findAta } from "@/lib/program";
+import { ataExists, planTokenSend } from "@/lib/send";
 import { sendInstructions } from "@/lib/tx";
 import { solanaPayUrl } from "@/lib/solana-pay";
 import { copyLabel, useCopy } from "@/lib/clipboard";
@@ -43,8 +42,13 @@ function Account({ wallet }: { wallet: Address }) {
   );
 }
 
+/** Rent for a 165-byte token account plus a fee, in lamports. */
+const NEW_ACCOUNT_SOL = 2_100_000n;
+
 function Send({ wallet, balance, onDone }: { wallet: Address; balance: bigint | undefined; onDone: () => void }) {
   const { rpc, signer } = useApp();
+  const sponsor = useSponsor();
+  const balances = useBalances(wallet);
   const [to, setTo] = useState("");
   const [amt, setAmt] = useState("");
   const { run, busy, error, result, reset } = useRun();
@@ -55,6 +59,10 @@ function Send({ wallet, balance, onDone }: { wallet: Address; balance: bigint | 
   } catch {
     dest = null;
   }
+  const destAta = useSWR(dest && dest !== wallet ? ["ata-exists", dest] : null, async () =>
+    ataExists(rpc, await findAta(dest!, POOL_MINT)),
+  );
+  const createsAccount = destAta.data === false;
   const amount = parseAmount(amt, TOKEN_DECIMALS);
   const toError = to && !dest ? "That doesn't look like a wallet address." : dest === wallet ? "That's your own address." : null;
   const amountError =
@@ -63,7 +71,8 @@ function Send({ wallet, balance, onDone }: { wallet: Address; balance: bigint | 
       : amount && balance !== undefined && amount > balance
         ? `You have ${formatUsdc(balance)}.`
         : null;
-  const ok = !!dest && !toError && !!amount && amount > 0n && !amountError && !!signer;
+  const shortOnSol = createsAccount && balances.data !== undefined && balances.data.sol < NEW_ACCOUNT_SOL;
+  const ok = !!dest && !toError && !!amount && amount > 0n && !amountError && !shortOnSol && !!signer;
 
   return (
     <Card title={`Send ${TOKEN_SYMBOL}`}>
@@ -89,29 +98,19 @@ function Send({ wallet, balance, onDone }: { wallet: Address; balance: bigint | 
           placeholder="0.00"
           error={amountError}
         />
+        {createsAccount && (
+          <Notice tone="info">
+            This wallet has no {TOKEN_SYMBOL} account yet. Creating one costs about 0.002 SOL, paid by you
+            {sponsor.available ? " (the fee sponsor only covers Good Faith transactions)" : ""}.
+            {shortOnSol && " You need a little SOL for this."}
+          </Notice>
+        )}
         <Button
           disabled={!ok || busy}
           onClick={() =>
             run(async () => {
-              const mint = POOL_MINT;
-              const source = await findAta(wallet, mint);
-              const destination = await findAta(dest!, mint);
-              const sig = await sendInstructions(rpc, signer!, async (feePayer) => [
-                getCreateAssociatedTokenIdempotentInstruction({
-                  payer: createNoopSigner(feePayer),
-                  ata: destination,
-                  owner: dest!,
-                  mint,
-                }),
-                getTransferCheckedInstruction({
-                  source,
-                  mint,
-                  destination,
-                  authority: createNoopSigner(wallet),
-                  amount: amount!,
-                  decimals: TOKEN_DECIMALS,
-                }),
-              ]);
+              const plan = await planTokenSend(rpc, wallet, dest!, POOL_MINT, amount!);
+              const sig = await sendInstructions(rpc, signer!, plan.instructions, { sponsor: plan.sponsor });
               setAmt("");
               onDone();
               return sig;

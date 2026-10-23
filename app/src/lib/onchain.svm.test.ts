@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { address, createNoopSigner, getBase64EncodedWireTransaction, signTransaction, type Address, type KeyPairSigner } from "@solana/kit";
 import { getCreateAssociatedTokenIdempotentInstruction } from "@solana-program/token";
 import type { LiteSVM } from "litesvm";
-import { getInitializePoolInstructionAsync } from "@/generated";
+import { getAcceptAuthorityInstruction, getInitializePoolInstructionAsync, getProposeAuthorityInstruction } from "@/generated";
 import { POOL_MINT, PROGRAM_ID } from "./config";
 import { escrowFor } from "./escrow";
 import { loanTiming, SECONDS_PER_DAY } from "./loan-status";
@@ -136,6 +136,35 @@ describe("pool", () => {
     expect(await expectCode(sendSigned(donor, [], [await donateIx({ donor: donor.address, pool: poolA, amount: 0n })]), 6000)).toBe(
       "Enter an amount greater than zero.",
     );
+  });
+});
+
+describe("authority handover", () => {
+  it("is two-step and the app notices the pending key, then refuses a pool it no longer recognises", async () => {
+    const next = await actor(svm, { gateway: false });
+    const propose = (authority: KeyPairSigner, newAuthority: Address) =>
+      getProposeAuthorityInstruction({ authority, pool: poolA.address, newAuthority }, { programAddress: PROGRAM_ID });
+    expect(await expectCode(sendInstructions(rpc, next, [propose(next, next.address)]), 6012)).toBe("You're not allowed to do that.");
+    await sendInstructions(rpc, adm, [propose(adm, next.address)]);
+    poolA = (await fetchCanonicalPool(rpc))!;
+    expect(poolA.pendingAuthority).toBe(next.address);
+    expect(poolA.authority).toBe(adm.address);
+
+    await sendInstructions(rpc, next, [
+      getAcceptAuthorityInstruction({ newAuthority: next, pool: poolA.address }, { programAddress: PROGRAM_ID }),
+    ]);
+    const fresh = (await fetchPool(rpc, poolA.address))!;
+    expect(fresh).toMatchObject({ authority: next.address, pendingAuthority: null });
+    // The pinned NEXT_PUBLIC_POOL_AUTHORITY is now stale, so the app refuses the pool until the config is updated.
+    await expect(fetchCanonicalPool(rpc)).rejects.toThrow(/different authority/);
+
+    // Hand it back so the rest of the suite keeps using the pinned admin.
+    await sendInstructions(rpc, next, [propose(next, adm.address)]);
+    await sendInstructions(rpc, adm, [
+      getAcceptAuthorityInstruction({ newAuthority: adm, pool: poolA.address }, { programAddress: PROGRAM_ID }),
+    ]);
+    poolA = (await fetchCanonicalPool(rpc))!;
+    expect(poolA).toMatchObject({ authority: adm.address, pendingAuthority: null });
   });
 });
 

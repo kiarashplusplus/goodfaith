@@ -29,6 +29,18 @@ pub mod goodfaith {
         instructions::update_pool::freeze_handler(ctx)
     }
 
+    pub fn propose_authority(ctx: Context<UpdatePool>, new_authority: Pubkey) -> Result<()> {
+        instructions::update_pool::propose_authority_handler(ctx, new_authority)
+    }
+
+    pub fn cancel_authority_proposal(ctx: Context<UpdatePool>) -> Result<()> {
+        instructions::update_pool::cancel_authority_proposal_handler(ctx)
+    }
+
+    pub fn accept_authority(ctx: Context<AcceptAuthority>) -> Result<()> {
+        instructions::update_pool::accept_authority_handler(ctx)
+    }
+
     pub fn donate(ctx: Context<Donate>, amount: u64) -> Result<()> {
         instructions::donate::donate_handler(ctx, amount)
     }

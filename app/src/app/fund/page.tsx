@@ -45,6 +45,12 @@ export default function FundPage() {
                   ? "These rules are frozen. Nobody can change them."
                   : "These rules can still be changed by the fund's administrator. Changes never affect loans that are already open."}
               </li>
+              {p.pendingAuthority && (
+                <li>
+                  A handover of the administrator role to <span className="font-mono">{p.pendingAuthority}</span> is pending until that key
+                  accepts it.
+                </li>
+              )}
             </ul>
             <a
               className="mt-3 inline-block text-xs text-stone-500 underline"

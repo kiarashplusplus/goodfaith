@@ -1,80 +1,182 @@
-// Runs request_loan, cosign_loan and repay with Kora as the fee payer / rent payer.
-// Requires: Kora running at KORA_URL (default http://127.0.0.1:8080), signer funded on the fork (done here).
+// Sponsored flows through the web app's own code path (app/src/lib/tx.ts + kora.ts + program.ts) with Kora as
+// fee and rent payer, on a Surfpool fork with the program planted by `npm run deploy-fork` and a pool from `npm run e2e`.
+// Requires Kora at KORA_URL (default http://127.0.0.1:8080). Set KORA_URL=http://localhost:3000/api/sponsor to go
+// through the app's proxy instead (start the app with KORA_URL/KORA_* set).
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { address, appendTransactionMessageInstructions, createNoopSigner, createTransactionMessage, getAddressEncoder, getBase64EncodedWireTransaction, partiallySignTransactionMessageWithSigners, pipe, setTransactionMessageFeePayer, setTransactionMessageLifetimeUsingBlockhash, type Address, type Instruction } from '@solana/kit';
-import { ata, cheat, gf, GATEWAY_PROGRAM, loanPda, MINT, rpc, send, setSol, setUsdc, sol, tok, USDC, wallet, fetchPool } from './lib.ts';
+import { AccountRole, address, createNoopSigner, getAddressEncoder, type Address, type Instruction } from '@solana/kit';
+import { getCloseAccountInstruction, getCreateAssociatedTokenIdempotentInstruction } from '@solana-program/token';
+import { ata, cheat, clockTs, GATEWAY_PROGRAM, rpc, RPC_URL, send, setSol, setUsdc, sol, tok, USDC, wallet } from './lib.ts';
 
-const KORA_URL = process.env.KORA_URL ?? 'http://127.0.0.1:8080';
+process.env.NEXT_PUBLIC_KORA_URL = process.env.KORA_URL ?? 'http://127.0.0.1:8080';
+process.env.NEXT_PUBLIC_RPC_URL = RPC_URL;
+// The app modules read NEXT_PUBLIC_* at import time, so import them after setting the environment.
+const tx = await import('../app/src/lib/tx.ts');
+const kora = await import('../app/src/lib/kora.ts');
+const prog = await import('../app/src/lib/program.ts');
+const sendLib = await import('../app/src/lib/send.ts');
+const { gatewayTokenAddress } = await import('../app/src/lib/civic-addr.ts');
+const { escrowFor } = await import('../app/src/lib/escrow.ts');
+const cfg = await import('../app/src/lib/config.ts');
+
 const here = path.dirname(new URL(import.meta.url).pathname);
-const kcall = async (method: string, params: any = {}) => {
-  const r = await (await fetch(KORA_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json() as any;
-  if (r.error) throw new Error(`kora ${method}: ${JSON.stringify(r.error)}`);
-  return r.result;
-};
-const koraAddr = address((await kcall('getPayerSigner')).signer_address);
-console.log('Kora fee payer', koraAddr);
-await setSol(koraAddr, 10_000_000_000n);
-const koraSigner = createNoopSigner(koraAddr);
+const rows: string[][] = [];
+const row = (step: string, ...cols: string[]) => { rows.push([step, ...cols]); console.log(`[ok] ${step} ${cols.join(' | ')}`); };
+const fmt = (n: bigint) => (Number(n) / 1e6).toFixed(2);
+const txRpc = rpc as unknown as Parameters<typeof tx.sendInstructions>[0] & Parameters<typeof prog.fetchPool>[0];
+type Signer = Awaited<ReturnType<typeof wallet>>;
+const sponsored = (w: Signer, ixs: Instruction[] | ((feePayer: Address) => Promise<Instruction[]>)) => tx.sendInstructions(txRpc, w as never, ixs as never);
+const ataCreate = (payer: Address, a: Address, owner: Address, mint: Address) =>
+  getCreateAssociatedTokenIdempotentInstruction({ payer: createNoopSigner(payer), ata: a, owner, mint }) as Instruction;
 
-async function ksend(ixs: Instruction[], label: string) {
-  const { value: bh } = await rpc.getLatestBlockhash().send();
-  const msg = pipe(createTransactionMessage({ version: 0 }), m => setTransactionMessageFeePayer(koraAddr, m),
-    m => setTransactionMessageLifetimeUsingBlockhash(bh, m), m => appendTransactionMessageInstructions(ixs, m));
-  const tx = await partiallySignTransactionMessageWithSigners(msg);
-  const res = await kcall('signAndSendTransaction', { transaction: getBase64EncodedWireTransaction(tx) }).catch(e => { throw new Error(`${label}: ${e.message}`); });
-  for (let i = 0; i < 60; i++) {
-    const { value } = await rpc.getSignatureStatuses([res.signature]).send();
-    const s = value[0];
-    if (s?.err) throw new Error(`${label} tx error ${JSON.stringify(s.err, (_, v) => typeof v === 'bigint' ? v.toString() : v)}`);
-    if (s && s.confirmationStatus !== 'processed') return res.signature as string;
-    await new Promise(r => setTimeout(r, 300));
-  }
-  throw new Error(`${label} not confirmed`);
-}
+// ---------- Kora up, payer funded ----------
+assert.ok(kora.kora, 'NEXT_PUBLIC_KORA_URL must be set');
+await kora.kora!.liveness();
+const payer = await kora.getKoraPayer();
+assert.ok(payer, 'getPayerSigner failed');
+await setSol(payer!, 20_000_000_000n);
+row('kora', `payer ${payer!.slice(0, 6)}..`, `url ${process.env.NEXT_PUBLIC_KORA_URL}`);
 
+// ---------- actors ----------
 const real = JSON.parse(fs.readFileSync(path.join(here, 'civic-token.json'), 'utf8'));
 const realBytes = Buffer.from(real.data, 'hex');
+const [poolAddr] = await prog.findPoolPda(cfg.POOL_MINT);
+const poolMaybe = await prog.fetchPool(txRpc, poolAddr);
+if (!poolMaybe) throw new Error('pool missing: run `npm run e2e` first');
+const pool = poolMaybe;
+const network = pool.gatekeeperNetwork;
+const MINT = pool.mint;
 async function plantGateway(owner: Address) {
-  const addr = (await wallet()).address;
-  const b = Buffer.from(realBytes); Buffer.from(getAddressEncoder().encode(owner)).copy(b, 2);
+  const addr = gatewayTokenAddress(owner, network);
+  const b = Buffer.from(realBytes);
+  Buffer.from(getAddressEncoder().encode(owner)).copy(b, 2);
   await cheat('surfnet_setAccount', [addr, { lamports: real.lamports, owner: GATEWAY_PROGRAM, data: b.toString('hex') }]);
   return addr;
 }
+const borrower = await wallet(), cosigner = await wallet(), third = await wallet(), donor = await wallet(), borrower2 = await wallet(), cosigner2 = await wallet();
+for (const w of [borrower, cosigner, third, donor, borrower2, cosigner2]) await setSol(w.address, 1_000_000_000n);
+// borrower and borrower2 deliberately have NO token account: the co-sign prefix must create it (sponsor pays that rent)
+await setUsdc(cosigner.address, 500n * USDC); await setUsdc(third.address, 200n * USDC); await setUsdc(donor.address, 1000n * USDC);
+for (const w of [borrower, cosigner, borrower2, cosigner2]) await plantGateway(w.address);
+const gw = (w: Address) => gatewayTokenAddress(w, network);
+const base = Object.fromEntries(await Promise.all([borrower, cosigner, donor, borrower2, cosigner2].map(async w => [w.address, await sol(w.address)])));
+const koraBase = await sol(payer!);
+let sponsoredTxs = 0;
+const sp = async (w: Signer, ixs: Parameters<typeof sponsored>[1], label: string) => { const sig = await sponsored(w, ixs); sponsoredTxs++; return sig; };
 
-const [pool] = await gf.findPoolPda({ mint: MINT });
-const [vault] = await gf.findVaultPda({ pool });
-const borrower = await wallet(), cosigner = await wallet(), third = await wallet();
-for (const w of [borrower, cosigner, third]) await setSol(w.address, 1_000_000_000n);
-await setUsdc(borrower.address, 0n); await setUsdc(cosigner.address, 500n * USDC); await setUsdc(third.address, 200n * USDC);
-const aB = await ata(borrower.address), aC = await ata(cosigner.address), aT = await ata(third.address);
-const gwB = await plantGateway(borrower.address), gwC = await plantGateway(cosigner.address);
-// register_member: Kora pays Member rent too (separate payer signer), so onboarding costs the wallet nothing.
-await ksend([await gf.getRegisterMemberInstructionAsync({ wallet: borrower, payer: koraSigner, pool, gatewayToken: gwB })], 'register b');
-await ksend([await gf.getRegisterMemberInstructionAsync({ wallet: cosigner, payer: koraSigner, pool, gatewayToken: gwC })], 'register c');
-const [mB] = await gf.findMemberPda({ pool, wallet: borrower.address });
-const [mC] = await gf.findMemberPda({ pool, wallet: cosigner.address });
-const base = { b: await sol(borrower.address), c: await sol(cosigner.address), t: await sol(third.address), k: await sol(koraAddr) };
+// ---------- register (member rent sponsored) ----------
+for (const w of [borrower, cosigner, borrower2, cosigner2]) {
+  await sp(w, async (feePayer) => [await prog.registerMemberIx({ wallet: w.address, payer: feePayer, pool, gatewayToken: gw(w.address) })], 'register');
+}
+row('register_member x4', 'Kora paid the Member rent');
 
-const p0 = await fetchPool(pool);
-const amount = 80n * USDC, escrowAmt = 20n * USDC; // 25% of 80
-const [request] = await gf.findRequestPda({ pool, borrower: borrower.address });
-await ksend([await gf.getRequestLoanInstructionAsync({ payer: koraSigner, borrower, mint: MINT, borrowerGatewayToken: gwB, amount, termDays: 7, cosigner: cosigner.address })], 'request_loan');
-const loan = await loanPda(pool, p0.loanCount);
-await ksend([await gf.getCosignLoanInstructionAsync({ payer: koraSigner, cosigner, mint: MINT, vault, request, requestRentPayer: koraAddr, borrowerMember: mB, cosignerMember: mC, borrowerToken: aB, cosignerToken: aC, loan, borrowerGatewayToken: gwB, cosignerGatewayToken: gwC, expectedAmount: amount, expectedTermDays: 7, maxEscrow: escrowAmt })], 'cosign_loan');
-assert.equal(await tok(aB), amount); assert.equal(await tok(aC), 500n * USDC - escrowAmt);
-const [escrow] = await gf.findEscrowPda({ loan });
-const repay = async (payer: any, token: Address, n: bigint) => gf.getRepayInstructionAsync({ payer, mint: MINT, vault, loan, escrow, payerToken: token, cosignerToken: aC, borrowerMember: mB, cosignerMember: mC, rentPayer: koraAddr, amount: n });
-await ksend([await repay(third, aT, 30n * USDC)], 'repay partial');
-await ksend([await repay(borrower, aB, 50n * USDC)], 'repay full');
-assert.equal(await tok(aC), 500n * USDC);
-assert.equal((await rpc.getAccountInfo(escrow, { encoding: 'base64' }).send()).value, null);
-const p1 = await fetchPool(pool);
-assert.equal(p1.totalRepaid, p0.totalRepaid + amount);
-const after = { b: await sol(borrower.address), c: await sol(cosigner.address), t: await sol(third.address), k: await sol(koraAddr) };
-console.log('SOL lamports before -> after');
-for (const k of ['b', 'c', 't', 'k'] as const) console.log({ b: 'borrower', c: 'cosigner', t: 'third', k: 'kora' }[k], base[k], '->', after[k]);
-assert.equal(after.b, base.b); assert.equal(after.c, base.c); assert.equal(after.t, base.t);
-console.log('kora fee payer spent (net of rent refunds):', base.k - after.k, 'lamports');
-console.log('KORA E2E PASS');
+// ---------- request + cosign for a borrower with no token account ----------
+const amount = 100n * USDC, term = 7;
+await sp(borrower, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower.address, pool, borrowerGatewayToken: gw(borrower.address), amount, termDays: term, cosigner: cosigner.address })], 'request');
+const borrowerAta = await ata(borrower.address);
+assert.equal(await sendLib.ataExists(txRpc, borrowerAta), false, 'borrower must start without a token account');
+async function cosignFor(b: Signer, c: Signer) {
+  const p = (await prog.fetchPool(txRpc, pool.address))!;
+  const req = (await prog.fetchRequest(txRpc, p.address, b.address))!;
+  const escrow = escrowFor(req.amount, p.cosignerEscrowBps);
+  await sp(c, async (feePayer) => {
+    const { ix, borrowerToken } = await prog.cosignLoanIx({ payer: feePayer, pool: p, request: req, borrowerGatewayToken: gw(req.borrower), cosignerGatewayToken: gw(req.cosigner), expectedAmount: req.amount, expectedTermDays: req.termDays, maxEscrow: escrow });
+    return [ataCreate(feePayer, borrowerToken, req.borrower, p.mint), ix];
+  }, 'cosign');
+  return { id: p.loanCount, escrow };
+}
+const L1 = await cosignFor(borrower, cosigner);
+assert.equal(await tok(borrowerAta), amount);
+assert.equal(await tok(await ata(cosigner.address)), 500n * USDC - L1.escrow);
+row('cosign (borrower had no token account)', `loan#${L1.id}`, `escrow ${fmt(L1.escrow)}`, `ATA created by the sponsor, within max_allowed_lamports`);
+
+// ---------- repay ----------
+const loanOf = async (id: bigint) => (await prog.fetchLoanById(txRpc, pool.address, id))!;
+let l = await loanOf(L1.id);
+await sp(third, [await prog.repayIx({ payer: third.address, pool, loan: l, amount: 30n * USDC })], 'repay partial');
+l = await loanOf(L1.id);
+await sp(borrower, [await prog.repayIx({ payer: borrower.address, pool, loan: l, amount: 70n * USDC })], 'repay full');
+l = await loanOf(L1.id);
+assert.equal(l.status, 'Repaid');
+assert.equal(await tok(await ata(cosigner.address)), 500n * USDC);
+row('repay 30 (third) + 70 (borrower)', 'Repaid', `escrow back ${fmt(await tok(await ata(cosigner.address)))}`);
+
+// ---------- donate ----------
+const vaultBefore = await tok(pool.vault);
+await sp(donor, [await prog.donateIx({ donor: donor.address, pool, amount: 50n * USDC })], 'donate');
+assert.equal(await tok(pool.vault), vaultBefore + 50n * USDC);
+row('donate 50', 'sponsored');
+
+// ---------- request + cancel ----------
+await sp(borrower, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower.address, pool, borrowerGatewayToken: gw(borrower.address), amount: 10n * USDC, termDays: 3, cosigner: cosigner.address })], 'request 2');
+const req2 = (await prog.fetchRequest(txRpc, pool.address, borrower.address))!;
+assert.equal(req2.rentPayer, payer, 'Kora is the request rent payer');
+await sp(borrower, [prog.cancelRequestIx({ canceller: borrower.address, pool: pool.address, request: req2 })], 'cancel');
+assert.equal(await prog.fetchRequest(txRpc, pool.address, borrower.address), null);
+row('request + cancel', 'request rent returned to Kora');
+
+// ---------- loan 2: default with the co-signer token account re-created by the sponsor ----------
+await sp(borrower2, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower2.address, pool, borrowerGatewayToken: gw(borrower2.address), amount, termDays: term, cosigner: cosigner2.address })], 'request b2');
+const escrow2 = escrowFor(amount, pool.cosignerEscrowBps);
+await setUsdc(cosigner2.address, escrow2); // exactly the escrow, so the account is empty afterwards
+const L2 = await cosignFor(borrower2, cosigner2);
+const c2ata = await ata(cosigner2.address);
+assert.equal(await tok(c2ata), 0n);
+// close the empty token account (user pays: the sponsor never closes accounts)
+await tx.sendInstructions(txRpc, cosigner2 as never, [getCloseAccountInstruction({ account: c2ata, destination: cosigner2.address, owner: cosigner2 }) as never], { sponsor: false });
+assert.equal(await sendLib.ataExists(txRpc, c2ata), false);
+l = await loanOf(L2.id);
+// Repay loads the co-signer's token account, so the app re-creates it (idempotent) in front of every repayment.
+await sp(third, async (feePayer) => [ataCreate(feePayer, c2ata, l.cosigner, pool.mint), await prog.repayIx({ payer: third.address, pool, loan: l, amount: 30n * USDC })], 'repay partial 2');
+assert.equal(await sendLib.ataExists(txRpc, c2ata), true, 'sponsor re-created the co-signer token account for the repayment');
+await tx.sendInstructions(txRpc, cosigner2 as never, [getCloseAccountInstruction({ account: c2ata, destination: cosigner2.address, owner: cosigner2 }) as never], { sponsor: false });
+const target = Number(l.dueAt) + l.graceDays * 86400 + 3600;
+await cheat('surfnet_timeTravel', [{ absoluteTimestamp: target * 1000 }]);
+await new Promise(r => setTimeout(r, 1500));
+assert.ok((await clockTs()) > Number(l.dueAt) + l.graceDays * 86400);
+await sp(third, async (feePayer) => {
+  const { ix, cosignerToken } = await prog.markDefaultIx({ caller: third.address, pool, loan: l });
+  return [ataCreate(feePayer, cosignerToken, l.cosigner, pool.mint), ix];
+}, 'mark_default');
+l = await loanOf(L2.id);
+assert.equal(l.status, 'Defaulted');
+assert.equal(await tok(c2ata), 0n); // escrow (25) < shortfall (70): all of it went to the vault
+row('repay + mark_default after the co-signer closed their token account', `loan#${L2.id}`, 'account re-created by the sponsor each time', 'Defaulted');
+
+// ---------- Checking-style send: no sponsor for creating a stranger's token account ----------
+const fresh = await wallet();
+const plan1 = await sendLib.planTokenSend(txRpc, third.address, fresh.address, MINT, 1n * USDC);
+assert.equal(plan1.sponsor, false);
+const thirdSolBefore = await sol(third.address), koraMid = await sol(payer!);
+await tx.sendInstructions(txRpc, third as never, plan1.instructions as never, { sponsor: plan1.sponsor });
+assert.ok((await sol(third.address)) < thirdSolBefore - 2_000_000n, 'sender paid the new account rent');
+assert.equal(await sol(payer!), koraMid, 'Kora paid nothing for the stranger account');
+const plan2 = await sendLib.planTokenSend(txRpc, third.address, fresh.address, MINT, 1n * USDC);
+assert.equal(plan2.sponsor, true);
+await sp(third, plan2.instructions as never, 'send sponsored');
+assert.equal(await tok(await ata(fresh.address)), 2n * USDC);
+row('send to a new wallet', 'first transfer: sender pays rent', 'second transfer: sponsored');
+
+// ---------- negative: a program outside the allow-list ----------
+const memo: Instruction = { programAddress: address('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'), accounts: [{ address: third.address, role: AccountRole.READONLY_SIGNER }], data: new TextEncoder().encode('hi') };
+let rejected: unknown = null;
+try { await sponsored(third, [memo]); } catch (e) { rejected = e; }
+assert.ok(rejected instanceof kora.KoraError, `expected a KoraError, got ${String(rejected)}`);
+console.log('kora rejection:', (rejected as Error).message);
+assert.equal(prog.friendlyError(rejected), "The fee sponsor doesn't cover this kind of transaction.");
+row('memo instruction', 'rejected by Kora', prog.friendlyError(rejected));
+
+// ---------- who paid ----------
+for (const w of [borrower, cosigner, donor, borrower2]) assert.equal(await sol(w.address), base[w.address], `${w.address} paid nothing`);
+// cosigner2 paid one unsponsored close (fee) and got the account rent back
+const koraSpent = koraBase - (await sol(payer!));
+const rent = async (n: number) => BigInt(await rpc.getMinimumBalanceForRentExemption(BigInt(n)).send());
+// 4 members, 2 loans (permanent), 4 token accounts (two borrowers, the co-signer's twice), two signatures per transaction.
+const expected = 4n * (await rent(76)) + 2n * (await rent(157)) + 4n * (await rent(165)) + 10_000n * BigInt(sponsoredTxs);
+console.log('Kora spent', koraSpent, 'lamports; expected about', expected, `(${sponsoredTxs} sponsored txs; request + escrow rents came back)`);
+assert.ok(koraSpent >= expected - 100_000n && koraSpent <= expected + 200_000n, 'Kora spend within the expected range');
+row('accounting', `users paid 0`, `Kora spent ${koraSpent} lamports (${sponsoredTxs} sponsored txs)`);
+
+console.log('\n' + ['step', 'detail...'].join(' | ')); for (const r of rows) console.log(r.join(' | '));
+console.log('\nKORA E2E PASS');

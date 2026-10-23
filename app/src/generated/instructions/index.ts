@@ -6,12 +6,15 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from './acceptAuthority';
+export * from './cancelAuthorityProposal';
 export * from './cancelRequest';
 export * from './cosignLoan';
 export * from './donate';
 export * from './freezePool';
 export * from './initializePool';
 export * from './markDefault';
+export * from './proposeAuthority';
 export * from './registerMember';
 export * from './repay';
 export * from './requestLoan';

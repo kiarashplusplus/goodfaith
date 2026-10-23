@@ -6,7 +6,7 @@ import { address, type Address } from "@solana/kit";
 import { RequireWallet } from "@/components/connect-button";
 import { VerifyAndJoin } from "@/components/verify-join";
 import { Button, Card, Field, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
-import { useApp, useMember, usePool, useRequest, useVaultBalance } from "@/lib/hooks";
+import { useApp, useMember, usePool, useRequest, useSponsor, useVaultBalance } from "@/lib/hooks";
 import { cancelRequestIx, fetchMember, requestLoanIx, type LoanRequest, type Pool } from "@/lib/program";
 import { sendInstructions } from "@/lib/tx";
 import { buildCosignLink } from "@/lib/cosign-link";
@@ -158,6 +158,7 @@ function RequestForm({
   const [days, setDays] = useState("30");
   const [co, setCo] = useState("");
   const { run, busy, error, reset } = useRun();
+  const sponsor = useSponsor();
 
   let cosigner: Address | null = null;
   try {
@@ -231,6 +232,9 @@ function RequestForm({
             You&apos;ll receive {formatUsdc(amount!)} and pay back exactly {formatUsdc(amount!)}. No interest. No fees. Your co-signer
             escrows {formatUsdc(escrow!)} and gets it back when you finish repaying.
           </Notice>
+        )}
+        {!sponsor.available && (
+          <p className="text-xs text-stone-500">Fees aren&apos;t covered right now: about 0.002 SOL of refundable rent is paid by you.</p>
         )}
         {error && <Notice tone="error">{error}</Notice>}
         <Button

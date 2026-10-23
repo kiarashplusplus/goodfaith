@@ -45,6 +45,7 @@ import {
   getLoanSize,
 } from "@/generated";
 import { CONFIG_ERRORS, GATEKEEPER_NETWORK, POOL_ADDRESS, POOL_AUTHORITY, POOL_MINT, PROGRAM_ID } from "./config";
+import { KORA_CODES, KoraError } from "./kora";
 
 export { TOKEN_PROGRAM_ADDRESS, SYSTEM_PROGRAM_ADDRESS };
 
@@ -59,6 +60,8 @@ export type LoanStatus = "Active" | "Repaid" | "Defaulted";
 export type Pool = {
   address: Address;
   authority: Address | null;
+  /** Key that may take over the pool by calling accept_authority. */
+  pendingAuthority: Address | null;
   mint: Address;
   vault: Address;
   gatekeeperNetwork: Address;
@@ -185,6 +188,7 @@ export async function fetchPool(rpc: ReadRpc, a: Address): Promise<Pool | null> 
   return {
     address: a,
     authority: unwrap(d.authority),
+    pendingAuthority: unwrap(d.pendingAuthority),
     mint: d.mint,
     vault: d.vault,
     gatekeeperNetwork: d.gatekeeperNetwork,
@@ -546,8 +550,29 @@ const ERROR_COPY: Record<string, string> = {
 
 const WALLET_REJECTED = /user rejected|rejected the request|user denied|user declined|declined by user|rejected by user/i;
 
+/** Plain copy for a fee-sponsor (Kora or proxy) error. */
+export function sponsorErrorCopy(e: KoraError): string {
+  switch (e.code) {
+    case KORA_CODES.RATE_LIMITED:
+      return "Too many requests. Wait a moment and try again.";
+    case KORA_CODES.UNREACHABLE:
+    case KORA_CODES.TIMEOUT:
+      return "The fee sponsor didn't respond. Try again in a minute.";
+    case KORA_CODES.NOT_CONFIGURED:
+    case KORA_CODES.AUTH:
+      return "The fee sponsor isn't set up correctly.";
+  }
+  const m = e.message;
+  if (/not (in the )?allow|disallowed|not allowed/i.test(m)) return "The fee sponsor doesn't cover this kind of transaction.";
+  if (/lamports|outflow/i.test(m)) return "This transaction needs more SOL than the fee sponsor covers.";
+  if (/signature/i.test(m)) return "Too many signers for the fee sponsor.";
+  const short = m.length > 120 ? m.slice(0, 120) + "..." : m;
+  return `The fee sponsor declined this: ${short}`;
+}
+
 /** Turn any thrown error into a short human message. */
 export function friendlyError(e: unknown): string {
+  if (e instanceof KoraError) return sponsorErrorCopy(e);
   const msg = e instanceof Error ? e.message : String(e);
   const m = /custom program error: 0x([0-9a-f]+)/i.exec(msg) ?? /"Custom":\s*(\d+)/.exec(msg);
   if (m) {

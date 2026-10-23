@@ -28,9 +28,14 @@ import { kora, getKoraPayer } from "./kora";
 
 export type TxRpc = Rpc<GetLatestBlockhashApi & SendTransactionApi & SimulateTransactionApi & GetSignatureStatusesApi>;
 
-/** Who pays network fees: Kora when configured and reachable, otherwise the user. */
-export async function resolveFeePayer(user: Address): Promise<{ feePayer: Address; sponsored: boolean }> {
-  const k = await getKoraPayer();
+export type SendOptions = {
+  /** Ask the fee sponsor to pay (default). False makes the wallet pay fee and rent, e.g. when creating accounts for strangers. */
+  sponsor?: boolean;
+};
+
+/** Who pays network fees: Kora when configured, wanted and reachable, otherwise the user. */
+export async function resolveFeePayer(user: Address, opts: SendOptions = {}): Promise<{ feePayer: Address; sponsored: boolean }> {
+  const k = opts.sponsor === false ? null : await getKoraPayer();
   return k ? { feePayer: k, sponsored: true } : { feePayer: user, sponsored: false };
 }
 
@@ -97,11 +102,12 @@ async function confirm(rpc: TxRpc, sig: string, timeoutMs = 60_000): Promise<voi
 }
 
 /** Submit a fully user-signed tx: through Kora (which adds the fee-payer signature) or straight to RPC. */
-export async function submit(rpc: TxRpc, tx: Transaction, sponsored: boolean): Promise<string> {
+export async function submit(rpc: TxRpc, tx: Transaction, sponsored: boolean, feePayer?: Address): Promise<string> {
   const b64 = toBase64(tx);
   let sig: string;
   if (sponsored && kora) {
-    const r = await kora.signAndSendTransaction({ transaction: b64 });
+    // A Kora rejection surfaces as a KoraError; there is no silent retry with the user paying.
+    const r = await kora.signAndSendTransaction({ transaction: b64, signer_key: feePayer });
     sig = r.signature;
   } else {
     sig = await rpc.sendTransaction(b64, { encoding: "base64", preflightCommitment: "confirmed" }).send();
@@ -118,8 +124,9 @@ export async function sendInstructions(
   rpc: TxRpc,
   wallet: TransactionSigner,
   instructions: Instruction[] | ((feePayer: Address) => Promise<Instruction[]>),
+  opts: SendOptions = {},
 ): Promise<string> {
-  const { feePayer, sponsored } = await resolveFeePayer(wallet.address);
+  const { feePayer, sponsored } = await resolveFeePayer(wallet.address, opts);
   const ixs = typeof instructions === "function" ? await instructions(feePayer) : instructions;
   const tx = await buildTransaction(rpc, feePayer, ixs);
   await simulate(rpc, tx);
@@ -130,5 +137,5 @@ export async function sendInstructions(
     return sig;
   }
   const signed = await signWith(wallet, tx);
-  return submit(rpc, signed, sponsored);
+  return submit(rpc, signed, sponsored, feePayer);
 }

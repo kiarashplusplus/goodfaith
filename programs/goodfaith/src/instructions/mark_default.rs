@@ -147,7 +147,11 @@ pub fn mark_default_handler(mut ctx: Context<MarkDefault>) -> Result<()> {
         .ok_or(GoodFaithError::MathOverflow)?;
 
     emit!(LoanDefaulted {
+        pool: a.pool.key(),
         loan: a.loan.key(),
+        loan_id: a.loan.id,
+        borrower: a.loan.borrower,
+        cosigner: a.loan.cosigner,
         recovered,
         lost,
         escrow_returned: returned,

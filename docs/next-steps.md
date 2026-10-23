@@ -31,6 +31,11 @@ State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch paramete
 - Surfpool fork: `npm run deploy-fork` plants the `.so` at the declared id (`surfnet_writeProgram`); `npm run e2e` passes with the new cancel, `update_pool` and `freeze_pool` rows.
 - CI: new `program-tests` job builds with Anchor and runs the Rust suite, clippy on all targets and `test:svm` (toolchain cached between runs). Kora e2e remains a local, optional check.
 
+## Completed: program additions and Kora hardening
+- Program: two-step authority handover (`propose_authority` / `accept_authority` / `cancel_authority_proposal`; freeze clears it), richer events, parameter bounds, 48 tests (the review's missing error paths), `docs/audit.md` GF-08/GF-09, client regenerated. Hand the pool to the Squads vault with propose (owner key) + accept (vault transaction), then update `NEXT_PUBLIC_POOL_AUTHORITY`.
+- Kora: `app/api/sponsor` proxy (credentials server-side, three methods, per-client rate limit), hardened client (timeouts, typed errors, `signer_key`, cached payer with backoff), "Fees covered" badge, rent copy when unsponsored, Checking send never sponsors a stranger's token account, `kora.toml` sized for a first co-sign (7,000,000 lamports) and validated with `kora config validate`, `kora-e2e` rewritten on the app's real path.
+- Hosting plan for the sponsor: Kora behind the proxy only (its CORS is allow-any), HMAC secret in both environments, Turnkey/Privy signer, metrics on port 8081 with the fee-payer balance gauge, alert when the payer drops below ~0.5 SOL. Permanent cost per loan is the Loan rent (~0.002 SOL) plus ~0.0014 SOL per new member; request and escrow rents come back.
+
 ## Next: replace Civic with our own identity issuer (decided)
 - Keep the on-chain gateway check as is (`programs/goodfaith/src/gateway.rs`); no program change.
 - Create our own gatekeeper network on the Identity.com gateway program (`gatem74V238djXdzWnJf94Wo1DcnuGkfijbf3AuBhfs`); add our gatekeeper key. Set `pool.gatekeeper_network` to it.

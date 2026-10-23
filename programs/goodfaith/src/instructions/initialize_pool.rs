@@ -39,6 +39,7 @@ pub fn initialize_pool_handler(ctx: Context<InitializePool>, params: PoolParams)
     params.validate()?;
     let pool = &mut ctx.accounts.pool;
     pool.authority = Some(ctx.accounts.payer.key());
+    pool.pending_authority = None;
     pool.mint = ctx.accounts.mint.key();
     pool.vault = ctx.accounts.vault.key();
     pool.gatekeeper_network = params.gatekeeper_network;

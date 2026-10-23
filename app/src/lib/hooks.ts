@@ -9,6 +9,7 @@ import type { AppClient } from "@/app/providers";
 import { POOL_MINT } from "./config";
 import { fetchLoan, fetchLoansFor, fetchMember, fetchCanonicalPool, findAta, fetchRequest, fetchRequestsForCosigner } from "./program";
 import type { TxRpc } from "./tx";
+import { getKoraPayer, koraEnabled } from "./kora";
 
 const noopSubscribe = () => () => {};
 /** False during SSR and the hydration render, true afterwards. Safe against hydration mismatches. */
@@ -125,4 +126,14 @@ export function useNow(everyMs = 30_000): bigint {
     return () => clearInterval(id);
   }, [everyMs]);
   return now;
+}
+
+/** Fee-sponsor status: configured at all, and reachable right now (checked every 30 s). */
+export function useSponsor(): { enabled: boolean; available: boolean; payer: Address | null; isLoading: boolean } {
+  const { data, isLoading } = useSWR(koraEnabled ? ["sponsor"] : null, () => getKoraPayer(), {
+    refreshInterval: 30_000,
+    dedupingInterval: 10_000,
+    revalidateOnFocus: true,
+  });
+  return { enabled: koraEnabled, available: !!data, payer: data ?? null, isLoading: koraEnabled && isLoading };
 }

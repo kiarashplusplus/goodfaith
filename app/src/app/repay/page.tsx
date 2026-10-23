@@ -5,14 +5,15 @@ import { RequireWallet } from "@/components/connect-button";
 import { LoanList } from "@/components/loan-list";
 import { Button, Card, Field, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
 import { useApp, useBalances, useLoans, useNow, usePool } from "@/lib/hooks";
-import { fetchLoanById, repayIx, type Loan, type Pool } from "@/lib/program";
+import { fetchLoanById, findAta, repayIx, type Loan, type Pool } from "@/lib/program";
 import { loanTiming } from "@/lib/loan-status";
 import { sendInstructions } from "@/lib/tx";
 import { formatAmount, formatUsdc, parseAmount, shortAddress } from "@/lib/format";
 import { TOKEN_DECIMALS } from "@/lib/config";
 import { useRun } from "@/lib/use-run";
 import useSWR from "swr";
-import type { Address } from "@solana/kit";
+import { createNoopSigner, type Address } from "@solana/kit";
+import { getCreateAssociatedTokenIdempotentInstruction } from "@solana-program/token";
 
 export default function RepayPage() {
   return (
@@ -146,7 +147,15 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
             disabled={!ok || busy}
             onClick={() =>
               run(async () => {
-                const sig = await sendInstructions(rpc, signer!, async () => [
+                // The program loads the co-signer's token account on every repayment (it receives the escrow at the end).
+                // Re-create it if the co-signer closed it, so a repayment can never be blocked by that.
+                const sig = await sendInstructions(rpc, signer!, async (feePayer) => [
+                  getCreateAssociatedTokenIdempotentInstruction({
+                    payer: createNoopSigner(feePayer),
+                    ata: await findAta(loan.cosigner, pool.mint),
+                    owner: loan.cosigner,
+                    mint: pool.mint,
+                  }),
                   await repayIx({ payer: wallet, pool, loan, amount: amount! }),
                 ]);
                 setAmt("");

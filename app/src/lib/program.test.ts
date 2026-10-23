@@ -61,3 +61,20 @@ describe("friendlyError", () => {
     expect(friendlyError(42)).toBe("42");
   });
 });
+
+describe("friendlyError for the fee sponsor", () => {
+  it("maps proxy and Kora errors to plain copy", async () => {
+    const { KoraError, KORA_CODES } = await import("./kora");
+    expect(friendlyError(new KoraError(KORA_CODES.RATE_LIMITED, "x"))).toBe("Too many requests. Wait a moment and try again.");
+    expect(friendlyError(new KoraError(KORA_CODES.TIMEOUT, "x"))).toBe("The fee sponsor didn't respond. Try again in a minute.");
+    expect(friendlyError(new KoraError(KORA_CODES.AUTH, "x"))).toBe("The fee sponsor isn't set up correctly.");
+    expect(
+      friendlyError(new KoraError(-32602, "Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr is not in the allowed programs list")),
+    ).toBe("The fee sponsor doesn't cover this kind of transaction.");
+    expect(friendlyError(new KoraError(-32602, "Transaction fee 7000000 lamports exceeds max allowed 5000000"))).toBe(
+      "This transaction needs more SOL than the fee sponsor covers.",
+    );
+    expect(friendlyError(new KoraError(-32602, "Too many signatures: 4 > 3"))).toBe("Too many signers for the fee sponsor.");
+    expect(friendlyError(new KoraError(-32000, "x".repeat(200)))).toBe(`The fee sponsor declined this: ${"x".repeat(120)}...`);
+  });
+});

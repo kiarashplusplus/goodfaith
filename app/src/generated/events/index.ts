@@ -6,6 +6,9 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from './authorityChanged';
+export * from './authorityProposalCancelled';
+export * from './authorityProposed';
 export * from './donated';
 export * from './loanDefaulted';
 export * from './loanOpened';

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ConnectButton } from "./connect-button";
+import { SponsorBadge } from "./sponsor-badge";
 
 const LINKS = [
   ["/", "Checking"],
@@ -37,7 +38,10 @@ export function Nav() {
             );
           })}
         </nav>
-        <ConnectButton />
+        <div className="flex items-center gap-2">
+          <SponsorBadge />
+          <ConnectButton />
+        </div>
       </div>
     </header>
   );

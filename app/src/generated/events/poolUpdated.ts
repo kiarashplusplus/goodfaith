@@ -7,23 +7,24 @@
  */
 
 import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getStructDecoder, getStructEncoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
+import { getPoolParamsDecoder, getPoolParamsEncoder, type PoolParams, type PoolParamsArgs } from '../types';
 
 export const POOL_UPDATED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([218, 43, 210, 231, 127, 214, 72, 245]);
 
 export function getPoolUpdatedEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(POOL_UPDATED_EVENT_DISCRIMINATOR); }
 
-export type PoolUpdatedEvent = { pool: Address;  };
+export type PoolUpdatedEvent = { pool: Address; params: PoolParams;  };
 
-export type PoolUpdatedEventArgs = { pool: Address | HasAddress;  };
+export type PoolUpdatedEventArgs = { pool: Address | HasAddress; params: PoolParamsArgs;  };
 
 /** Gets the encoder for {@link PoolUpdatedEventArgs} event data. */
 export function getPoolUpdatedEventEncoder(): FixedSizeEncoder<PoolUpdatedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()]]), [getConstantEncoder(POOL_UPDATED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['params', getPoolParamsEncoder()]]), [getConstantEncoder(POOL_UPDATED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link PoolUpdatedEvent} event data. */
 export function getPoolUpdatedEventDecoder(): FixedSizeDecoder<PoolUpdatedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()]]), [getConstantDecoder(POOL_UPDATED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['params', getPoolParamsDecoder()]]), [getConstantDecoder(POOL_UPDATED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link PoolUpdatedEvent} event data. */

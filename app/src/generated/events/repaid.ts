@@ -12,18 +12,18 @@ export const REPAID_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([38
 
 export function getRepaidEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(REPAID_EVENT_DISCRIMINATOR); }
 
-export type RepaidEvent = { loan: Address; payer: Address; amount: bigint; totalRepaid: bigint; fullyRepaid: boolean;  };
+export type RepaidEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; payer: Address; amount: bigint; totalRepaid: bigint; fullyRepaid: boolean;  };
 
-export type RepaidEventArgs = { loan: Address | HasAddress; payer: Address | HasAddress; amount: number | bigint; totalRepaid: number | bigint; fullyRepaid: boolean;  };
+export type RepaidEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; payer: Address | HasAddress; amount: number | bigint; totalRepaid: number | bigint; fullyRepaid: boolean;  };
 
 /** Gets the encoder for {@link RepaidEventArgs} event data. */
 export function getRepaidEventEncoder(): FixedSizeEncoder<RepaidEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['loan', getAddressEncoder()], ['payer', getAddressEncoder()], ['amount', getU64Encoder()], ['totalRepaid', getU64Encoder()], ['fullyRepaid', getBooleanEncoder()]]), [getConstantEncoder(REPAID_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['payer', getAddressEncoder()], ['amount', getU64Encoder()], ['totalRepaid', getU64Encoder()], ['fullyRepaid', getBooleanEncoder()]]), [getConstantEncoder(REPAID_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link RepaidEvent} event data. */
 export function getRepaidEventDecoder(): FixedSizeDecoder<RepaidEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['loan', getAddressDecoder()], ['payer', getAddressDecoder()], ['amount', getU64Decoder()], ['totalRepaid', getU64Decoder()], ['fullyRepaid', getBooleanDecoder()]]), [getConstantDecoder(REPAID_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['payer', getAddressDecoder()], ['amount', getU64Decoder()], ['totalRepaid', getU64Decoder()], ['fullyRepaid', getBooleanDecoder()]]), [getConstantDecoder(REPAID_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link RepaidEvent} event data. */

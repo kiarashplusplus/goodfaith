@@ -20,6 +20,8 @@ pub struct Pool {
     pub total_lost: u64,
     pub bump: u8,
     pub vault_bump: u8,
+    /// Key named by `propose_authority`; becomes the authority once it calls `accept_authority`.
+    pub pending_authority: Option<Pubkey>,
 }
 
 #[account]
@@ -77,6 +79,10 @@ impl PoolParams {
         );
         require!(
             self.max_loan > 0 && self.max_term_days > 0 && self.max_guarantees_per_member > 0,
+            crate::error::GoodFaithError::InvalidParams
+        );
+        require!(
+            self.max_term_days <= crate::MAX_TERM_DAYS && self.grace_days <= crate::MAX_GRACE_DAYS,
             crate::error::GoodFaithError::InvalidParams
         );
         Ok(())
