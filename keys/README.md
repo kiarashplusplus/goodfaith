@@ -20,6 +20,7 @@ The other keypairs here use the same passphrase and the same scheme, under the s
 |---|---|---|
 | `devnet-program.json.enc` | `BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq` | the program keypair (`target/deploy/goodfaith-keypair.json`), the devnet program id |
 | `devnet-gatekeeper-network.json.enc` | `B9p1QCuQDzj6dnds8sppuSzCjxTxyqFzCRnekEVmhnJj` | the fund's gatekeeper network (`scripts/gatekeeper-network.json`, reused by `gatekeeper-setup`) |
+| `devnet-upgrade-buffer.json.enc` | `GXKxQJtvLt4HzEfreUuLZdVnKn6G6sLbHsM9Q7KG7DHp` | the buffer `anchor deploy` wrote the devnet program through (`target/deploy/goodfaith-upgrade-buffer.json`); used up by the deploy |
 | `fork-kora-signer.json.enc` | `8fijqKWSgEF1puay8N6YwwzmiGFhEoUaQreovzdEfavy` | a throwaway Kora signer used on a local fork; holds nothing |
 
 Unlock one with its name as the second argument, encrypt a new one with `lock-key.sh` (it refuses to overwrite and
