@@ -2,7 +2,8 @@
  * The one identity service per server process, built from the environment:
  *   IDENTITY_PROVIDER=persona|mock, PERSONA_API_KEY, PERSONA_TEMPLATE_ID, PERSONA_WEBHOOK_SECRET (persona),
  *   MOCK_WEBHOOK_SECRET (mock), PERSON_HASH_SECRET, ISSUER_SECRET, GATEKEEPER_SECRET (both JSON keypair arrays),
- *   IDENTITY_DB_PATH (default ./identity.sqlite; ":memory:" for throwaway), IDENTITY_ADMIN_KEY (ban route).
+ *   IDENTITY_DB_PATH (default ./identity.sqlite; ":memory:" for throwaway), IDENTITY_ADMIN_KEY (ban route),
+ *   RECOVERY_SECRET (optional JSON keypair: the pool's recovery authority, enables wallet recovery proposals).
  */
 import { createKeyPairSignerFromBytes, createSolanaRpc, type Address } from "@solana/kit";
 import { GATEKEEPER_NETWORK, RPC_URL } from "../config";
@@ -33,6 +34,9 @@ async function build(): Promise<Bundle> {
   const dbPath = process.env.IDENTITY_DB_PATH?.trim() || "./identity.sqlite";
   const store = dbPath === "memory" ? new MemoryStore() : openSqlite(dbPath);
   const issuer = await createKeyPairSignerFromBytes(secretFromEnv("ISSUER_SECRET", process.env.ISSUER_SECRET));
+  const recovery = process.env.RECOVERY_SECRET?.trim()
+    ? await createKeyPairSignerFromBytes(secretFromEnv("RECOVERY_SECRET", process.env.RECOVERY_SECRET))
+    : undefined;
   const network = (GATEKEEPER_NETWORK || "") as Address;
   if (!network) throw new Error("NEXT_PUBLIC_GATEKEEPER_NETWORK is required for the identity service.");
   const gatekeeper = new Gatekeeper({
@@ -45,6 +49,7 @@ async function build(): Promise<Bundle> {
     store,
     gatekeeper,
     issuer,
+    recovery,
     rpc: createSolanaRpc(RPC_URL),
     hashSecret: process.env.PERSON_HASH_SECRET?.trim() ?? "",
     feePayer: serverKoraPayer,

@@ -12,13 +12,23 @@ export const ESCROW_SEED: ReadonlyUint8Array = new Uint8Array([101, 115, 99, 114
 
 export const LOAN_SEED: ReadonlyUint8Array = new Uint8Array([108, 111, 97, 110]);
 
+export const MAX_COOLDOWN_SECONDS: bigint = 31536000n;
+
 export const MAX_GRACE_DAYS: number = 365;
+
+export const MAX_RECOVERY_DELAY_SECONDS: bigint = 2592000n;
+
+export const MAX_REQUEST_TTL_SECONDS: bigint = 7776000n;
 
 export const MAX_TERM_DAYS: number = 3650;
 
 export const MAX_TIMELOCK_SECONDS: bigint = 7776000n;
 
+export const MAX_WINDOW_SECONDS: bigint = 2592000n;
+
 export const MEMBER_SEED: ReadonlyUint8Array = new Uint8Array([109, 101, 109, 98, 101, 114]);
+
+export const MIN_TIMELOCK_SECONDS: bigint = 172800n;
 
 export const PERSON_SEED: ReadonlyUint8Array = new Uint8Array([112, 101, 114, 115, 111, 110]);
 

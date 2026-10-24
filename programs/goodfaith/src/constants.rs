@@ -28,3 +28,16 @@ pub const PERSON_SEED: &[u8] = b"person";
 /// Longest delay a pool may put on its own settings changes and wind-down (90 days).
 #[constant]
 pub const MAX_TIMELOCK_SECONDS: i64 = 90 * 86_400;
+
+/// Once a pool runs with at least this notice period, no scheduled change may take it lower (2 days).
+/// A pool initialised below it is a test pool.
+#[constant]
+pub const MIN_TIMELOCK_SECONDS: i64 = 2 * 86_400;
+#[constant]
+pub const MAX_RECOVERY_DELAY_SECONDS: i64 = 30 * 86_400;
+#[constant]
+pub const MAX_REQUEST_TTL_SECONDS: i64 = 90 * 86_400;
+#[constant]
+pub const MAX_COOLDOWN_SECONDS: i64 = 365 * 86_400;
+#[constant]
+pub const MAX_WINDOW_SECONDS: i64 = 30 * 86_400;

@@ -5,6 +5,7 @@ export const CHIP: Record<LoanState, { text: string; className: string }> = {
   overdue: { text: "Overdue", className: "bg-amber-100 text-amber-900" },
   defaultable: { text: "Past grace", className: "bg-red-100 text-red-900" },
   repaid: { text: "Repaid", className: "bg-stone-100 text-stone-700" },
+  repaid_late: { text: "Repaid late", className: "bg-amber-100 text-amber-900" },
   defaulted: { text: "Defaulted", className: "bg-red-100 text-red-900" },
 };
 

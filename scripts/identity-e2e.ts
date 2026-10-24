@@ -1,12 +1,14 @@
 // The identity issuer end to end against a running app (IDENTITY_PROVIDER=mock) on the Surfpool fork: a wallet proves
 // control, passes the (mock) check, gets a real gateway token on our network, and joins with the issuer-signed
 // transaction the app prepared; a second wallet of the same person moves the membership; declined, out-of-state
-// and banned people are turned away. Run after `npm run e2e` with the app started as in CI (see ci.yml).
+// and banned people are turned away. Wallet recovery is two-step: the app proposes the move (issuer + recovery
+// authority signatures), the old wallet may object during the pool's recovery delay, then the new wallet finalises
+// (or the cranker does). Run after `npm run e2e` with the app started as in CI (see ci.yml).
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createKeyPairSignerFromPrivateKeyBytes, generateKeyPairSigner, getAddressEncoder, getBase64Decoder, getBase64Encoder, getTransactionDecoder, partiallySignTransaction, signBytes, type Address, type KeyPairSigner } from '@solana/kit';
-import { rpc, RPC_URL, setSol } from './lib.ts';
+import { cheat, clockTs, rpc, RPC_URL, setSol } from './lib.ts';
 
 const APP = process.env.APP_URL ?? 'http://127.0.0.1:3100';
 process.env.NEXT_PUBLIC_KORA_URL = `${APP}/api/sponsor`;
@@ -41,10 +43,18 @@ async function start(w: KeyPairSigner, tamper = false) {
   return api<{ inquiryId: string; url: string }>('/api/identity/start', { method: 'POST', body: JSON.stringify({ wallet: w.address, message, signature: getBase64Decoder().decode(sig) }) }, tamper ? 401 : 200);
 }
 const decide = (inquiryId: string, outcome: string, fields: object = MOCK_FIELDS_TX) => api<{ result: string }>('/api/identity/mock', { method: 'POST', body: JSON.stringify({ inquiryId, outcome, fields }) });
-async function finish(w: KeyPairSigner, kind: 'join' | 'rebind') {
+async function finish(w: KeyPairSigner, kind: 'join' | 'rebind', expectKind: PreparedTx['kind']) {
   const prepared = await api<PreparedTx>(`/api/identity/${kind}`, { method: 'POST', body: JSON.stringify({ wallet: w.address }) });
+  assert.equal(prepared.kind, expectKind);
   const decoded = getTransactionDecoder().decode(getBase64Encoder().encode(prepared.transaction));
-  assert.ok(decoded.signatures[pool.issuer], 'issuer signature present');
+  if (expectKind === 'finalize') {
+    assert.equal(prepared.sponsored, false, 'the new wallet pays for its own finalize');
+    assert.equal(prepared.feePayer, w.address);
+    assert.equal(pool.issuer in decoded.signatures, false, 'no issuer signature needed to finalise');
+  } else {
+    assert.ok(decoded.signatures[pool.issuer], 'issuer signature present');
+    if (expectKind === 'propose') assert.ok(decoded.signatures[pool.recoveryAuthority], 'recovery authority signature present');
+  }
   assert.equal(decoded.signatures[w.address], null, 'wallet signature still missing');
   const signed = await partiallySignTransaction([w.keyPair], decoded);
   // The proxy's per-client limiter may still be drained by kora-e2e's burst test; wait it out like a patient user.
@@ -81,13 +91,13 @@ assert.equal(st.person?.onChain, false);
 const tokenW1 = await gatewayTokenAddress(w1.address, pool.gatekeeperNetwork);
 const tokenInfo = await rpc.getAccountInfo(tokenW1, { encoding: 'base64' }).send();
 assert.ok(tokenInfo.value, 'gateway token issued on chain');
-const j1 = await finish(w1, 'join');
+const j1 = await finish(w1, 'join', 'register');
 const m1 = await prog.fetchMember(txRpc, pool.address, w1.address);
 assert.ok(m1 && !m1.retired && !m1.ineligible, 'member on chain');
 assert.equal((await status(w1.address)).next, 'done');
 row('verify + join', `inquiry ${s1.inquiryId}`, `pass ${tokenW1.slice(0, 6)}.. issued by the gateway program`, `register_member ${j1.prepared.sponsored ? 'sponsored by Kora' : 'paid by the wallet'}`, `sig ${j1.sig.slice(0, 8)}..`);
 
-// ---------- the same person, new wallet: the membership moves ----------
+// ---------- the same person, new wallet: the membership moves after the recovery delay ----------
 // w2's seed is kept so cranker-e2e can borrow with this member later (test keys only).
 const w2Seed = crypto.getRandomValues(new Uint8Array(32));
 const w2 = await createKeyPairSignerFromPrivateKeyBytes(w2Seed);
@@ -95,17 +105,43 @@ await setSol(w2.address, 1_000_000_000n);
 const s2 = await start(w2);
 assert.equal((await decide(s2.inquiryId, 'approved')).result, 'issued');
 st = await status(w2.address);
-assert.equal(st.next, 'rebind');
+assert.equal(st.next, 'recover');
 assert.equal(st.person?.currentWallet, w1.address);
 await api('/api/identity/join', { method: 'POST', body: JSON.stringify({ wallet: w2.address }) }, 409);
-const r2 = await finish(w2, 'rebind');
+const r2 = await finish(w2, 'rebind', 'propose');
+st = await status(w2.address);
+assert.equal(st.next, 'pending');
+assert.equal(st.person?.pendingWallet, w2.address);
+assert.ok(st.person!.pendingWalletAt >= (await clockTs()) + Number(pool.recoveryDelaySeconds) - 120, 'finalise after the pool delay');
+await api('/api/identity/rebind', { method: 'POST', body: JSON.stringify({ wallet: w2.address }) }, 409); // not yet
+assert.equal((await status(w1.address)).next, 'done', 'the old wallet still works during the delay');
+assert.equal((await prog.fetchMember(txRpc, pool.address, w2.address)), null, 'nothing moved yet');
+await cheat('surfnet_timeTravel', [{ absoluteTimestamp: (st.person!.pendingWalletAt + 60) * 1000 }]);
+await new Promise((r) => setTimeout(r, 1500));
+assert.equal((await status(w2.address)).next, 'finalize');
+const f2 = await finish(w2, 'rebind', 'finalize');
 const [m1b, m2] = await Promise.all([prog.fetchMember(txRpc, pool.address, w1.address), prog.fetchMember(txRpc, pool.address, w2.address)]);
 assert.equal(m1b?.retired, true);
 assert.equal(m2?.retired, false);
 assert.equal(m2?.person, m1!.person, 'same person');
 assert.equal((await status(w1.address)).next, 'blocked');
 assert.equal((await status(w2.address)).next, 'done');
-row('lost keys: verify again + move', `rebind_wallet ${r2.prepared.sponsored ? 'sponsored' : 'wallet-paid'}`, `old wallet retired, new wallet linked to person ${m2!.person.slice(0, 6)}..`);
+row('lost keys: verify again + recover', `propose_rebind ${r2.prepared.sponsored ? 'sponsored' : 'wallet-paid'} (issuer + recovery signatures)`, `after the ${pool.recoveryDelaySeconds}s delay: finalize_rebind by the new wallet (${f2.sig.slice(0, 8)}..)`, `old wallet retired, new wallet linked to person ${m2!.person.slice(0, 6)}..`);
+
+// a further recovery (to w8) is proposed and left pending: cranker-e2e finalises it once the delay has passed
+const w8 = await generateKeyPairSigner();
+await setSol(w8.address, 1_000_000_000n);
+const s8 = await start(w8);
+assert.equal((await decide(s8.inquiryId, 'approved')).result, 'issued');
+assert.equal((await status(w8.address)).next, 'recover');
+await finish(w8, 'rebind', 'propose');
+assert.equal((await status(w8.address)).next, 'pending');
+const w9 = await generateKeyPairSigner();
+const s9 = await start(w9);
+assert.equal((await decide(s9.inquiryId, 'approved')).result, 'issued');
+assert.equal((await status(w9.address)).next, 'blocked', 'one recovery at a time');
+await api('/api/identity/rebind', { method: 'POST', body: JSON.stringify({ wallet: w9.address }) }, 409);
+row('second recovery proposed (left pending for the cranker)', `w8 pending`, 'w9 same person: blocked while another move is pending');
 
 // ---------- declined and out-of-state ----------
 const w3 = await generateKeyPairSigner();
@@ -127,7 +163,7 @@ const w6 = await generateKeyPairSigner();
 await setSol(w6.address, 1_000_000_000n);
 const s6 = await start(w6);
 assert.equal((await decide(s6.inquiryId, 'approved', other)).result, 'issued');
-await finish(w6, 'join');
+await finish(w6, 'join', 'register');
 await api('/api/identity/ban', { method: 'POST', body: JSON.stringify({ wallet: w6.address }) }, 401);
 const ban = await api<{ banned: boolean; revoked: string[] }>('/api/identity/ban', { method: 'POST', headers: { 'x-identity-admin-key': adminKey }, body: JSON.stringify({ wallet: w6.address }) });
 assert.equal(ban.banned, true);
@@ -142,7 +178,7 @@ assert.equal((await status(w5.address)).reason, 'This person can no longer use G
 row('ban', 'without the admin key: 401', `pass of ${w6.address.slice(0, 6)}.. revoked on chain (state=2)`, 'same person, new wallet: ineligible');
 // hand the still-eligible member to cranker-e2e (test keys only)
 const here = path.dirname(new URL(import.meta.url).pathname);
-fs.writeFileSync(path.join(here, 'identity-e2e-result.json'), JSON.stringify({ member: w2.address, memberSecret: [...w2Seed, ...getAddressEncoder().encode(w2.address)] }));
+fs.writeFileSync(path.join(here, 'identity-e2e-result.json'), JSON.stringify({ member: w2.address, memberSecret: [...w2Seed, ...getAddressEncoder().encode(w2.address)], pendingWallet: w8.address }));
 
 console.log('\n' + ['step', 'detail...'].join(' | ')); for (const r of rows) console.log(r.join(' | '));
 console.log('\nIDENTITY E2E PASS');

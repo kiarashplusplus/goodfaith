@@ -3,7 +3,7 @@ import type { Loan } from "./program";
 /** Pure helpers for where a loan stands in time. Mirrors the program: a loan can be marked as defaulted only when now > due_at + grace. */
 export const SECONDS_PER_DAY = 86_400n;
 
-export type LoanState = "open" | "overdue" | "defaultable" | "repaid" | "defaulted";
+export type LoanState = "open" | "overdue" | "defaultable" | "repaid" | "repaid_late" | "defaulted";
 
 export type LoanTiming = {
   state: LoanState;
@@ -24,6 +24,7 @@ export function loanTiming(loan: Pick<Loan, "status" | "dueAt" | "graceDays">, n
   const deadline = loan.dueAt + BigInt(loan.graceDays) * SECONDS_PER_DAY;
   const base = { deadline, daysUntilDue: 0, graceDaysLeft: 0 };
   if (loan.status === "Repaid") return { ...base, state: "repaid", label: "Repaid in full." };
+  if (loan.status === "RepaidLate") return { ...base, state: "repaid_late", label: "Repaid in full, after the grace period." };
   if (loan.status === "Defaulted") return { ...base, state: "defaulted", label: "Defaulted." };
   if (nowSec <= 0n) return { ...base, state: "open", label: "" };
 

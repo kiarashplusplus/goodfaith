@@ -96,8 +96,8 @@ export async function issuer(): Promise<KeyPairSigner> {
 }
 
 const hashes = new Map<Address, Uint8Array>();
-/** A stable 32-byte person hash per wallet for the suite (the issuer service derives real ones from verified ID fields). */
-export function personHashOf(wallet: Address): Uint8Array {
+/** A stable opaque 32-byte person id per wallet for the suite (the issuer service assigns real ones). */
+export function personIdOf(wallet: Address): Uint8Array {
   let h = hashes.get(wallet);
   if (!h) {
     h = crypto.getRandomValues(new Uint8Array(32));

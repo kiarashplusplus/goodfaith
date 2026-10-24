@@ -47,23 +47,17 @@ pub struct Repay<'info> {
         token::authority = payer,
     )]
     pub payer_token: Box<InterfaceAccount<'info, TokenAccount>>,
-    // The escrow goes back to the co-signer's *current* wallet, so a replaced wallet is not paid.
-    // May equal `payer_token` when the co-signer repays; the two transfers run in order.
-    #[account(
-        mut,
-        dup,
-        token::mint = mint,
-        token::authority = cosigner_person.wallet,
-    )]
-    pub cosigner_token: Box<InterfaceAccount<'info, TokenAccount>>,
-    /// CHECK: receives the escrow account rent; must match `loan.rent_payer`.
+    /// CHECK: receives the escrow account rent when the escrow is empty; must match `loan.rent_payer`.
     #[account(mut, address = loan.rent_payer)]
     pub rent_payer: UncheckedAccount<'info>,
     pub token_program: Interface<'info, TokenInterface>,
 }
 
+/// Repayment never touches a co-signer's token account: on the closing payment the escrow is marked as
+/// owed and waits for `claim_escrow`, so a frozen or closed account can never block a loan from closing.
 pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
     let a = &mut ctx.accounts;
+    let now = Clock::get()?.unix_timestamp;
     require!(amount > 0, GoodFaithError::AmountZero);
     let owed = a
         .loan
@@ -98,14 +92,34 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
         .checked_add(amount)
         .ok_or(GoodFaithError::MathOverflow)?;
     let fully_repaid = a.loan.repaid == a.loan.principal;
+    let mut late = false;
+    let mut refund_pending = 0;
 
     if fully_repaid {
-        a.loan.status = LoanStatus::Repaid;
+        let deadline = a.loan.deadline().ok_or(GoodFaithError::MathOverflow)?;
+        late = now > deadline;
+        a.loan.status = if late {
+            LoanStatus::RepaidLate
+        } else {
+            LoanStatus::Repaid
+        };
+        a.loan.closed_at = now;
         a.borrower_person.active_loan = None;
+        if late {
+            let secs = a.pool.late_ban_seconds;
+            a.borrower_person.bar(now, secs);
+        } else {
+            a.borrower_person.completed_loans = a.borrower_person.completed_loans.saturating_add(1);
+        }
         a.cosigner_person.active_guarantees = a
             .cosigner_person
             .active_guarantees
             .checked_sub(1)
+            .ok_or(GoodFaithError::MathOverflow)?;
+        a.cosigner_person.active_guarantee_amount = a
+            .cosigner_person
+            .active_guarantee_amount
+            .checked_sub(a.loan.principal)
             .ok_or(GoodFaithError::MathOverflow)?;
         a.pool.active_loans = a
             .pool
@@ -113,33 +127,27 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
             .checked_sub(1)
             .ok_or(GoodFaithError::MathOverflow)?;
 
-        let mint_key = a.mint.key();
-        let seeds: &[&[u8]] = &[POOL_SEED, mint_key.as_ref(), &[a.pool.bump]];
-        if a.escrow.amount > 0 {
-            token_interface::transfer_checked(
-                CpiContext::new_with_signer(
-                    a.token_program.key(),
-                    TransferChecked {
-                        from: a.escrow.to_account_info(),
-                        mint: a.mint.to_account_info(),
-                        to: a.cosigner_token.to_account_info(),
-                        authority: a.pool.to_account_info(),
-                    },
-                    &[seeds],
-                ),
-                a.escrow.amount,
-                decimals,
-            )?;
+        refund_pending = a.escrow.amount;
+        if refund_pending > 0 {
+            a.loan.refund_pending = refund_pending;
+            a.pool.pending_claims = a
+                .pool
+                .pending_claims
+                .checked_add(refund_pending)
+                .ok_or(GoodFaithError::MathOverflow)?;
+        } else {
+            let mint_key = a.mint.key();
+            let seeds: &[&[u8]] = &[POOL_SEED, mint_key.as_ref(), &[a.pool.bump]];
+            token_interface::close_account(CpiContext::new_with_signer(
+                a.token_program.key(),
+                CloseAccount {
+                    account: a.escrow.to_account_info(),
+                    destination: a.rent_payer.to_account_info(),
+                    authority: a.pool.to_account_info(),
+                },
+                &[seeds],
+            ))?;
         }
-        token_interface::close_account(CpiContext::new_with_signer(
-            a.token_program.key(),
-            CloseAccount {
-                account: a.escrow.to_account_info(),
-                destination: a.rent_payer.to_account_info(),
-                authority: a.pool.to_account_info(),
-            },
-            &[seeds],
-        ))?;
     }
 
     emit!(Repaid {
@@ -152,6 +160,8 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
         amount,
         total_repaid: a.loan.repaid,
         fully_repaid,
+        late,
+        refund_pending,
     });
     Ok(())
 }

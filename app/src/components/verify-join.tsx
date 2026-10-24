@@ -13,7 +13,8 @@ import { useRun } from "@/lib/use-run";
 /**
  * Step 1: a one-time identity check with the fund's verification service (government ID, Texas, 18+).
  * Step 2: join. The service co-signs the on-chain registration as the fund's issuer: one verified person,
- * one wallet. A person who lost their keys verifies again and moves their membership to the new wallet.
+ * one wallet. A person who lost their keys verifies again and asks to move their membership to the new wallet;
+ * the move completes after the fund's recovery delay unless the old wallet objects.
  */
 export function VerifyAndJoin({ wallet }: { wallet: Address }) {
   const { rpc, signer, client } = useApp();
@@ -98,15 +99,21 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
       <Card title="2. Join the fund">
         {s.next === "done" ? (
           <Notice tone="ok">You&apos;re a member.{member.data?.ineligible && " Your membership is currently on hold."}</Notice>
-        ) : s.next === "blocked" && s.member?.retired ? (
+        ) : s.next === "blocked" && (s.member?.retired || s.person?.pendingWallet) ? (
           <Notice tone="warn">{s.reason}</Notice>
-        ) : s.next === "join" || s.next === "rebind" ? (
+        ) : s.next === "pending" ? (
+          <Notice tone="info">{s.reason}</Notice>
+        ) : s.next === "join" || s.next === "recover" || s.next === "finalize" ? (
           <>
             <p className="mb-3 text-sm text-stone-600">
               {s.next === "join"
                 ? "This links your wallet to your verified membership. "
-                : "You already have a membership on another wallet. This moves it here; the old wallet stops working for Good Faith. "}
-              {sponsor.available ? "No cost to you." : "It creates small accounts; about 0.003 SOL of rent is paid by you."}
+                : s.next === "recover"
+                  ? "You already have a membership on another wallet. This asks to move it here. The move takes effect after a waiting period during which your old wallet can object; the old wallet then stops working for Good Faith. "
+                  : "The waiting period is over. This completes the move of your membership to this wallet. "}
+              {s.next !== "finalize" && sponsor.available
+                ? "No cost to you."
+                : "It creates small accounts; about 0.003 SOL of rent is paid by you."}
             </p>
             {s.next === "join" ? (
               <Button disabled={!signer || busy} onClick={() => finish(prepareJoin)}>
@@ -114,14 +121,20 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
               </Button>
             ) : (
               <GhostButton disabled={!signer || busy} onClick={() => finish(prepareRebind)}>
-                {busy ? "Moving..." : "Move my membership to this wallet"}
+                {busy ? "Sending..." : s.next === "recover" ? "Move my membership to this wallet" : "Complete the move"}
               </GhostButton>
             )}
             <div className="mt-3">
               <TxStatus
                 error={error}
                 sig={result}
-                label={s.next === "join" ? "Welcome. You can borrow or co-sign now." : "Your membership now lives on this wallet."}
+                label={
+                  s.next === "join"
+                    ? "Welcome. You can borrow or co-sign now."
+                    : s.next === "recover"
+                      ? "The move is proposed. Come back once the waiting period has passed."
+                      : "Your membership now lives on this wallet."
+                }
               />
             </div>
           </>

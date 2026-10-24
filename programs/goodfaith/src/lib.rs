@@ -69,12 +69,36 @@ pub mod goodfaith {
         instructions::donate::donate_handler(ctx, amount)
     }
 
-    pub fn register_member(ctx: Context<RegisterMember>, person_hash: [u8; 32]) -> Result<()> {
-        instructions::register_member::register_member_handler(ctx, person_hash)
+    pub fn register_member(ctx: Context<RegisterMember>, person_id: [u8; 32]) -> Result<()> {
+        instructions::register_member::register_member_handler(ctx, person_id)
     }
 
-    pub fn rebind_wallet(ctx: Context<RebindWallet>) -> Result<()> {
-        instructions::rebind_wallet::rebind_wallet_handler(ctx)
+    pub fn propose_rebind(ctx: Context<ProposeRebind>) -> Result<()> {
+        instructions::recovery::propose_rebind_handler(ctx)
+    }
+
+    pub fn veto_rebind(ctx: Context<VetoRebind>) -> Result<()> {
+        instructions::recovery::veto_rebind_handler(ctx)
+    }
+
+    pub fn finalize_rebind(ctx: Context<FinalizeRebind>) -> Result<()> {
+        instructions::recovery::finalize_rebind_handler(ctx)
+    }
+
+    pub fn close_expired_request(ctx: Context<CloseExpiredRequest>) -> Result<()> {
+        instructions::cancel_request::close_expired_request_handler(ctx)
+    }
+
+    pub fn claim_escrow(ctx: Context<ClaimEscrow>) -> Result<()> {
+        instructions::claim::claim_escrow_handler(ctx)
+    }
+
+    pub fn pause_lending(ctx: Context<PauseLending>) -> Result<()> {
+        instructions::update_pool::pause_lending_handler(ctx)
+    }
+
+    pub fn resume_lending(ctx: Context<UpdatePool>) -> Result<()> {
+        instructions::update_pool::resume_lending_handler(ctx)
     }
 
     pub fn request_loan(

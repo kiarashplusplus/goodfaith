@@ -5,7 +5,7 @@ import { createNoopSigner, type Address } from "@solana/kit";
 import { getCreateAssociatedTokenIdempotentInstruction } from "@solana-program/token";
 import { Button, GhostButton, Notice, TxStatus } from "./ui";
 import { useApp, useNow } from "@/lib/hooks";
-import { cosignerWalletOf, markDefaultIx, type Loan, type Pool } from "@/lib/program";
+import { claimEscrowIx, cosignerWalletOf, markDefaultIx, type Loan, type Pool } from "@/lib/program";
 import { loanTiming } from "@/lib/loan-status";
 import { CHIP } from "./status-chip";
 import { formatUsdc } from "@/lib/format";
@@ -84,6 +84,33 @@ function LoanRow({
         <div className="flex items-center gap-2">
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${chip.className}`}>{chip.text}</span>
           {loan.status === "Active" && <GhostButton onClick={() => onPay(loan)}>Pay</GhostButton>}
+          {loan.status !== "Active" && loan.refundPending > 0n && !result && (
+            <GhostButton
+              disabled={busy || !signer}
+              onClick={() =>
+                run(async () => {
+                  // The deposit waits in escrow until someone claims it for the co-signer's current wallet.
+                  const sig = await sendInstructions(rpc, signer!, async (feePayer) => {
+                    const cosignerWallet = await cosignerWalletOf(rpc, loan);
+                    const { ix, cosignerToken } = await claimEscrowIx({ claimer: wallet, pool, loan, cosignerWallet });
+                    return [
+                      getCreateAssociatedTokenIdempotentInstruction({
+                        payer: createNoopSigner(feePayer),
+                        ata: cosignerToken,
+                        owner: cosignerWallet,
+                        mint: pool.mint,
+                      }),
+                      ix,
+                    ];
+                  });
+                  onChanged();
+                  return sig;
+                })
+              }
+            >
+              {busy ? "Working..." : `Release ${formatUsdc(loan.refundPending)} escrow`}
+            </GhostButton>
+          )}
           {t.state === "defaultable" && !result && (
             <GhostButton onClick={() => setConfirming((c) => !c)} aria-expanded={confirming}>
               Mark as defaulted
@@ -95,26 +122,15 @@ function LoanRow({
         <div className="mt-3">
           <Notice tone="warn">
             <strong>This is final.</strong> The co-signer&apos;s escrow ({formatUsdc(loan.escrowed)}) goes to the fund to cover what is
-            still owed ({formatUsdc(owed)}). Anything left over goes back to the co-signer. The borrower loses their membership; the
-            co-signer keeps theirs only if the escrow covers everything owed. Anyone can do this once the grace period has passed.
+            still owed ({formatUsdc(owed)}). Anything left over waits for the co-signer to collect. The borrower is barred for the
+            fund&apos;s default period; the co-signer only if the escrow did not cover everything owed. Anyone can do this once the grace
+            period has passed.
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 disabled={busy || !signer}
                 onClick={() =>
                   run(async () => {
-                    const sig = await sendInstructions(rpc, signer!, async (feePayer) => {
-                      const cosignerWallet = await cosignerWalletOf(rpc, loan);
-                      const { ix, cosignerToken } = await markDefaultIx({ caller: wallet, pool, loan, cosignerWallet });
-                      return [
-                        getCreateAssociatedTokenIdempotentInstruction({
-                          payer: createNoopSigner(feePayer),
-                          ata: cosignerToken,
-                          owner: cosignerWallet,
-                          mint: pool.mint,
-                        }),
-                        ix,
-                      ];
-                    });
+                    const sig = await sendInstructions(rpc, signer!, [await markDefaultIx({ caller: wallet, pool, loan })]);
                     onChanged();
                     return sig;
                   })
@@ -130,7 +146,7 @@ function LoanRow({
         </div>
       )}
       <div className="mt-2">
-        <TxStatus error={error} sig={result} label="Marked as defaulted." />
+        <TxStatus error={error} sig={result} label="Done." />
       </div>
     </li>
   );

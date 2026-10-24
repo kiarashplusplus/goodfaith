@@ -16,14 +16,14 @@ function authorised(request: NextRequest): boolean {
 export async function POST(request: NextRequest): Promise<Response> {
   if (!authorised(request)) return json({ error: "Not authorised." }, 401);
   const body = await readJson(request);
-  const hash = body?.personHash;
+  const id = body?.personId;
   const wallet = typeof body?.wallet === "string" ? body.wallet : null;
-  if ((typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) && !wallet)
-    return json({ error: "personHash (64 hex characters) or wallet is required." }, 400);
+  if ((typeof id !== "string" || !/^[0-9a-f]{64}$/.test(id)) && !wallet)
+    return json({ error: "personId (64 hex characters) or wallet is required." }, 400);
   return guarded(async () => {
     const { service, store } = await identity();
-    const h = typeof hash === "string" && hash ? hash : store.getWallet(wallet!)?.personHash;
-    if (!h) return json({ banned: false, revoked: [], error: "No verified person for that wallet." }, 404);
-    return json(await service.ban(h));
+    const p = typeof id === "string" && id ? id : store.getWallet(wallet!)?.personId;
+    if (!p) return json({ banned: false, revoked: [], error: "No verified person for that wallet." }, 404);
+    return json(await service.ban(p));
   });
 }

@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { assertAccountExists, assertAccountsExist, combineCodec, decodeAccount, fetchEncodedAccount, fetchEncodedAccounts, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getI64Decoder, getI64Encoder, getOptionDecoder, getOptionEncoder, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, transformEncoder, type Account, type Address, type ClientWithRpc, type Codec, type Decoder, type EncodedAccount, type Encoder, type FetchAccountConfig, type FetchAccountsConfig, type GetAccountInfoApi, type GetMultipleAccountsApi, type HasAddress, type MaybeAccount, type MaybeEncodedAccount, type Option, type OptionOrNullable, type ReadonlyUint8Array } from '@solana/kit';
+import { assertAccountExists, assertAccountsExist, combineCodec, decodeAccount, fetchEncodedAccount, fetchEncodedAccounts, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getI64Decoder, getI64Encoder, getOptionDecoder, getOptionEncoder, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, transformEncoder, type Account, type Address, type ClientWithRpc, type Codec, type Decoder, type EncodedAccount, type Encoder, type FetchAccountConfig, type FetchAccountsConfig, type GetAccountInfoApi, type GetMultipleAccountsApi, type HasAddress, type MaybeAccount, type MaybeEncodedAccount, type Option, type OptionOrNullable, type ReadonlyUint8Array } from '@solana/kit';
 import { getPoolParamsDecoder, getPoolParamsEncoder, type PoolParams, type PoolParamsArgs } from '../types';
 
 export const POOL_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([241, 154, 109, 4, 17, 177, 109, 188]);
@@ -16,7 +16,7 @@ export function getPoolDiscriminatorBytes(): ReadonlyUint8Array { return fixEnco
 export type Pool = { discriminator: ReadonlyUint8Array; authority: Option<Address>; mint: Address; vault: Address; gatekeeperNetwork: Address; maxLoan: bigint; maxTermDays: number; graceDays: number; maxGuaranteesPerMember: number; cosignerEscrowBps: number; loanCount: bigint; totalDonated: bigint; totalLent: bigint; totalRepaid: bigint; totalRecovered: bigint; totalLost: bigint; bump: number; vaultBump: number; 
 /** Key named by `propose_authority`; becomes the authority once it calls `accept_authority`. */
 pendingAuthority: Option<Address>; 
-/** Key that vouches for a person at registration and wallet replacement. The zero key means suspended. */
+/** Key that vouches for a person at registration and co-signs a wallet recovery. The zero key means suspended. */
 issuer: Address; 
 /** Delay between scheduling a settings change (or a wind-down) and it taking effect. */
 timelockSeconds: bigint; 
@@ -27,12 +27,20 @@ windDownAt: Option<bigint>;
 /** Token account of the pool mint that receives the vault balance once every loan is closed. */
 successor: Option<Address>; 
 /** Loans currently Active. */
-activeLoans: bigint; totalSwept: bigint;  };
+activeLoans: bigint; totalSwept: bigint; 
+/** Second key, besides the issuer, that must sign a wallet recovery. */
+recoveryAuthority: Address; 
+/** Key that may stop new lending at once (the authority can too). */
+pauseAuthority: Address; paused: boolean; 
+/** Rolling disbursement window: principal lent since `window_start`. */
+windowStart: bigint; windowDisbursed: bigint; 
+/** Escrow owed to co-signers of closed loans, waiting in escrow accounts to be claimed. */
+pendingClaims: bigint; recoveryDelaySeconds: bigint; requestTtlSeconds: bigint; firstLoanCap: bigint; loanCapStep: bigint; cooldownSeconds: bigint; maxExposurePerPerson: bigint; disbursementWindowSeconds: bigint; disbursementCapPerWindow: bigint; defaultBanSeconds: bigint; lateBanSeconds: bigint; cosignerBanSeconds: bigint;  };
 
 export type PoolArgs = { authority: OptionOrNullable<Address | HasAddress>; mint: Address | HasAddress; vault: Address | HasAddress; gatekeeperNetwork: Address | HasAddress; maxLoan: number | bigint; maxTermDays: number; graceDays: number; maxGuaranteesPerMember: number; cosignerEscrowBps: number; loanCount: number | bigint; totalDonated: number | bigint; totalLent: number | bigint; totalRepaid: number | bigint; totalRecovered: number | bigint; totalLost: number | bigint; bump: number; vaultBump: number; 
 /** Key named by `propose_authority`; becomes the authority once it calls `accept_authority`. */
 pendingAuthority: OptionOrNullable<Address | HasAddress>; 
-/** Key that vouches for a person at registration and wallet replacement. The zero key means suspended. */
+/** Key that vouches for a person at registration and co-signs a wallet recovery. The zero key means suspended. */
 issuer: Address | HasAddress; 
 /** Delay between scheduling a settings change (or a wind-down) and it taking effect. */
 timelockSeconds: number | bigint; 
@@ -43,16 +51,24 @@ windDownAt: OptionOrNullable<number | bigint>;
 /** Token account of the pool mint that receives the vault balance once every loan is closed. */
 successor: OptionOrNullable<Address | HasAddress>; 
 /** Loans currently Active. */
-activeLoans: number | bigint; totalSwept: number | bigint;  };
+activeLoans: number | bigint; totalSwept: number | bigint; 
+/** Second key, besides the issuer, that must sign a wallet recovery. */
+recoveryAuthority: Address | HasAddress; 
+/** Key that may stop new lending at once (the authority can too). */
+pauseAuthority: Address | HasAddress; paused: boolean; 
+/** Rolling disbursement window: principal lent since `window_start`. */
+windowStart: number | bigint; windowDisbursed: number | bigint; 
+/** Escrow owed to co-signers of closed loans, waiting in escrow accounts to be claimed. */
+pendingClaims: number | bigint; recoveryDelaySeconds: number | bigint; requestTtlSeconds: number | bigint; firstLoanCap: number | bigint; loanCapStep: number | bigint; cooldownSeconds: number | bigint; maxExposurePerPerson: number | bigint; disbursementWindowSeconds: number | bigint; disbursementCapPerWindow: number | bigint; defaultBanSeconds: number | bigint; lateBanSeconds: number | bigint; cosignerBanSeconds: number | bigint;  };
 
 /** Gets the encoder for {@link PoolArgs} account data. */
 export function getPoolEncoder(): Encoder<PoolArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['authority', getOptionEncoder(getAddressEncoder())], ['mint', getAddressEncoder()], ['vault', getAddressEncoder()], ['gatekeeperNetwork', getAddressEncoder()], ['maxLoan', getU64Encoder()], ['maxTermDays', getU16Encoder()], ['graceDays', getU16Encoder()], ['maxGuaranteesPerMember', getU8Encoder()], ['cosignerEscrowBps', getU16Encoder()], ['loanCount', getU64Encoder()], ['totalDonated', getU64Encoder()], ['totalLent', getU64Encoder()], ['totalRepaid', getU64Encoder()], ['totalRecovered', getU64Encoder()], ['totalLost', getU64Encoder()], ['bump', getU8Encoder()], ['vaultBump', getU8Encoder()], ['pendingAuthority', getOptionEncoder(getAddressEncoder())], ['issuer', getAddressEncoder()], ['timelockSeconds', getI64Encoder()], ['pendingParams', getOptionEncoder(getPoolParamsEncoder())], ['paramsEffectiveAt', getI64Encoder()], ['windDownAt', getOptionEncoder(getI64Encoder())], ['successor', getOptionEncoder(getAddressEncoder())], ['activeLoans', getU64Encoder()], ['totalSwept', getU64Encoder()]]), (value) => ({ ...value, discriminator: POOL_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['authority', getOptionEncoder(getAddressEncoder())], ['mint', getAddressEncoder()], ['vault', getAddressEncoder()], ['gatekeeperNetwork', getAddressEncoder()], ['maxLoan', getU64Encoder()], ['maxTermDays', getU16Encoder()], ['graceDays', getU16Encoder()], ['maxGuaranteesPerMember', getU8Encoder()], ['cosignerEscrowBps', getU16Encoder()], ['loanCount', getU64Encoder()], ['totalDonated', getU64Encoder()], ['totalLent', getU64Encoder()], ['totalRepaid', getU64Encoder()], ['totalRecovered', getU64Encoder()], ['totalLost', getU64Encoder()], ['bump', getU8Encoder()], ['vaultBump', getU8Encoder()], ['pendingAuthority', getOptionEncoder(getAddressEncoder())], ['issuer', getAddressEncoder()], ['timelockSeconds', getI64Encoder()], ['pendingParams', getOptionEncoder(getPoolParamsEncoder())], ['paramsEffectiveAt', getI64Encoder()], ['windDownAt', getOptionEncoder(getI64Encoder())], ['successor', getOptionEncoder(getAddressEncoder())], ['activeLoans', getU64Encoder()], ['totalSwept', getU64Encoder()], ['recoveryAuthority', getAddressEncoder()], ['pauseAuthority', getAddressEncoder()], ['paused', getBooleanEncoder()], ['windowStart', getI64Encoder()], ['windowDisbursed', getU64Encoder()], ['pendingClaims', getU64Encoder()], ['recoveryDelaySeconds', getI64Encoder()], ['requestTtlSeconds', getI64Encoder()], ['firstLoanCap', getU64Encoder()], ['loanCapStep', getU64Encoder()], ['cooldownSeconds', getI64Encoder()], ['maxExposurePerPerson', getU64Encoder()], ['disbursementWindowSeconds', getI64Encoder()], ['disbursementCapPerWindow', getU64Encoder()], ['defaultBanSeconds', getI64Encoder()], ['lateBanSeconds', getI64Encoder()], ['cosignerBanSeconds', getI64Encoder()]]), (value) => ({ ...value, discriminator: POOL_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Pool} account data. */
 export function getPoolDecoder(): Decoder<Pool> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['authority', getOptionDecoder(getAddressDecoder())], ['mint', getAddressDecoder()], ['vault', getAddressDecoder()], ['gatekeeperNetwork', getAddressDecoder()], ['maxLoan', getU64Decoder()], ['maxTermDays', getU16Decoder()], ['graceDays', getU16Decoder()], ['maxGuaranteesPerMember', getU8Decoder()], ['cosignerEscrowBps', getU16Decoder()], ['loanCount', getU64Decoder()], ['totalDonated', getU64Decoder()], ['totalLent', getU64Decoder()], ['totalRepaid', getU64Decoder()], ['totalRecovered', getU64Decoder()], ['totalLost', getU64Decoder()], ['bump', getU8Decoder()], ['vaultBump', getU8Decoder()], ['pendingAuthority', getOptionDecoder(getAddressDecoder())], ['issuer', getAddressDecoder()], ['timelockSeconds', getI64Decoder()], ['pendingParams', getOptionDecoder(getPoolParamsDecoder())], ['paramsEffectiveAt', getI64Decoder()], ['windDownAt', getOptionDecoder(getI64Decoder())], ['successor', getOptionDecoder(getAddressDecoder())], ['activeLoans', getU64Decoder()], ['totalSwept', getU64Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['authority', getOptionDecoder(getAddressDecoder())], ['mint', getAddressDecoder()], ['vault', getAddressDecoder()], ['gatekeeperNetwork', getAddressDecoder()], ['maxLoan', getU64Decoder()], ['maxTermDays', getU16Decoder()], ['graceDays', getU16Decoder()], ['maxGuaranteesPerMember', getU8Decoder()], ['cosignerEscrowBps', getU16Decoder()], ['loanCount', getU64Decoder()], ['totalDonated', getU64Decoder()], ['totalLent', getU64Decoder()], ['totalRepaid', getU64Decoder()], ['totalRecovered', getU64Decoder()], ['totalLost', getU64Decoder()], ['bump', getU8Decoder()], ['vaultBump', getU8Decoder()], ['pendingAuthority', getOptionDecoder(getAddressDecoder())], ['issuer', getAddressDecoder()], ['timelockSeconds', getI64Decoder()], ['pendingParams', getOptionDecoder(getPoolParamsDecoder())], ['paramsEffectiveAt', getI64Decoder()], ['windDownAt', getOptionDecoder(getI64Decoder())], ['successor', getOptionDecoder(getAddressDecoder())], ['activeLoans', getU64Decoder()], ['totalSwept', getU64Decoder()], ['recoveryAuthority', getAddressDecoder()], ['pauseAuthority', getAddressDecoder()], ['paused', getBooleanDecoder()], ['windowStart', getI64Decoder()], ['windowDisbursed', getU64Decoder()], ['pendingClaims', getU64Decoder()], ['recoveryDelaySeconds', getI64Decoder()], ['requestTtlSeconds', getI64Decoder()], ['firstLoanCap', getU64Decoder()], ['loanCapStep', getU64Decoder()], ['cooldownSeconds', getI64Decoder()], ['maxExposurePerPerson', getU64Decoder()], ['disbursementWindowSeconds', getI64Decoder()], ['disbursementCapPerWindow', getU64Decoder()], ['defaultBanSeconds', getI64Decoder()], ['lateBanSeconds', getI64Decoder()], ['cosignerBanSeconds', getI64Decoder()]]);
 }
 
 /** Gets the codec for {@link Pool} account data. */

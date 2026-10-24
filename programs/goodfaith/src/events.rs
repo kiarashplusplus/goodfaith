@@ -53,11 +53,54 @@ pub struct MemberRegistered {
 }
 
 #[event]
+pub struct RebindProposed {
+    pub pool: Pubkey,
+    pub person: Pubkey,
+    pub old_wallet: Pubkey,
+    pub new_wallet: Pubkey,
+    pub effective_at: i64,
+}
+
+#[event]
+pub struct RebindVetoed {
+    pub pool: Pubkey,
+    pub person: Pubkey,
+    pub by: Pubkey,
+}
+
+#[event]
 pub struct WalletRebound {
     pub pool: Pubkey,
     pub person: Pubkey,
     pub old_wallet: Pubkey,
     pub new_wallet: Pubkey,
+}
+
+#[event]
+pub struct LendingPaused {
+    pub pool: Pubkey,
+    pub by: Pubkey,
+}
+
+#[event]
+pub struct LendingResumed {
+    pub pool: Pubkey,
+}
+
+#[event]
+pub struct EscrowClaimed {
+    pub pool: Pubkey,
+    pub loan: Pubkey,
+    pub loan_id: u64,
+    pub to_wallet: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
+pub struct RequestExpiredClosed {
+    pub pool: Pubkey,
+    pub borrower: Pubkey,
+    pub closed_by: Pubkey,
 }
 
 #[event]
@@ -121,6 +164,10 @@ pub struct Repaid {
     pub amount: u64,
     pub total_repaid: u64,
     pub fully_repaid: bool,
+    /// Set on the closing payment when it came after the term and grace period.
+    pub late: bool,
+    /// Escrow now waiting for the co-signer to claim (closing payment only).
+    pub refund_pending: u64,
 }
 
 #[event]
@@ -135,6 +182,8 @@ pub struct LoanDefaulted {
     pub escrow_returned: u64,
     /// False when the escrow covered the whole shortfall: the co-signer keeps their eligibility.
     pub cosigner_barred: bool,
+    pub borrower_ineligible_until: i64,
+    pub cosigner_ineligible_until: i64,
 }
 
 #[event]
@@ -144,6 +193,7 @@ pub struct LoanRequested {
     pub cosigner: Pubkey,
     pub amount: u64,
     pub term_days: u16,
+    pub expires_at: i64,
 }
 
 #[event]

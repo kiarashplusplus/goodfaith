@@ -54,4 +54,30 @@ pub enum GoodFaithError {
     LoansOutstanding,
     #[msg("Successor must be a token account of the pool mint not controlled by the pool")]
     InvalidSuccessor,
+    #[msg("New lending is paused")]
+    Paused,
+    #[msg("The request has expired")]
+    RequestExpired,
+    #[msg("The request has not expired yet")]
+    RequestNotExpired,
+    #[msg("Amount is above this person's current loan cap")]
+    OverPersonalCap,
+    #[msg("This would exceed the person's exposure limit")]
+    OverExposure,
+    #[msg("The fund's lending limit for this period is reached")]
+    OverDisbursementCap,
+    #[msg("Borrower and co-signer already guarantee each other")]
+    ReciprocalGuarantee,
+    #[msg("A wallet recovery is already pending")]
+    RecoveryPending,
+    #[msg("No wallet recovery is pending")]
+    RecoveryNotPending,
+    #[msg("The recovery delay has not elapsed")]
+    RecoveryDelayNotElapsed,
+    #[msg("Nothing to claim")]
+    NothingToClaim,
+    #[msg("The notice period cannot be set below the minimum")]
+    TimelockBelowMinimum,
+    #[msg("The co-signer's open loan must be passed to check for a reciprocal guarantee")]
+    MissingCosignerLoan,
 }

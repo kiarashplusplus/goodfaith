@@ -38,14 +38,14 @@ pub struct CosignLoan<'info> {
     pub request_rent_payer: UncheckedAccount<'info>,
     #[account(
         mut,
-        seeds = [PERSON_SEED, pool.key().as_ref(), borrower_person.person_hash.as_ref()],
+        seeds = [PERSON_SEED, pool.key().as_ref(), borrower_person.person_id.as_ref()],
         bump = borrower_person.bump,
         constraint = borrower_person.wallet == request.borrower @ GoodFaithError::WalletNotBound,
     )]
     pub borrower_person: Box<Account<'info, Person>>,
     #[account(
         mut,
-        seeds = [PERSON_SEED, pool.key().as_ref(), cosigner_person.person_hash.as_ref()],
+        seeds = [PERSON_SEED, pool.key().as_ref(), cosigner_person.person_id.as_ref()],
         bump = cosigner_person.bump,
         constraint = cosigner_person.wallet == cosigner.key() @ GoodFaithError::WalletNotBound,
     )]
@@ -86,6 +86,8 @@ pub struct CosignLoan<'info> {
     pub cosigner_gateway_token: UncheckedAccount<'info>,
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
+    /// The co-signer's own open loan, when they have one: its co-signer must not be this borrower.
+    pub cosigner_active_loan: Option<Box<Account<'info, Loan>>>,
 }
 
 pub fn cosign_loan_handler(
@@ -100,7 +102,9 @@ pub fn cosign_loan_handler(
     let amount = a.request.amount;
     let term_days = a.request.term_days;
 
+    require!(!a.pool.paused, GoodFaithError::Paused);
     require!(!a.pool.winding_down(now), GoodFaithError::WindingDown);
+    require!(now <= a.request.expires_at, GoodFaithError::RequestExpired);
     // The co-signer only commits to what they saw; the request may have been
     // replaced (cancel + new request) since.
     require!(
@@ -109,6 +113,10 @@ pub fn cosign_loan_handler(
     );
     require!(amount > 0, GoodFaithError::AmountZero);
     require!(amount <= a.pool.max_loan, GoodFaithError::OverLoanCap);
+    require!(
+        amount <= a.borrower_person.loan_cap(&a.pool, now),
+        GoodFaithError::OverPersonalCap
+    );
     require!(
         term_days > 0 && term_days <= a.pool.max_term_days,
         GoodFaithError::TermTooLong
@@ -119,9 +127,63 @@ pub fn cosign_loan_handler(
         GoodFaithError::SelfCosign
     );
     require!(
-        !a.borrower_person.ineligible && !a.cosigner_person.ineligible,
+        a.borrower_person.eligible(now) && a.cosigner_person.eligible(now),
         GoodFaithError::Ineligible
     );
+    // Exposure: open principal borrowed plus guaranteed, per person.
+    let borrower_exposure = amount
+        .checked_add(a.borrower_person.active_guarantee_amount)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    require!(
+        borrower_exposure <= a.pool.max_exposure_per_person,
+        GoodFaithError::OverExposure
+    );
+    let cosigner_borrowed = match (&a.cosigner_person.active_loan, &a.cosigner_active_loan) {
+        (None, _) => 0,
+        (Some(key), Some(loan)) => {
+            require_keys_eq!(loan.key(), *key, GoodFaithError::MissingCosignerLoan);
+            // No pair may guarantee each other at the same time.
+            require_keys_neq!(
+                loan.cosigner_person,
+                a.borrower_person.key(),
+                GoodFaithError::ReciprocalGuarantee
+            );
+            loan.principal
+                .checked_sub(loan.repaid)
+                .ok_or(GoodFaithError::MathOverflow)?
+        }
+        (Some(_), None) => return err!(GoodFaithError::MissingCosignerLoan),
+    };
+    let cosigner_exposure = cosigner_borrowed
+        .checked_add(a.cosigner_person.active_guarantee_amount)
+        .and_then(|v| v.checked_add(amount))
+        .ok_or(GoodFaithError::MathOverflow)?;
+    require!(
+        cosigner_exposure <= a.pool.max_exposure_per_person,
+        GoodFaithError::OverExposure
+    );
+    // The fund's own limit on how fast money goes out.
+    if a.pool.disbursement_cap_per_window > 0 {
+        let window_end = a
+            .pool
+            .window_start
+            .checked_add(a.pool.disbursement_window_seconds)
+            .ok_or(GoodFaithError::MathOverflow)?;
+        if now >= window_end {
+            a.pool.window_start = now;
+            a.pool.window_disbursed = 0;
+        }
+        let disbursed = a
+            .pool
+            .window_disbursed
+            .checked_add(amount)
+            .ok_or(GoodFaithError::MathOverflow)?;
+        require!(
+            disbursed <= a.pool.disbursement_cap_per_window,
+            GoodFaithError::OverDisbursementCap
+        );
+        a.pool.window_disbursed = disbursed;
+    }
     verify_gateway_token(
         &a.borrower_gateway_token,
         &borrower,
@@ -189,12 +251,19 @@ pub fn cosign_loan_handler(
         escrow_bump: ctx.bumps.escrow,
         borrower_person: a.borrower_person.key(),
         cosigner_person: a.cosigner_person.key(),
+        closed_at: 0,
+        refund_pending: 0,
     });
     a.borrower_person.active_loan = Some(a.loan.key());
     a.cosigner_person.active_guarantees = a
         .cosigner_person
         .active_guarantees
         .checked_add(1)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    a.cosigner_person.active_guarantee_amount = a
+        .cosigner_person
+        .active_guarantee_amount
+        .checked_add(amount)
         .ok_or(GoodFaithError::MathOverflow)?;
 
     let decimals = a.mint.decimals;

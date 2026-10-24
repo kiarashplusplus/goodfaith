@@ -12,18 +12,22 @@ export const LOAN_REQUEST_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([24
 
 export function getLoanRequestDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(LOAN_REQUEST_DISCRIMINATOR); }
 
-export type LoanRequest = { discriminator: ReadonlyUint8Array; borrower: Address; cosigner: Address; amount: bigint; termDays: number; createdAt: bigint; rentPayer: Address; bump: number;  };
+export type LoanRequest = { discriminator: ReadonlyUint8Array; borrower: Address; cosigner: Address; amount: bigint; termDays: number; createdAt: bigint; rentPayer: Address; bump: number; 
+/** After this time the request can no longer be co-signed and anyone may close it. */
+expiresAt: bigint;  };
 
-export type LoanRequestArgs = { borrower: Address | HasAddress; cosigner: Address | HasAddress; amount: number | bigint; termDays: number; createdAt: number | bigint; rentPayer: Address | HasAddress; bump: number;  };
+export type LoanRequestArgs = { borrower: Address | HasAddress; cosigner: Address | HasAddress; amount: number | bigint; termDays: number; createdAt: number | bigint; rentPayer: Address | HasAddress; bump: number; 
+/** After this time the request can no longer be co-signed and anyone may close it. */
+expiresAt: number | bigint;  };
 
 /** Gets the encoder for {@link LoanRequestArgs} account data. */
 export function getLoanRequestEncoder(): FixedSizeEncoder<LoanRequestArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['amount', getU64Encoder()], ['termDays', getU16Encoder()], ['createdAt', getI64Encoder()], ['rentPayer', getAddressEncoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: LOAN_REQUEST_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['amount', getU64Encoder()], ['termDays', getU16Encoder()], ['createdAt', getI64Encoder()], ['rentPayer', getAddressEncoder()], ['bump', getU8Encoder()], ['expiresAt', getI64Encoder()]]), (value) => ({ ...value, discriminator: LOAN_REQUEST_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link LoanRequest} account data. */
 export function getLoanRequestDecoder(): FixedSizeDecoder<LoanRequest> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['amount', getU64Decoder()], ['termDays', getU16Decoder()], ['createdAt', getI64Decoder()], ['rentPayer', getAddressDecoder()], ['bump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['amount', getU64Decoder()], ['termDays', getU16Decoder()], ['createdAt', getI64Decoder()], ['rentPayer', getAddressDecoder()], ['bump', getU8Decoder()], ['expiresAt', getI64Decoder()]]);
 }
 
 /** Gets the codec for {@link LoanRequest} account data. */
@@ -76,5 +80,5 @@ export async function fetchAllMaybeLoanRequest(
 }
 
 export function getLoanRequestSize(): number {
-  return 123;
+  return 131;
 }

@@ -8,7 +8,7 @@
 
 import { combineCodec, getEnumDecoder, getEnumEncoder, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
-export enum LoanStatus { Active, Repaid, Defaulted }
+export enum LoanStatus { Active, Repaid, Defaulted, RepaidLate }
 
 export type LoanStatusArgs = LoanStatus;
 

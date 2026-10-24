@@ -36,26 +36,34 @@ the Checking page keep working.
 
 ## Identity issuer (server side)
 
-Joining needs the fund's issuer to co-sign (`register_member` and `rebind_wallet` require `pool.issuer`). The app's
-`/api/identity/*` routes are that issuer:
+Joining needs the fund's issuer to co-sign (`register_member` and `propose_rebind` require `pool.issuer`; a recovery
+proposal also needs the pool's recovery authority). The app's `/api/identity/*` routes are that issuer:
 
 - `start`: the wallet signs a dated message (proof of control) and a hosted identity check is opened with the provider
   (`IDENTITY_PROVIDER=persona`, or `mock` on test networks: `/api/identity/mock` is the "hosted flow").
 - `webhook`: the provider reports the outcome (signature verified over the raw body, event ids de-duplicated). On
-  approval the verified ID fields are reduced to a keyed hash (`PERSON_HASH_SECRET`; state, ID number, birthdate,
-  never the name), Texas and 18+ are enforced, a banned person is refused, and a gateway token is issued to the wallet
-  on our network with `GATEKEEPER_SECRET`. Only the hash, the wallet, the inquiry id and a status are stored
-  (`IDENTITY_DB_PATH`, Node's built-in SQLite; `memory` for throwaway runs).
-- `status`: where a wallet stands and what comes next (`verify`, `wait`, `join`, `rebind`, `done`, `blocked`).
-- `join` / `rebind`: the on-chain transaction, built for the fee sponsor when one is configured and signed with
-  `ISSUER_SECRET`; the browser adds the wallet's signature and sends it (`sendPrepared` in `lib/tx.ts`). A person
-  who verifies again from a new wallet gets `rebind`: the old wallet is retired on chain and the escrow refunds follow.
-- `ban` (operator, `IDENTITY_ADMIN_KEY`): after a default, revokes the person's pass and refuses future checks.
+  approval the verified ID fields are reduced to a keyed fingerprint (`PERSON_HASH_SECRET`; state, ID number,
+  birthdate, never the name) that resolves to a person: a known fingerprint means the same person, a new one gets a
+  random 32-byte person id. Texas and 18+ are enforced, a banned person is refused, and a gateway token is issued to
+  the wallet on our network with `GATEKEEPER_SECRET`. Only the opaque id goes on chain; the fingerprint, the wallets,
+  the inquiry id and a status stay in the store (`IDENTITY_DB_PATH`, Node's built-in SQLite; `memory` for throwaway
+  runs).
+- `status`: where a wallet stands and what comes next (`verify`, `wait`, `join`, `recover`, `pending`, `finalize`,
+  `done`, `blocked`).
+- `join`: the `register_member` transaction, built for the fee sponsor when one is configured and signed with
+  `ISSUER_SECRET`; the browser adds the wallet's signature and sends it (`sendPrepared` in `lib/tx.ts`).
+- `rebind`: wallet recovery in two steps. A person who verifies again from a new wallet gets `recover`: the route
+  returns `propose_rebind` signed by the issuer and the recovery authority (`RECOVERY_SECRET`; without it the service
+  refuses to propose). The old wallet may veto during `pool.recoveryDelaySeconds`; once the delay has passed the same
+  route returns `finalize_rebind`, paid by the new wallet (the cranker finalises due recoveries too). The old wallet is
+  retired on chain and open loans, guarantees, eligibility and escrow claims follow the person.
+- `ban` (operator, `IDENTITY_ADMIN_KEY`, by `personId` or `wallet`): after a default, revokes the passes of every
+  wallet the person verified with and refuses future checks. Eligibility itself is on chain (`ineligible_until`).
 
 All of it is behind `lib/identity/provider.ts`; `persona.ts` is the production provider (inquiry creation with a
 one-time link, `Persona-Signature` HMAC over `t.body`, configurable field keys), `mock.ts` the test one. Unit tests
-cover the provider, the hash, both stores, the wallet proof and the service; `scripts/identity-e2e.ts` runs the whole
-flow against the app on a Surfpool fork with real gateway tokens.
+cover the provider, the fingerprint, both stores, the wallet proof and the service; `scripts/identity-e2e.ts` runs the
+whole flow against the app on a Surfpool fork with real gateway tokens.
 
 ## Layout
 

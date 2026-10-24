@@ -29,8 +29,8 @@ struct Actor {
     kp: Keypair,
     token: Pubkey,
     gateway: Pubkey,
-    /// What the issuer vouches for: one hash per human, shared by a replacement wallet.
-    person_hash: [u8; 32],
+    /// What the issuer vouches for: one opaque id per human, shared by a replacement wallet.
+    person_id: [u8; 32],
 }
 
 impl Actor {
@@ -47,11 +47,15 @@ struct Env {
     vault: Pubkey,
     network: Pubkey,
     issuer: Keypair,
+    recovery: Keypair,
+    pauser: Keypair,
     timelock: i64,
+    recovery_delay: i64,
 }
 
 impl Env {
-    /// Launch-style settings with this pool's issuer and timelock.
+    /// Launch-style settings with this pool's keys and delays. Caps and limits are set so the classic
+    /// loan tests are unaffected; the v3 tests tighten them with `tune`.
     fn params(&self, bps: u16) -> PoolParams {
         PoolParams {
             gatekeeper_network: self.network,
@@ -62,7 +66,39 @@ impl Env {
             cosigner_escrow_bps: bps,
             issuer: self.issuer.pubkey(),
             timelock_seconds: self.timelock,
+            recovery_authority: self.recovery.pubkey(),
+            pause_authority: self.pauser.pubkey(),
+            recovery_delay_seconds: self.recovery_delay,
+            request_ttl_seconds: 7 * DAY,
+            first_loan_cap: 1_000_000,
+            loan_cap_step: 0,
+            cooldown_seconds: 0,
+            max_exposure_per_person: 10_000_000,
+            disbursement_window_seconds: DAY,
+            disbursement_cap_per_window: 0,
+            default_ban_seconds: i64::MAX,
+            late_ban_seconds: 0,
+            cosigner_ban_seconds: i64::MAX,
         }
+    }
+
+    fn now(&self) -> i64 {
+        self.svm.get_sysvar::<Clock>().unix_timestamp
+    }
+
+    /// Whether a person is barred right now.
+    fn barred(&self, a: &Actor) -> bool {
+        !self.person(a).eligible(self.now())
+    }
+
+    /// Changes settings at once (timelock must be 0): schedule + apply of the current params with `f` applied.
+    fn tune(&mut self, f: impl FnOnce(&mut PoolParams)) {
+        let bps = self.pool_state().cosigner_escrow_bps;
+        let mut p = self.params(bps);
+        p.issuer = self.pool_state().issuer;
+        f(&mut p);
+        let admin = self.admin.insecure_clone();
+        self.update_pool(&admin, p).unwrap();
     }
 }
 
@@ -115,6 +151,10 @@ impl Env {
     }
 
     fn with_timelock(bps: u16, timelock: i64) -> Self {
+        Self::with_delays(bps, timelock, 0)
+    }
+
+    fn with_delays(bps: u16, timelock: i64, recovery_delay: i64) -> Self {
         let mut svm = LiteSVM::new();
         svm.add_program(
             program_id(),
@@ -125,6 +165,10 @@ impl Env {
         svm.airdrop(&admin.pubkey(), 10_000_000_000).unwrap();
         let issuer = Keypair::new();
         svm.airdrop(&issuer.pubkey(), 1_000_000_000).unwrap();
+        let recovery = Keypair::new();
+        svm.airdrop(&recovery.pubkey(), 1_000_000_000).unwrap();
+        let pauser = Keypair::new();
+        svm.airdrop(&pauser.pubkey(), 1_000_000_000).unwrap();
         let mint = Pubkey::new_unique();
         svm.set_account(
             mint,
@@ -147,7 +191,10 @@ impl Env {
             vault,
             network: Pubkey::new_unique(),
             issuer,
+            recovery,
+            pauser,
             timelock,
+            recovery_delay,
         };
         env.set_time(T0);
         let p = env.params(bps);
@@ -266,14 +313,14 @@ impl Env {
             kp,
             token,
             gateway,
-            person_hash: Pubkey::new_unique().to_bytes(),
+            person_id: Pubkey::new_unique().to_bytes(),
         }
     }
 
     /// A fresh wallet (SOL, tokens, gateway token) for the same person as `a`, tracked for `token_of`.
     fn new_wallet_for(&mut self, a: &Actor, tokens: u64) -> Actor {
         let mut n = self.actor(tokens);
-        n.person_hash = a.person_hash;
+        n.person_id = a.person_id;
         TOKEN_ACCOUNTS.with(|m| m.borrow_mut().insert(n.key(), n.token));
         n
     }
@@ -332,7 +379,7 @@ impl Env {
         let ix = Instruction::new_with_bytes(
             program_id(),
             &goodfaith::instruction::RegisterMember {
-                person_hash: a.person_hash,
+                person_id: a.person_id,
             }
             .data(),
             goodfaith::accounts::RegisterMember {
@@ -340,7 +387,7 @@ impl Env {
                 payer: payer_key,
                 issuer: issuer.pubkey(),
                 pool: self.pool,
-                person: self.person_addr(&a.person_hash),
+                person: self.person_addr(&a.person_id),
                 member: self.member_addr(&a.key()),
                 gateway_token: gateway,
                 system_program: system_program::ID,
@@ -387,7 +434,7 @@ impl Env {
 
     /// The person behind an actor: eligibility, open loan and guarantees live here.
     fn person(&self, a: &Actor) -> Person {
-        self.read(&self.person_addr(&a.person_hash))
+        self.read(&self.person_addr(&a.person_id))
     }
 
     fn member_of(&self, a: &Actor) -> Member {
@@ -449,7 +496,7 @@ impl Env {
                 borrower: borrower.key(),
                 pool: self.pool,
                 mint: self.mint,
-                borrower_person: self.person_addr(&borrower.person_hash),
+                borrower_person: self.person_addr(&borrower.person_id),
                 cosigner_member: self.member_addr(cosigner),
                 borrower_gateway_token: borrower.gateway,
                 request: self.request_addr(&borrower.key()),
@@ -501,8 +548,8 @@ impl Env {
                 vault: self.vault,
                 request: request_addr,
                 request_rent_payer: rent_payer,
-                borrower_person: self.person_addr(&borrower.person_hash),
-                cosigner_person: self.person_addr(&cosigner.person_hash),
+                borrower_person: self.person_addr(&borrower.person_id),
+                cosigner_person: self.person_addr(&cosigner.person_id),
                 borrower_token: borrower.token,
                 cosigner_token: cosigner.token,
                 loan,
@@ -511,6 +558,7 @@ impl Env {
                 cosigner_gateway_token: cosigner.gateway,
                 token_program: TOKEN_PROGRAM,
                 system_program: system_program::ID,
+                cosigner_active_loan: None,
             }
             .to_account_metas(None),
         );
@@ -567,7 +615,23 @@ impl Env {
         id
     }
 
+    /// Repays and, when that closes the loan with escrow left over, claims it for the co-signer at once
+    /// (what the app and the cranker do), so balance assertions read the end state.
     fn repay(&mut self, payer: &Actor, id: u64, amount: u64) -> Result<(), String> {
+        self.repay_only(payer, id, amount)?;
+        self.claim_if_pending(id)
+    }
+
+    fn claim_if_pending(&mut self, id: u64) -> Result<(), String> {
+        let loan = self.loan(id);
+        if loan.status != LoanStatus::Active && loan.refund_pending > 0 {
+            let admin = self.admin.insecure_clone();
+            self.claim_by(&admin, id)?;
+        }
+        Ok(())
+    }
+
+    fn repay_only(&mut self, payer: &Actor, id: u64, amount: u64) -> Result<(), String> {
         let loan = self.loan(id);
         let loan_addr = self.loan_addr(id);
         let ix = Instruction::new_with_bytes(
@@ -581,7 +645,6 @@ impl Env {
                 loan: loan_addr,
                 escrow: self.escrow_addr(&loan_addr),
                 payer_token: payer.token,
-                cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
                 borrower_person: loan.borrower_person,
                 cosigner_person: loan.cosigner_person,
                 rent_payer: loan.rent_payer,
@@ -592,7 +655,13 @@ impl Env {
         self.send(ix, &payer.kp, &[])
     }
 
+    /// Marks the default and claims any leftover escrow for the co-signer (see `repay`).
     fn mark_default(&mut self, caller: &Keypair, id: u64) -> Result<(), String> {
+        self.mark_default_only(caller, id)?;
+        self.claim_if_pending(id)
+    }
+
+    fn mark_default_only(&mut self, caller: &Keypair, id: u64) -> Result<(), String> {
         let loan = self.loan(id);
         let loan_addr = self.loan_addr(id);
         let ix = Instruction::new_with_bytes(
@@ -605,7 +674,6 @@ impl Env {
                 vault: self.vault,
                 loan: loan_addr,
                 escrow: self.escrow_addr(&loan_addr),
-                cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
                 borrower_person: loan.borrower_person,
                 cosigner_person: loan.cosigner_person,
                 rent_payer: loan.rent_payer,
@@ -708,14 +776,14 @@ impl Env {
         )
         .0;
         let person = Pubkey::find_program_address(
-            &[b"person", pool.as_ref(), a.person_hash.as_ref()],
+            &[b"person", pool.as_ref(), a.person_id.as_ref()],
             &program_id(),
         )
         .0;
         let ix = Instruction::new_with_bytes(
             program_id(),
             &goodfaith::instruction::RegisterMember {
-                person_hash: a.person_hash,
+                person_id: a.person_id,
             }
             .data(),
             goodfaith::accounts::RegisterMember {
@@ -745,7 +813,6 @@ impl Env {
             loan: loan_addr,
             escrow: self.escrow_addr(&loan_addr),
             payer_token: payer.token,
-            cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
             borrower_person: loan.borrower_person,
             cosigner_person: loan.cosigner_person,
             rent_payer: loan.rent_payer,
@@ -777,7 +844,6 @@ impl Env {
             vault: self.vault,
             loan: loan_addr,
             escrow: self.escrow_addr(&loan_addr),
-            cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
             borrower_person: loan.borrower_person,
             cosigner_person: loan.cosigner_person,
             rent_payer: loan.rent_payer,
@@ -815,8 +881,8 @@ impl Env {
             vault: self.vault,
             request: request_addr,
             request_rent_payer: rent_payer,
-            borrower_person: self.person_addr(&borrower.person_hash),
-            cosigner_person: self.person_addr(&cosigner.person_hash),
+            borrower_person: self.person_addr(&borrower.person_id),
+            cosigner_person: self.person_addr(&cosigner.person_id),
             borrower_token: borrower.token,
             cosigner_token: cosigner.token,
             loan,
@@ -825,6 +891,7 @@ impl Env {
             cosigner_gateway_token: cosigner.gateway,
             token_program: TOKEN_PROGRAM,
             system_program: system_program::ID,
+            cosigner_active_loan: None,
         }
     }
 
@@ -957,14 +1024,63 @@ impl Env {
         self.send(ix, payer, &[])
     }
 
-    /// Binds `new` (same person hash) as the person's wallet; the old wallet is read on chain.
+    /// Full recovery for tests with a zero recovery delay: propose (issuer + recovery authority) then finalize.
     fn rebind_wallet(&mut self, new: &Actor) -> Result<(), String> {
         let issuer = self.issuer.insecure_clone();
         self.rebind_wallet_as(new, &issuer)
     }
 
     fn rebind_wallet_as(&mut self, new: &Actor, issuer: &Keypair) -> Result<(), String> {
-        let person = self.person_addr(&new.person_hash);
+        let recovery = self.recovery.insecure_clone();
+        self.propose_rebind_as(new, issuer, &recovery)?;
+        self.finalize_rebind(&new.kp.insecure_clone(), new)
+    }
+
+    fn propose_rebind(&mut self, new: &Actor) -> Result<(), String> {
+        let issuer = self.issuer.insecure_clone();
+        let recovery = self.recovery.insecure_clone();
+        self.propose_rebind_as(new, &issuer, &recovery)
+    }
+
+    fn propose_rebind_as(
+        &mut self,
+        new: &Actor,
+        issuer: &Keypair,
+        recovery: &Keypair,
+    ) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::ProposeRebind {}.data(),
+            goodfaith::accounts::ProposeRebind {
+                new_wallet: new.key(),
+                issuer: issuer.pubkey(),
+                recovery_authority: recovery.pubkey(),
+                pool: self.pool,
+                person: self.person_addr(&new.person_id),
+                gateway_token: new.gateway,
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, &new.kp, &[issuer, recovery])
+    }
+
+    /// `signer` is the old wallet or the authority.
+    fn veto_rebind(&mut self, signer: &Keypair, person_id: &[u8; 32]) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::VetoRebind {}.data(),
+            goodfaith::accounts::VetoRebind {
+                signer: signer.pubkey(),
+                pool: self.pool,
+                person: self.person_addr(person_id),
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, signer, &[])
+    }
+
+    fn finalize_rebind(&mut self, payer: &Keypair, new: &Actor) -> Result<(), String> {
+        let person = self.person_addr(&new.person_id);
         let old_wallet = self
             .svm
             .get_account(&person)
@@ -972,21 +1088,101 @@ impl Env {
             .map_or(Pubkey::new_unique(), |_| self.wallet_of(&person));
         let ix = Instruction::new_with_bytes(
             program_id(),
-            &goodfaith::instruction::RebindWallet {}.data(),
-            goodfaith::accounts::RebindWallet {
-                new_wallet: new.key(),
-                payer: new.key(),
-                issuer: issuer.pubkey(),
+            &goodfaith::instruction::FinalizeRebind {}.data(),
+            goodfaith::accounts::FinalizeRebind {
+                payer: payer.pubkey(),
                 pool: self.pool,
                 person,
+                new_wallet: new.key(),
                 old_member: self.member_addr(&old_wallet),
                 new_member: self.member_addr(&new.key()),
-                gateway_token: new.gateway,
                 system_program: system_program::ID,
             }
             .to_account_metas(None),
         );
-        self.send(ix, &new.kp, &[issuer])
+        self.send(ix, payer, &[])
+    }
+
+    /// Claims a closed loan's leftover escrow for the co-signer's current wallet.
+    fn claim_by(&mut self, claimer: &Keypair, id: u64) -> Result<(), String> {
+        let accounts = self.claim_accounts(claimer, id);
+        self.send_claim(&accounts, claimer)
+    }
+
+    fn claim_accounts(&self, claimer: &Keypair, id: u64) -> goodfaith::accounts::ClaimEscrow {
+        let loan = self.loan(id);
+        let loan_addr = self.loan_addr(id);
+        goodfaith::accounts::ClaimEscrow {
+            claimer: claimer.pubkey(),
+            pool: self.pool,
+            mint: self.mint,
+            loan: loan_addr,
+            escrow: self.escrow_addr(&loan_addr),
+            cosigner_person: loan.cosigner_person,
+            cosigner_token: self.token_of(&self.wallet_of(&loan.cosigner_person)),
+            rent_payer: loan.rent_payer,
+            token_program: TOKEN_PROGRAM,
+        }
+    }
+
+    fn send_claim(
+        &mut self,
+        accounts: &goodfaith::accounts::ClaimEscrow,
+        claimer: &Keypair,
+    ) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::ClaimEscrow {}.data(),
+            accounts.to_account_metas(None),
+        );
+        self.send(ix, claimer, &[])
+    }
+
+    fn close_expired_request(&mut self, closer: &Keypair, borrower: &Pubkey) -> Result<(), String> {
+        let request_addr = self.request_addr(borrower);
+        let rent_payer = self.read::<LoanRequest>(&request_addr).rent_payer;
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::CloseExpiredRequest {}.data(),
+            goodfaith::accounts::CloseExpiredRequest {
+                closer: closer.pubkey(),
+                pool: self.pool,
+                request: request_addr,
+                rent_payer,
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, closer, &[])
+    }
+
+    fn pause(&mut self, signer: &Keypair) -> Result<(), String> {
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::PauseLending {}.data(),
+            goodfaith::accounts::PauseLending {
+                signer: signer.pubkey(),
+                pool: self.pool,
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, signer, &[])
+    }
+
+    fn resume(&mut self, signer: &Keypair) -> Result<(), String> {
+        let ix = self.authority_ix(signer, goodfaith::instruction::ResumeLending {}.data());
+        self.send(ix, signer, &[])
+    }
+
+    /// Co-sign passing the co-signer's own open loan (needed when they are borrowing too).
+    fn cosign_with_cosigner_loan(
+        &mut self,
+        payer: &Keypair,
+        borrower: &Actor,
+        cosigner: &Actor,
+    ) -> Result<(), String> {
+        let mut accounts = self.cosign_accounts(payer, borrower, cosigner);
+        accounts.cosigner_active_loan = self.person(cosigner).active_loan;
+        self.send_cosign(&accounts, payer, cosigner)
     }
 
     fn after_grace(&mut self, id: u64) {
@@ -1052,7 +1248,7 @@ fn register_with_valid_token() {
     assert_eq!(m.wallet, a.key());
     assert_eq!(m.active_loan, None);
     assert_eq!(m.active_guarantees, 0);
-    assert!(!m.ineligible);
+    assert_eq!(m.ineligible_until, 0);
 }
 
 #[test]
@@ -1448,7 +1644,7 @@ fn default_only_after_grace() {
     env.set_time(due + 7 * DAY + 1);
     env.mark_default(&caller.kp, id).unwrap();
     assert_eq!(env.loan(id).status, LoanStatus::Defaulted);
-    assert!(env.person(&borrower).ineligible);
+    assert!(env.barred(&borrower));
     assert!(env.mark_default(&caller.kp, id).is_err());
 }
 
@@ -1469,7 +1665,7 @@ fn default_escrow_fully_covers() {
         .is_none());
     let (b, c) = (env.person(&borrower), env.person(&cosigner));
     // The escrow made the fund whole, so only the borrower loses access.
-    assert!(b.ineligible && !c.ineligible);
+    assert!(env.barred(&borrower) && !env.barred(&cosigner));
     assert_eq!(b.active_loan, None);
     assert_eq!(c.active_guarantees, 0);
 }
@@ -1501,8 +1697,8 @@ fn default_escrow_exceeds_shortfall() {
     assert_eq!(env.balance(&env.vault), 10_000);
     // cosigner gets back the 600 not needed
     assert_eq!(env.balance(&cosigner.token), 10_000 - 400);
-    assert!(env.person(&borrower).ineligible);
-    assert!(!env.person(&cosigner).ineligible);
+    assert!(env.barred(&borrower));
+    assert!(!env.barred(&cosigner));
 }
 
 #[test]
@@ -1647,6 +1843,7 @@ fn cancel_by_borrower_or_cosigner_only() {
 fn stale_request_after_borrower_became_ineligible() {
     let mut env = Env::new(2500);
     env.fund(10_000);
+    env.tune(|p| p.request_ttl_seconds = 90 * DAY);
     // `risky` guarantees a loan that will default, and also asks for one.
     let first_borrower = env.tracked_actor(0);
     let risky = env.tracked_actor(1_000);
@@ -1658,7 +1855,7 @@ fn stale_request_after_borrower_became_ineligible() {
     let caller = env.actor(0);
     env.set_time(T0 + 30 * DAY + 7 * DAY + 1);
     env.mark_default(&caller.kp, id).unwrap();
-    assert!(env.person(&risky).ineligible);
+    assert!(env.barred(&risky));
 
     let h = helper.kp.insecure_clone();
     assert_fails(
@@ -1892,7 +2089,6 @@ fn audit_cannot_substitute_vault_escrow_or_mint() {
         loan: loan_addr,
         escrow: env.escrow_addr(&loan_addr),
         payer_token: cosigner.token,
-        cosigner_token: cosigner.token,
         borrower_person: loan.borrower_person,
         cosigner_person: loan.cosigner_person,
         rent_payer: loan.rent_payer,
@@ -2053,7 +2249,7 @@ fn member_from_another_pool_is_rejected() {
     env.register_in_pool(&borrower, pool_b).unwrap();
     let cosigner = env.member_actor(1_000);
     let person_b = Pubkey::find_program_address(
-        &[b"person", pool_b.as_ref(), borrower.person_hash.as_ref()],
+        &[b"person", pool_b.as_ref(), borrower.person_id.as_ref()],
         &program_id(),
     )
     .0;
@@ -2154,14 +2350,9 @@ fn substituted_accounts_are_rejected() {
         env.send_repay(&accounts, &stranger, 10),
         ErrorCode::ConstraintAddress,
     );
-    accounts = env.repay_accounts(&stranger, id);
-    accounts.cosigner_token = other.token;
-    assert_fails(
-        env.send_repay(&accounts, &stranger, 10),
-        ErrorCode::ConstraintTokenOwner,
-    );
 
-    // mark_default: same substitutions
+    // mark_default: same substitution (900 repaid first, so 150 of escrow is left to claim afterwards)
+    env.repay_only(&stranger, id, 900).unwrap();
     env.set_time(T0 + 30 * DAY + 7 * DAY + 1);
     let mut accounts = env.default_accounts(&stranger.kp, id);
     accounts.rent_payer = stranger.key();
@@ -2169,11 +2360,20 @@ fn substituted_accounts_are_rejected() {
         env.send_default(&accounts, &stranger.kp),
         ErrorCode::ConstraintAddress,
     );
-    accounts = env.default_accounts(&stranger.kp, id);
-    accounts.cosigner_token = other.token;
+    env.mark_default_only(&stranger.kp, id).unwrap();
+
+    // claim: wrong co-signer token account, wrong rent recipient
+    let mut claim = env.claim_accounts(&stranger.kp, id);
+    claim.cosigner_token = other.token;
     assert_fails(
-        env.send_default(&accounts, &stranger.kp),
+        env.send_claim(&claim, &stranger.kp),
         ErrorCode::ConstraintTokenOwner,
+    );
+    claim = env.claim_accounts(&stranger.kp, id);
+    claim.rent_payer = stranger.key();
+    assert_fails(
+        env.send_claim(&claim, &stranger.kp),
+        ErrorCode::ConstraintAddress,
     );
 
     // donate: a token account that is not the vault
@@ -2193,7 +2393,7 @@ fn substituted_accounts_are_rejected() {
     );
     let res = env.send(ix, &donor.kp, &[]);
     assert_fails(res, ErrorCode::ConstraintAddress);
-    assert_eq!(env.loan(id).repaid, 0);
+    assert_eq!(env.loan(id).repaid, 900);
 }
 
 #[test]
@@ -2212,15 +2412,16 @@ fn default_with_zero_escrow_and_repay_after_grace() {
         .get_account(&env.escrow_addr(&env.loan_addr(id)))
         .is_none());
     assert!(env.svm.get_account(&rent_payer).unwrap().lamports > before);
-    assert!(env.person(&borrower).ineligible && env.person(&cosigner).ineligible);
+    assert!(env.barred(&borrower) && env.barred(&cosigner));
 
-    // Repaying late, but before anyone marks the default, still closes the loan normally.
+    // Repaying late, but before anyone marks the default, still settles the loan: it is recorded as late,
+    // the co-signer gets the escrow back, and with a zero late ban nobody is barred.
     let (mut env, borrower, cosigner, id) = setup_default(2500, 1_000);
     let payer = env.tracked_actor(5_000);
     env.set_time(T0 + 30 * DAY + 7 * DAY + 100 * DAY);
     env.repay(&payer, id, 1_000).unwrap();
-    assert_eq!(env.loan(id).status, LoanStatus::Repaid);
-    assert!(!env.person(&borrower).ineligible && !env.person(&cosigner).ineligible);
+    assert_eq!(env.loan(id).status, LoanStatus::RepaidLate);
+    assert!(!env.barred(&borrower) && !env.barred(&cosigner));
     assert_eq!(env.balance(&cosigner.token), 10_000);
 }
 
@@ -2265,11 +2466,11 @@ fn register_binds_wallet_to_person_and_needs_the_issuer() {
     assert_fails(env.register_as(&a, &impostor), GoodFaithError::Unauthorized);
     env.register(&a).unwrap();
     let person = env.person(&a);
-    assert_eq!(person.person_hash, a.person_hash);
+    assert_eq!(person.person_id, a.person_id);
     assert_eq!(person.wallet, a.key());
     let member = env.member_of(&a);
     assert_eq!(member.wallet, a.key());
-    assert_eq!(member.person, env.person_addr(&a.person_hash));
+    assert_eq!(member.person, env.person_addr(&a.person_id));
     assert!(!member.retired);
     assert_eq!(env.pool_state().issuer, env.issuer.pubkey());
 }
@@ -2306,7 +2507,7 @@ fn rebind_moves_the_person_and_their_open_loan_to_a_new_wallet() {
     assert!(!env.member_of(&borrower2).retired);
     assert_eq!(
         env.member_of(&borrower2).person,
-        env.person_addr(&borrower.person_hash)
+        env.person_addr(&borrower.person_id)
     );
     // The loan still belongs to the person: the new wallet cannot borrow again.
     let b2 = borrower2.kp.insecure_clone();
@@ -2355,8 +2556,8 @@ fn rebind_default_pays_the_new_wallet_and_follows_the_policy() {
     assert_eq!(env.balance(&cosigner2.token), 400);
     assert_eq!(env.balance(&cosigner.token), 9_000);
     assert_eq!(env.pool_state().total_lost, 0);
-    assert!(env.person(&borrower).ineligible);
-    assert!(!env.person(&cosigner).ineligible);
+    assert!(env.barred(&borrower));
+    assert!(!env.barred(&cosigner));
     assert_eq!(env.pool_state().active_loans, 0);
 }
 
@@ -2379,6 +2580,9 @@ fn rebind_rejections() {
     taken.kp = other.kp.insecure_clone();
     taken.gateway = other.gateway;
     assert!(env.rebind_wallet(&taken).is_err());
+    // The proposal went through (the Member clash is only found at finalisation); the old wallet withdraws it.
+    env.veto_rebind(&a.kp.insecure_clone(), &a.person_id)
+        .unwrap();
 
     // The new wallet needs its own valid gateway token.
     let mut untokened = env.new_wallet_for(&a, 0);
@@ -2400,6 +2604,13 @@ fn rebind_rejections() {
     assert!(env.rebind_wallet(&back).is_err());
     assert!(env.member_of(&a).retired);
     assert_eq!(env.person(&a).wallet, new.key());
+    // Only the current wallet (or the authority) can withdraw the leftover proposal.
+    assert_fails(
+        env.veto_rebind(&a.kp.insecure_clone(), &a.person_id),
+        GoodFaithError::Unauthorized,
+    );
+    env.veto_rebind(&new.kp.insecure_clone(), &a.person_id)
+        .unwrap();
 }
 
 #[test]
@@ -2408,7 +2619,7 @@ fn covered_default_leaves_the_cosigner_in_good_standing() {
     env.after_grace(id);
     let caller = env.actor(0);
     env.mark_default(&caller.kp, id).unwrap();
-    assert!(!env.person(&cosigner).ineligible);
+    assert!(!env.barred(&cosigner));
     // ... and they can co-sign again, while the borrower cannot borrow.
     let next = env.member_actor(0);
     let n = next.kp.insecure_clone();
@@ -2467,16 +2678,26 @@ fn timelock_lifecycle() {
     assert_eq!(env.pool_state().pending_params, None);
     assert_eq!(env.pool_state().max_loan, 42);
 
-    // Lowering the timelock itself waits the old delay; afterwards changes are instant.
+    // Lowering the timelock itself waits the old delay, and it can never go below the minimum.
     let mut fast = q;
     fast.timelock_seconds = 0;
+    assert_fails(
+        env.schedule_params(&admin, fast),
+        GoodFaithError::TimelockBelowMinimum,
+    );
+    fast.timelock_seconds = goodfaith::MIN_TIMELOCK_SECONDS;
     env.schedule_params(&admin, fast).unwrap();
     assert_fails(env.apply_params(), GoodFaithError::TimelockNotElapsed);
     env.set_time(T0 + 7 * DAY);
     env.apply_params().unwrap();
-    assert_eq!(env.pool_state().timelock_seconds, 0);
+    assert_eq!(
+        env.pool_state().timelock_seconds,
+        goodfaith::MIN_TIMELOCK_SECONDS
+    );
     fast.max_loan = 9;
-    env.update_pool(&admin, fast).unwrap();
+    env.schedule_params(&admin, fast).unwrap();
+    env.set_time(T0 + 9 * DAY);
+    env.apply_params().unwrap();
     assert_eq!(env.pool_state().max_loan, 9);
 
     // Bounds: the timelock has a ceiling and cannot be negative.
@@ -2494,7 +2715,9 @@ fn timelock_lifecycle() {
     );
     let mut max = fast;
     max.timelock_seconds = goodfaith::MAX_TIMELOCK_SECONDS;
-    env.update_pool(&admin, max).unwrap();
+    env.schedule_params(&admin, max).unwrap();
+    env.set_time(T0 + 11 * DAY);
+    env.apply_params().unwrap();
 
     // Freezing discards a scheduled change.
     let mut pending = max;
@@ -2668,6 +2891,569 @@ fn active_loans_counts_open_loans() {
     assert_eq!(env.pool_state().active_loans, 0);
 }
 
+#[test]
+fn recovery_is_two_step_with_a_veto_window() {
+    let mut env = Env::with_delays(2500, 0, 3 * DAY);
+    env.fund(10_000);
+    let a = env.tracked_actor(1_000);
+    let c = env.tracked_actor(10_000);
+    let id = env.open_simple(&a, &c, 1_000);
+    let new = env.new_wallet_for(&a, 0);
+    let stranger = Keypair::new();
+    env.svm.airdrop(&stranger.pubkey(), 1_000_000_000).unwrap();
+
+    // Both the issuer and the recovery authority must sign.
+    let issuer = env.issuer.insecure_clone();
+    let recovery = env.recovery.insecure_clone();
+    assert_fails(
+        env.propose_rebind_as(&new, &stranger, &recovery),
+        GoodFaithError::Unauthorized,
+    );
+    assert_fails(
+        env.propose_rebind_as(&new, &issuer, &stranger),
+        GoodFaithError::Unauthorized,
+    );
+    assert_fails(
+        env.finalize_rebind(&stranger, &new),
+        GoodFaithError::RecoveryNotPending,
+    );
+    assert_fails(
+        env.veto_rebind(&a.kp.insecure_clone(), &a.person_id),
+        GoodFaithError::RecoveryNotPending,
+    );
+    env.propose_rebind(&new).unwrap();
+    let p = env.person(&a);
+    assert_eq!(p.pending_wallet, Some(new.key()));
+    assert_eq!(p.pending_wallet_at, T0 + 3 * DAY);
+    assert_eq!(p.wallet, a.key(), "nothing moves at proposal");
+    assert_fails(env.propose_rebind(&new), GoodFaithError::RecoveryPending);
+    // Too early, and only the old wallet or the authority may veto.
+    assert_fails(
+        env.finalize_rebind(&stranger, &new),
+        GoodFaithError::RecoveryDelayNotElapsed,
+    );
+    assert_fails(
+        env.veto_rebind(&stranger, &a.person_id),
+        GoodFaithError::Unauthorized,
+    );
+    assert_fails(
+        env.veto_rebind(&new.kp.insecure_clone(), &a.person_id),
+        GoodFaithError::Unauthorized,
+    );
+    env.veto_rebind(&a.kp.insecure_clone(), &a.person_id)
+        .unwrap();
+    assert_eq!(env.person(&a).pending_wallet, None);
+    assert_eq!(env.person(&a).wallet, a.key());
+
+    // Proposed again, vetoed by the authority this time, then proposed and finalized by a stranger after the delay.
+    env.propose_rebind(&new).unwrap();
+    let admin = env.admin.insecure_clone();
+    env.veto_rebind(&admin, &a.person_id).unwrap();
+    env.propose_rebind(&new).unwrap();
+    env.set_time(T0 + 3 * DAY - 1);
+    assert_fails(
+        env.finalize_rebind(&stranger, &new),
+        GoodFaithError::RecoveryDelayNotElapsed,
+    );
+    env.set_time(T0 + 3 * DAY);
+    env.finalize_rebind(&stranger, &new).unwrap();
+    let p = env.person(&a);
+    assert_eq!(p.wallet, new.key());
+    assert_eq!(p.pending_wallet, None);
+    assert_eq!(
+        p.active_loan,
+        Some(env.loan_addr(id)),
+        "the open loan followed the person"
+    );
+    assert!(env.member_of(&a).retired);
+    assert_eq!(env.member_of(&new).person, env.person_addr(&a.person_id));
+    // The old wallet cannot veto anything any more, and cannot be recovered back to.
+    assert_fails(
+        env.veto_rebind(&a.kp.insecure_clone(), &a.person_id),
+        GoodFaithError::Unauthorized,
+    );
+    let mut back = env.new_wallet_for(&a, 0);
+    back.kp = a.kp.insecure_clone();
+    back.gateway = a.gateway;
+    env.propose_rebind(&back).unwrap();
+    env.set_time(T0 + 6 * DAY);
+    assert!(
+        env.finalize_rebind(&stranger, &back).is_err(),
+        "retired member cannot be re-created"
+    );
+    env.veto_rebind(&admin, &a.person_id).unwrap();
+    // Repayment from the new wallet closes the loan; the escrow is claimed for the co-signer.
+    let payer = env.tracked_actor(5_000);
+    env.repay(&payer, id, 1_000).unwrap();
+    assert_eq!(env.person(&a).active_loan, None);
+}
+
+#[test]
+fn recovered_and_new_memberships_sit_on_the_first_loan_cap_for_the_cooldown() {
+    let mut env = Env::new(2500);
+    env.fund(100_000);
+    env.tune(|p| {
+        p.first_loan_cap = 300;
+        p.loan_cap_step = 200;
+        p.cooldown_seconds = 10 * DAY;
+    });
+    let a = env.tracked_actor(0);
+    let c = env.tracked_actor(10_000);
+    let ak = a.kp.insecure_clone();
+    assert_eq!(env.person(&a).restricted_until, T0 + 10 * DAY);
+    assert_fails(
+        env.request_loan(&ak, &a, &c.key(), 301, 10),
+        GoodFaithError::OverPersonalCap,
+    );
+    env.open_loan(&ak, &a, &c, 300, 10).unwrap();
+    env.repay(&a, 0, 300).unwrap();
+    assert_eq!(env.person(&a).completed_loans, 1);
+    // Still in the cooldown: the completed loan does not raise the cap yet.
+    assert_fails(
+        env.request_loan(&ak, &a, &c.key(), 301, 10),
+        GoodFaithError::OverPersonalCap,
+    );
+    env.set_time(T0 + 10 * DAY);
+    // After the cooldown: first cap + one step.
+    assert_fails(
+        env.request_loan(&ak, &a, &c.key(), 501, 10),
+        GoodFaithError::OverPersonalCap,
+    );
+    env.open_loan(&ak, &a, &c, 500, 10).unwrap();
+    env.repay(&a, 1, 500).unwrap();
+    assert_eq!(env.person(&a).completed_loans, 2);
+    // A recovery restarts the cooldown.
+    let new = env.new_wallet_for(&a, 0);
+    env.rebind_wallet(&new).unwrap();
+    assert_eq!(env.person(&a).restricted_until, T0 + 20 * DAY);
+    let nk = new.kp.insecure_clone();
+    assert_fails(
+        env.request_loan(&nk, &new, &c.key(), 301, 10),
+        GoodFaithError::OverPersonalCap,
+    );
+    env.set_time(T0 + 20 * DAY);
+    env.open_loan(&nk, &new, &c, 700, 10).unwrap();
+    // The cap never exceeds the pool's max loan, and the request also checks it.
+    env.repay(&new, 2, 700).unwrap();
+    env.tune(|p| {
+        p.max_loan = 800;
+        p.first_loan_cap = 300;
+        p.loan_cap_step = 200;
+        p.cooldown_seconds = 10 * DAY;
+        p.max_exposure_per_person = 800;
+    });
+    env.set_time(T0 + 40 * DAY);
+    assert_fails(
+        env.request_loan(&nk, &new, &c.key(), 801, 10),
+        GoodFaithError::OverLoanCap,
+    );
+    env.request_loan(&nk, &new, &c.key(), 800, 10).unwrap();
+}
+
+#[test]
+fn late_repayment_settles_the_loan_but_is_recorded_and_bars_the_borrower_for_a_while() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    env.tune(|p| p.late_ban_seconds = 5 * DAY);
+    let a = env.tracked_actor(0);
+    let c = env.tracked_actor(10_000);
+    let id = env.open_simple(&a, &c, 1_000);
+    let deadline = env.loan(id).deadline().unwrap();
+    // One second past the deadline the loan is late whoever moves first.
+    env.set_time(deadline + 1);
+    env.repay(&a, id, 400).unwrap();
+    assert_eq!(
+        env.loan(id).status,
+        LoanStatus::Active,
+        "a partial payment keeps the loan open"
+    );
+    env.repay(&a, id, 600).unwrap();
+    let l = env.loan(id);
+    assert_eq!(l.status, LoanStatus::RepaidLate);
+    assert_eq!(l.closed_at, deadline + 1);
+    assert_eq!(l.refund_pending, 0, "claimed by the harness");
+    assert_eq!(
+        env.balance(&c.token),
+        10_000,
+        "the co-signer got the whole escrow back"
+    );
+    let p = env.person(&a);
+    assert_eq!(p.completed_loans, 0, "a late loan does not raise the cap");
+    assert_eq!(p.ineligible_until, deadline + 1 + 5 * DAY);
+    assert!(env.barred(&a));
+    let ak = a.kp.insecure_clone();
+    assert_fails(
+        env.request_loan(&ak, &a, &c.key(), 100, 10),
+        GoodFaithError::Ineligible,
+    );
+    env.set_time(deadline + 1 + 5 * DAY);
+    assert!(!env.barred(&a));
+    env.request_loan(&ak, &a, &c.key(), 100, 10).unwrap();
+    // The co-signer was never barred and their guarantee count went back down.
+    assert!(!env.barred(&c));
+    assert_eq!(env.person(&c).active_guarantees, 0);
+    assert_eq!(env.person(&c).active_guarantee_amount, 0);
+}
+
+#[test]
+fn eligibility_bars_are_time_bounded_and_never_shorten() {
+    let mut env = Env::new(10_000);
+    env.fund(10_000);
+    env.tune(|p| {
+        p.default_ban_seconds = 30 * DAY;
+        p.cosigner_ban_seconds = 10 * DAY;
+        p.late_ban_seconds = 20 * DAY;
+    });
+    let a = env.tracked_actor(0);
+    let c = env.tracked_actor(10_000);
+    // Default with full cover: borrower barred 30 days, co-signer not barred at all.
+    let id = env.open_simple(&a, &c, 1_000);
+    env.after_grace(id);
+    let t1 = env.now();
+    let caller = env.actor(0);
+    env.mark_default(&caller.kp, id).unwrap();
+    assert_eq!(env.person(&a).ineligible_until, t1 + 30 * DAY);
+    assert_eq!(env.person(&c).ineligible_until, 0);
+    // The bar expires: the borrower is back, with the first loan cap unaffected (cooldown 0).
+    env.set_time(t1 + 30 * DAY);
+    assert!(!env.barred(&a));
+    // Default with a loss: both barred; a longer existing bar is never shortened by a shorter one.
+    env.tune(|p| {
+        p.cosigner_escrow_bps = 1000;
+        p.default_ban_seconds = 30 * DAY;
+        p.cosigner_ban_seconds = 10 * DAY;
+        p.late_ban_seconds = 20 * DAY;
+    });
+    let b = env.tracked_actor(0);
+    let id2 = env.open_simple(&b, &c, 1_000);
+    env.after_grace(id2);
+    let t2 = env.now();
+    env.mark_default(&caller.kp, id2).unwrap();
+    assert_eq!(env.person(&c).ineligible_until, t2 + 10 * DAY);
+    // A second loss for the same co-signer while barred? They cannot co-sign while barred, so set a
+    // permanent bar through settings and check that a later shorter bar does not reduce it.
+    env.set_time(t2 + 10 * DAY);
+    env.tune(|p| {
+        p.cosigner_escrow_bps = 1000;
+        p.default_ban_seconds = i64::MAX;
+        p.cosigner_ban_seconds = i64::MAX;
+    });
+    let d = env.tracked_actor(0);
+    let id3 = env.open_simple(&d, &c, 1_000);
+    env.after_grace(id3);
+    env.mark_default(&caller.kp, id3).unwrap();
+    assert_eq!(env.person(&c).ineligible_until, i64::MAX);
+    assert_eq!(env.person(&d).ineligible_until, i64::MAX);
+    env.set_time(T0 + 3650 * DAY);
+    assert!(env.barred(&c) && env.barred(&d));
+    // Zero means no consequence at all.
+    env.tune(|p| {
+        p.default_ban_seconds = 0;
+        p.cosigner_ban_seconds = 0;
+    });
+    let e = env.tracked_actor(0);
+    let f = env.tracked_actor(10_000);
+    let id4 = env.open_simple(&e, &f, 1_000);
+    env.after_grace(id4);
+    env.mark_default(&caller.kp, id4).unwrap();
+    assert!(!env.barred(&e) && !env.barred(&f));
+}
+
+#[test]
+fn exposure_limits_and_reciprocal_guarantees() {
+    let mut env = Env::new(2500);
+    env.fund(100_000);
+    env.tune(|p| {
+        p.max_loan = 1_000;
+        p.first_loan_cap = 1_000;
+        p.max_exposure_per_person = 1_500;
+        p.max_guarantees_per_member = 3;
+    });
+    let a = env.tracked_actor(10_000);
+    let b = env.tracked_actor(10_000);
+    let c = env.tracked_actor(10_000);
+    let (ak, bk, ck) = (
+        a.kp.insecure_clone(),
+        b.kp.insecure_clone(),
+        c.kp.insecure_clone(),
+    );
+    // a borrows 1_000 from c; a now has 1_000 of exposure.
+    env.open_loan(&ak, &a, &c, 1_000, 10).unwrap();
+    // a may guarantee at most 500 more; c already guarantees 1_000.
+    env.request_loan(&bk, &b, &a.key(), 600, 10).unwrap();
+    // a's own open loan must be passed, and then the exposure check fails.
+    assert_fails(
+        env.cosign_loan(&ak, &b, &a),
+        GoodFaithError::MissingCosignerLoan,
+    );
+    assert_fails(
+        env.cosign_with_cosigner_loan(&ak, &b, &a),
+        GoodFaithError::OverExposure,
+    );
+    env.cancel_request(&bk, &b.key()).unwrap();
+    env.request_loan(&bk, &b, &a.key(), 500, 10).unwrap();
+    env.cosign_with_cosigner_loan(&ak, &b, &a).unwrap();
+    assert_eq!(env.person(&a).active_guarantee_amount, 500);
+    // c cannot borrow 600 from b: c guarantees 1_000 already (exposure 1_600).
+    assert_fails(
+        env.request_loan(&ck, &c, &b.key(), 600, 10),
+        GoodFaithError::OverExposure,
+    );
+    env.request_loan(&ck, &c, &b.key(), 500, 10).unwrap();
+    // b's open loan is co-signed by a, not by c, so this is not reciprocal.
+    env.cosign_with_cosigner_loan(&bk, &c, &b).unwrap();
+    // Reciprocity: b borrowed with a as co-signer; a borrowing with b as co-signer is refused.
+    let d = env.tracked_actor(10_000);
+    let dk = d.kp.insecure_clone();
+    // free a first: repay a's loan from c (a still guarantees b)
+    env.repay(&a, 0, 1_000).unwrap();
+    env.request_loan(&ak, &a, &b.key(), 100, 10).unwrap();
+    assert_fails(
+        env.cosign_with_cosigner_loan(&bk, &a, &b),
+        GoodFaithError::ReciprocalGuarantee,
+    );
+    env.cancel_request(&ak, &a.key()).unwrap();
+    // The optional account must be the co-signer's actual loan.
+    env.request_loan(&dk, &d, &b.key(), 100, 10).unwrap();
+    let mut accounts = env.cosign_accounts(&bk, &d, &b);
+    accounts.cosigner_active_loan = Some(env.loan_addr(0));
+    assert_fails(
+        env.send_cosign(&accounts, &bk, &b),
+        GoodFaithError::MissingCosignerLoan,
+    );
+    env.cosign_with_cosigner_loan(&bk, &d, &b).unwrap();
+}
+
+#[test]
+fn disbursement_window_caps_lending_per_period() {
+    let mut env = Env::new(2500);
+    env.fund(100_000);
+    env.tune(|p| {
+        p.disbursement_window_seconds = DAY;
+        p.disbursement_cap_per_window = 1_500;
+    });
+    let c = env.tracked_actor(10_000);
+    let a = env.tracked_actor(0);
+    let b = env.tracked_actor(0);
+    env.open_simple(&a, &c, 1_000);
+    assert_eq!(env.pool_state().window_disbursed, 1_000);
+    let bk = b.kp.insecure_clone();
+    env.request_loan(&bk, &b, &c.key(), 600, 10).unwrap();
+    assert_fails(
+        env.cosign_loan(&bk, &b, &c),
+        GoodFaithError::OverDisbursementCap,
+    );
+    // The window rolls after a day; the request is still valid (7-day TTL).
+    env.set_time(T0 + DAY);
+    env.cosign_loan(&bk, &b, &c).unwrap();
+    let p = env.pool_state();
+    assert_eq!(p.window_start, T0 + DAY);
+    assert_eq!(p.window_disbursed, 600);
+    // Zero cap turns the limit off.
+    env.tune(|p| p.disbursement_cap_per_window = 0);
+    let d = env.tracked_actor(0);
+    env.repay(&a, 0, 1_000).unwrap();
+    env.open_simple(&d, &c, 1_000);
+}
+
+#[test]
+fn requests_expire_and_anyone_closes_them() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    env.tune(|p| p.request_ttl_seconds = 2 * DAY);
+    let a = env.tracked_actor(0);
+    let c = env.tracked_actor(10_000);
+    let ak = a.kp.insecure_clone();
+    let stranger = env.actor(0);
+    env.request_loan(&ak, &a, &c.key(), 500, 10).unwrap();
+    let req: LoanRequest = env.read(&env.request_addr(&a.key()));
+    assert_eq!(req.expires_at, T0 + 2 * DAY);
+    assert_fails(
+        env.close_expired_request(&stranger.kp, &a.key()),
+        GoodFaithError::RequestNotExpired,
+    );
+    env.set_time(T0 + 2 * DAY);
+    let ck = c.kp.insecure_clone();
+    env.cosign_loan(&ck, &a, &c).unwrap(); // the last valid second
+    env.repay(&c, 0, 500).unwrap();
+    env.request_loan(&ak, &a, &c.key(), 500, 10).unwrap();
+    env.set_time(T0 + 4 * DAY + 1);
+    assert_fails(env.cosign_loan(&ck, &a, &c), GoodFaithError::RequestExpired);
+    let rent_payer = a.key();
+    let before = env.svm.get_balance(&rent_payer).unwrap();
+    env.close_expired_request(&stranger.kp, &a.key()).unwrap();
+    assert!(env.svm.get_account(&env.request_addr(&a.key())).is_none());
+    assert!(
+        env.svm.get_balance(&rent_payer).unwrap() > before,
+        "rent went back to the request's payer"
+    );
+    // A fresh request is possible straight away.
+    env.request_loan(&ak, &a, &c.key(), 500, 10).unwrap();
+}
+
+#[test]
+fn escrow_refunds_are_claimed_not_pushed() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    let a = env.tracked_actor(0);
+    let c = env.tracked_actor(10_000);
+    let stranger = env.actor(0);
+    // On-time repayment: the loan closes, the escrow waits, anyone claims it to the co-signer's wallet.
+    let id = env.open_simple(&a, &c, 1_000);
+    assert_fails(
+        env.claim_by(&stranger.kp, id),
+        GoodFaithError::LoanNotActive,
+    );
+    env.repay_only(&a, id, 1_000).unwrap();
+    let l = env.loan(id);
+    assert_eq!(l.status, LoanStatus::Repaid);
+    assert_eq!(l.refund_pending, 250);
+    assert_eq!(env.pool_state().pending_claims, 250);
+    assert_eq!(env.balance(&c.token), 10_000 - 250, "nothing pushed yet");
+    assert_eq!(env.balance(&env.escrow_addr(&env.loan_addr(id))), 250);
+    assert_eq!(env.pool_state().active_loans, 0);
+    env.claim_by(&stranger.kp, id).unwrap();
+    assert_eq!(env.balance(&c.token), 10_000);
+    assert_eq!(env.loan(id).refund_pending, 0);
+    assert_eq!(env.pool_state().pending_claims, 0);
+    assert!(
+        env.svm
+            .get_account(&env.escrow_addr(&env.loan_addr(id)))
+            .is_none(),
+        "escrow closed on claim"
+    );
+    assert_fails(
+        env.claim_by(&stranger.kp, id),
+        3012u32, // the escrow account is gone; Anchor reports that before the status
+    );
+    // Default with leftover: the leftover waits too; a claim after a wallet recovery goes to the new wallet.
+    let id2 = env.open_simple(&a, &c, 1_000);
+    env.repay_only(&a, id2, 900).unwrap();
+    env.after_grace(id2);
+    env.mark_default_only(&stranger.kp, id2).unwrap();
+    let l2 = env.loan(id2);
+    assert_eq!(l2.status, LoanStatus::Defaulted);
+    assert_eq!(l2.refund_pending, 150);
+    assert_eq!(env.pool_state().pending_claims, 150);
+    let c2 = env.new_wallet_for(&c, 0);
+    env.rebind_wallet(&c2).unwrap();
+    env.claim_by(&stranger.kp, id2).unwrap();
+    assert_eq!(env.balance(&c2.token), 150);
+    assert_eq!(env.balance(&c.token), 10_000 - 250);
+    // Nothing left over: the escrow closes at settlement and there is nothing to claim.
+    env.tune(|p| p.cosigner_escrow_bps = 0);
+    let b = env.tracked_actor(0);
+    let id3 = env.open_simple(&b, &c2, 1_000);
+    env.repay_only(&b, id3, 1_000).unwrap();
+    assert!(env
+        .svm
+        .get_account(&env.escrow_addr(&env.loan_addr(id3)))
+        .is_none());
+    assert_fails(
+        env.claim_by(&stranger.kp, id3),
+        3012u32, // the escrow account is gone; Anchor reports that before the status
+    );
+    // With an escrow account still there, the status check speaks: an Active loan has nothing to claim yet.
+    let id4 = env.open_simple(&b, &c2, 1_000);
+    assert_fails(
+        env.claim_by(&stranger.kp, id4),
+        GoodFaithError::LoanNotActive,
+    );
+}
+
+#[test]
+fn pending_claims_never_block_a_wind_down() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    let a = env.tracked_actor(0);
+    let c = env.tracked_actor(10_000);
+    let id = env.open_simple(&a, &c, 1_000);
+    env.repay_only(&a, id, 1_000).unwrap();
+    assert_eq!(env.pool_state().pending_claims, 250);
+    let admin = env.admin.insecure_clone();
+    let successor = env.successor_token();
+    env.announce_wind_down(&admin, successor).unwrap();
+    env.sweep(successor).unwrap();
+    assert_eq!(env.balance(&successor), 10_000);
+    assert_eq!(
+        env.balance(&env.escrow_addr(&env.loan_addr(id))),
+        250,
+        "escrow untouched by the sweep"
+    );
+    let stranger = env.actor(0);
+    env.claim_by(&stranger.kp, id).unwrap();
+    assert_eq!(env.balance(&c.token), 10_000);
+}
+
+#[test]
+fn pause_stops_new_lending_only() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    let a = env.tracked_actor(0);
+    let b = env.tracked_actor(0);
+    let c = env.tracked_actor(10_000);
+    let id = env.open_simple(&a, &c, 1_000);
+    let bk = b.kp.insecure_clone();
+    env.request_loan(&bk, &b, &c.key(), 500, 10).unwrap();
+    let stranger = Keypair::new();
+    env.svm.airdrop(&stranger.pubkey(), 1_000_000_000).unwrap();
+    assert_fails(env.pause(&stranger), GoodFaithError::Unauthorized);
+    let pauser = env.pauser.insecure_clone();
+    env.pause(&pauser).unwrap();
+    assert!(env.pool_state().paused);
+    // No new requests or co-signs...
+    let ck = c.kp.insecure_clone();
+    assert_fails(env.cosign_loan(&ck, &b, &c), GoodFaithError::Paused);
+    let d = env.tracked_actor(0);
+    let dk = d.kp.insecure_clone();
+    assert_fails(
+        env.request_loan(&dk, &d, &c.key(), 100, 10),
+        GoodFaithError::Paused,
+    );
+    // ...but repayments, donations, defaults, claims, cancellations and joins continue.
+    env.repay_only(&a, id, 1_000).unwrap();
+    env.claim_by(&stranger, id).unwrap();
+    let donor = env.actor(100);
+    env.donate(&donor, 100).unwrap();
+    env.cancel_request(&bk, &b.key()).unwrap();
+    env.member_actor(0);
+    // Only the authority resumes.
+    assert_fails(env.resume(&pauser), GoodFaithError::Unauthorized);
+    let admin = env.admin.insecure_clone();
+    env.resume(&admin).unwrap();
+    env.open_loan(&dk, &d, &c, 100, 10).unwrap();
+    // The authority can pause too.
+    env.pause(&admin).unwrap();
+    assert!(env.pool_state().paused);
+}
+
+#[test]
+fn notice_period_cannot_be_scheduled_below_the_minimum() {
+    use goodfaith::MIN_TIMELOCK_SECONDS;
+    // A test pool (0) may stay low or rise; once at or above the minimum it can never go below again.
+    let mut env = Env::new(2500);
+    let admin = env.admin.insecure_clone();
+    let mut p = env.params(2500);
+    p.timelock_seconds = 3600;
+    env.update_pool(&admin, p).unwrap();
+    p.timelock_seconds = MIN_TIMELOCK_SECONDS;
+    env.schedule_params(&admin, p).unwrap();
+    env.set_time(T0 + 3600);
+    env.apply_params().unwrap();
+    p.timelock_seconds = 0;
+    assert_fails(
+        env.schedule_params(&admin, p),
+        GoodFaithError::TimelockBelowMinimum,
+    );
+    p.timelock_seconds = MIN_TIMELOCK_SECONDS - 1;
+    assert_fails(
+        env.schedule_params(&admin, p),
+        GoodFaithError::TimelockBelowMinimum,
+    );
+    p.timelock_seconds = MIN_TIMELOCK_SECONDS + 1;
+    env.schedule_params(&admin, p).unwrap();
+}
+
 mod props {
     use super::*;
     use proptest::prelude::*;
@@ -2676,6 +3462,12 @@ mod props {
     const START: u64 = 50_000;
     const REBIND_TOKENS: u64 = 1_000;
     const TIMELOCK: i64 = 3 * DAY;
+    const RECOVERY_DELAY: i64 = DAY;
+    const EXPOSURE: u64 = 6_000;
+    const WINDOW_CAP: u64 = 7_000;
+    const DEFAULT_BAN: i64 = 30 * DAY;
+    const COSIGNER_BAN: i64 = 10 * DAY;
+    const LATE_BAN: i64 = 5 * DAY;
 
     #[derive(Clone, Debug)]
     enum Op {
@@ -2683,8 +3475,10 @@ mod props {
         Request(usize, usize, u64, u16),
         Cosign(usize),
         Cancel(usize, bool),
+        CloseExpired(usize),
         Repay(usize, u64, u64),
         Default(u64),
+        Claim(u64),
         Wait(u8),
         Schedule {
             bps: u16,
@@ -2695,7 +3489,11 @@ mod props {
         },
         Apply,
         CancelParams,
-        Rebind(usize),
+        ProposeRebind(usize),
+        Veto(usize),
+        Finalize(usize),
+        Pause,
+        Resume,
         AnnounceWindDown,
         CancelWindDown,
         Sweep,
@@ -2706,14 +3504,16 @@ mod props {
         let a = 0..ACTORS;
         prop_oneof![
             4 => (a.clone(), 0..5_000u64).prop_map(|(x, n)| Op::Donate(x, n)),
-            6 => (a.clone(), a.clone(), 0..4_000u64, 0..100u16)
+            7 => (a.clone(), a.clone(), 0..4_000u64, 0..100u16)
                 .prop_map(|(b, c, n, t)| Op::Request(b, c, n, t)),
-            6 => a.clone().prop_map(Op::Cosign),
+            7 => a.clone().prop_map(Op::Cosign),
             2 => (a.clone(), any::<bool>()).prop_map(|(x, y)| Op::Cancel(x, y)),
-            6 => (a.clone(), 0..6u64, 0..4_000u64).prop_map(|(x, l, n)| Op::Repay(x, l, n)),
-            3 => (0..6u64).prop_map(Op::Default),
-            6 => (0..60u8).prop_map(Op::Wait),
-            3 => (0..=10_000u16, 0..10u16, 0..5_000u64, 0..4u8, any::<bool>()).prop_map(
+            1 => a.clone().prop_map(Op::CloseExpired),
+            6 => (a.clone(), 0..8u64, 0..4_000u64).prop_map(|(x, l, n)| Op::Repay(x, l, n)),
+            3 => (0..8u64).prop_map(Op::Default),
+            3 => (0..8u64).prop_map(Op::Claim),
+            6 => (0..40u8).prop_map(Op::Wait),
+            3 => (0..=10_000u16, 0..10u16, 1..5_000u64, 1..4u8, any::<bool>()).prop_map(
                 |(bps, grace, max_loan, max_g, restore_issuer)| Op::Schedule {
                     bps,
                     grace,
@@ -2724,12 +3524,22 @@ mod props {
             ),
             3 => Just(Op::Apply),
             1 => Just(Op::CancelParams),
-            2 => a.clone().prop_map(Op::Rebind),
+            2 => a.clone().prop_map(Op::ProposeRebind),
+            1 => a.clone().prop_map(Op::Veto),
+            2 => a.clone().prop_map(Op::Finalize),
+            1 => Just(Op::Pause),
+            1 => Just(Op::Resume),
             1 => Just(Op::AnnounceWindDown),
             1 => Just(Op::CancelWindDown),
             2 => Just(Op::Sweep),
             1 => Just(Op::SuspendIssuer),
         ]
+    }
+
+    fn escrow_balance(env: &Env, id: u64) -> Option<u64> {
+        let acc = env.svm.get_account(&env.escrow_addr(&env.loan_addr(id)))?;
+        (acc.owner == TOKEN_PROGRAM && acc.data.len() == 165)
+            .then(|| u64::from_le_bytes(acc.data[64..72].try_into().unwrap()))
     }
 
     /// Everything the harness has handed tokens to, plus the vault, escrows and the successor.
@@ -2738,15 +3548,36 @@ mod props {
         for t in tokens {
             total += env.balance(t);
         }
-        let n = env.pool_state().loan_count;
-        for id in 0..n {
-            if let Some(acc) = env.svm.get_account(&env.escrow_addr(&env.loan_addr(id))) {
-                if acc.owner == TOKEN_PROGRAM && acc.data.len() == 165 {
-                    total += u64::from_le_bytes(acc.data[64..72].try_into().unwrap());
-                }
-            }
+        for id in 0..env.pool_state().loan_count {
+            total += escrow_balance(env, id).unwrap_or(0);
         }
         total
+    }
+
+    fn live_params(pool: &Pool) -> PoolParams {
+        PoolParams {
+            gatekeeper_network: pool.gatekeeper_network,
+            max_loan: pool.max_loan,
+            max_term_days: pool.max_term_days,
+            grace_days: pool.grace_days,
+            max_guarantees_per_member: pool.max_guarantees_per_member,
+            cosigner_escrow_bps: pool.cosigner_escrow_bps,
+            issuer: pool.issuer,
+            timelock_seconds: pool.timelock_seconds,
+            recovery_authority: pool.recovery_authority,
+            pause_authority: pool.pause_authority,
+            recovery_delay_seconds: pool.recovery_delay_seconds,
+            request_ttl_seconds: pool.request_ttl_seconds,
+            first_loan_cap: pool.first_loan_cap,
+            loan_cap_step: pool.loan_cap_step,
+            cooldown_seconds: pool.cooldown_seconds,
+            max_exposure_per_person: pool.max_exposure_per_person,
+            disbursement_window_seconds: pool.disbursement_window_seconds,
+            disbursement_cap_per_window: pool.disbursement_cap_per_window,
+            default_ban_seconds: pool.default_ban_seconds,
+            late_ban_seconds: pool.late_ban_seconds,
+            cosigner_ban_seconds: pool.cosigner_ban_seconds,
+        }
     }
 
     struct Model {
@@ -2754,10 +3585,14 @@ mod props {
         applied: PoolParams,
         /// Loan count and donations frozen the moment the wind-down took effect.
         closed_at: Option<(u64, u64)>,
+        /// Loan count when lending was paused; unchanged while paused.
+        paused_at: Option<u64>,
         /// Every token account that ever held supply (current and retired wallets, successor).
         tokens: Vec<Pubkey>,
-        /// Wallets retired by a rebind.
+        /// Wallets retired by a recovery.
         retired: Vec<Pubkey>,
+        /// Proposed replacement wallets, per actor, until finalized or vetoed.
+        pending: Vec<Option<Actor>>,
         supply: u64,
         now: i64,
     }
@@ -2776,17 +3611,11 @@ mod props {
         // tokens are conserved across wallets, escrows and the successor
         assert_eq!(token_balance_sum(env, &m.tokens), m.supply);
         // settings only move through apply_params
-        let live = PoolParams {
-            gatekeeper_network: pool.gatekeeper_network,
-            max_loan: pool.max_loan,
-            max_term_days: pool.max_term_days,
-            grace_days: pool.grace_days,
-            max_guarantees_per_member: pool.max_guarantees_per_member,
-            cosigner_escrow_bps: pool.cosigner_escrow_bps,
-            issuer: pool.issuer,
-            timelock_seconds: pool.timelock_seconds,
-        };
-        assert_eq!(live, m.applied, "settings changed without apply_params");
+        assert_eq!(
+            live_params(&pool),
+            m.applied,
+            "settings changed without apply_params"
+        );
         if let Some(p) = pool.pending_params {
             assert!(p.validate().is_ok());
         }
@@ -2803,14 +3632,29 @@ mod props {
         if pool.total_swept > 0 {
             assert_eq!(pool.active_loans, 0);
         }
+        // paused: no loan opened since
+        if pool.paused {
+            let snap = *m.paused_at.get_or_insert(pool.loan_count);
+            assert_eq!(pool.loan_count, snap, "a loan opened while paused");
+        } else {
+            m.paused_at = None;
+        }
+        if pool.disbursement_cap_per_window > 0 {
+            assert!(pool.window_disbursed <= pool.disbursement_cap_per_window);
+        }
 
         let persons: Vec<Pubkey> = actors
             .iter()
-            .map(|a| env.person_addr(&a.person_hash))
+            .map(|a| env.person_addr(&a.person_id))
             .collect();
         let mut guarantees = vec![0u8; actors.len()];
+        let mut guaranteed = vec![0u64; actors.len()];
+        let mut borrowed = vec![0u64; actors.len()];
+        let mut completed = vec![0u16; actors.len()];
         let mut active: Vec<Option<Pubkey>> = vec![None; actors.len()];
         let mut open = 0u64;
+        let mut pending_claims = 0u64;
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
         for id in 0..pool.loan_count {
             let loan = env.loan(id);
             assert!(loan.repaid <= loan.principal);
@@ -2823,41 +3667,85 @@ mod props {
                 .iter()
                 .position(|p| *p == loan.cosigner_person)
                 .unwrap();
-            let escrow = env.escrow_addr(&env.loan_addr(id));
-            let acc = env.svm.get_account(&escrow);
-            let live = acc.as_ref().is_some_and(|a| !a.data.is_empty());
+            let escrow = escrow_balance(env, id);
+            let deadline = loan.deadline().unwrap();
             match loan.status {
                 LoanStatus::Active => {
                     open += 1;
-                    assert!(live);
-                    assert_eq!(env.balance(&escrow), loan.escrowed);
+                    assert_eq!(escrow, Some(loan.escrowed));
                     assert!(active[b].is_none(), "two active loans for one person");
                     active[b] = Some(env.loan_addr(id));
                     guarantees[c] += 1;
+                    guaranteed[c] += loan.principal;
+                    borrowed[b] += loan.principal - loan.repaid;
+                    assert!(!pairs.contains(&(c, b)), "reciprocal guarantee");
+                    pairs.push((b, c));
+                    assert_eq!(loan.refund_pending, 0);
                 }
-                LoanStatus::Repaid => {
-                    assert!(!live, "escrow left open after loan closed");
+                LoanStatus::Repaid | LoanStatus::RepaidLate => {
                     assert_eq!(loan.repaid, loan.principal);
+                    assert_eq!(
+                        loan.status == LoanStatus::RepaidLate,
+                        loan.closed_at > deadline
+                    );
+                    if loan.status == LoanStatus::Repaid {
+                        completed[b] += 1;
+                    } else {
+                        assert!(
+                            env.person(&actors[b]).ineligible_until >= loan.closed_at + LATE_BAN
+                        );
+                    }
+                    // the escrow waits exactly `refund_pending`, or is gone
+                    assert_eq!(
+                        escrow.unwrap_or(0),
+                        loan.refund_pending,
+                        "escrow vs refund pending"
+                    );
+                    pending_claims += loan.refund_pending;
                 }
                 LoanStatus::Defaulted => {
-                    assert!(!live, "escrow left open after loan closed");
-                    assert!(env.person(&actors[b]).ineligible);
+                    assert!(loan.closed_at > deadline);
+                    assert_eq!(
+                        escrow.unwrap_or(0),
+                        loan.refund_pending,
+                        "escrow vs refund pending"
+                    );
+                    pending_claims += loan.refund_pending;
+                    assert!(
+                        env.person(&actors[b]).ineligible_until >= loan.closed_at + DEFAULT_BAN
+                    );
                     let shortfall = loan.principal - loan.repaid;
                     if shortfall > loan.escrowed {
-                        assert!(env.person(&actors[c]).ineligible);
+                        assert!(
+                            env.person(&actors[c]).ineligible_until
+                                >= loan.closed_at + COSIGNER_BAN
+                        );
                     }
                 }
             }
         }
         assert_eq!(pool.active_loans, open);
+        assert_eq!(pool.pending_claims, pending_claims);
         for (i, a) in actors.iter().enumerate() {
             let p = env.person(a);
             assert_eq!(p.active_loan, active[i]);
             assert_eq!(p.active_guarantees, guarantees[i]);
+            assert_eq!(p.active_guarantee_amount, guaranteed[i]);
+            assert_eq!(p.completed_loans, completed[i]);
+            assert!(borrowed[i] + guaranteed[i] <= EXPOSURE, "exposure limit");
             assert_eq!(p.wallet, a.key());
             let member = env.member_of(a);
             assert!(!member.retired);
             assert_eq!(member.person, persons[i]);
+            match (&m.pending[i], p.pending_wallet) {
+                (Some(n), Some(w)) => assert_eq!(n.key(), w),
+                (None, None) => {}
+                (x, y) => panic!(
+                    "pending recovery mismatch: model {:?} chain {:?}",
+                    x.as_ref().map(|n| n.key()),
+                    y
+                ),
+            }
         }
         for w in &m.retired {
             let member: Member = env.read(&env.member_addr(w));
@@ -2869,18 +3757,30 @@ mod props {
         #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
         #[test]
         fn invariants_hold(ops in proptest::collection::vec(op(), 1..40)) {
-            let mut env = Env::with_timelock(2500, TIMELOCK);
+            let mut env = Env::with_delays(2500, 0, RECOVERY_DELAY);
+            env.tune(|p| {
+                p.max_exposure_per_person = EXPOSURE;
+                p.disbursement_cap_per_window = WINDOW_CAP;
+                p.disbursement_window_seconds = 2 * DAY;
+                p.default_ban_seconds = DEFAULT_BAN;
+                p.cosigner_ban_seconds = COSIGNER_BAN;
+                p.late_ban_seconds = LATE_BAN;
+                p.timelock_seconds = TIMELOCK;
+            });
             let mut actors: Vec<Actor> = (0..ACTORS).map(|_| env.tracked_actor(START)).collect();
             let successor = env.successor_token();
             let mut m = Model {
-                applied: env.params(2500),
+                applied: live_params(&env.pool_state()),
                 closed_at: None,
+                paused_at: None,
                 tokens: actors.iter().map(|a| a.token).chain([successor]).collect(),
                 retired: Vec::new(),
+                pending: vec![None, None, None, None],
                 supply: ACTORS as u64 * START,
                 now: T0,
             };
             let admin = env.admin.insecure_clone();
+            let pauser = env.pauser.insecure_clone();
             for o in ops {
                 match o {
                     Op::Donate(a, n) => { let _ = env.donate(&actors[a], n); }
@@ -2895,7 +3795,7 @@ mod props {
                             let c = actors.iter().position(|a| a.key() == r.cosigner);
                             if let Some(c) = c {
                                 let kp = actors[c].kp.insecure_clone();
-                                let _ = env.cosign_loan(&kp, &actors[b], &actors[c]);
+                                let _ = env.cosign_with_cosigner_loan(&kp, &actors[b], &actors[c]);
                             }
                         }
                     }
@@ -2910,15 +3810,25 @@ mod props {
                             }
                         }
                     }
+                    Op::CloseExpired(b) => {
+                        let req = env.request_addr(&actors[b].key());
+                        if env.svm.get_account(&req).is_some_and(|a| !a.data.is_empty()) {
+                            let _ = env.close_expired_request(&admin, &actors[b].key());
+                        }
+                    }
                     Op::Repay(p, l, n) => {
                         if l < env.pool_state().loan_count {
-                            let _ = env.repay(&actors[p], l, n);
+                            let _ = env.repay_only(&actors[p], l, n);
                         }
                     }
                     Op::Default(l) => {
                         if l < env.pool_state().loan_count {
-                            let kp = actors[0].kp.insecure_clone();
-                            let _ = env.mark_default(&kp, l);
+                            let _ = env.mark_default_only(&admin, l);
+                        }
+                    }
+                    Op::Claim(l) => {
+                        if l < env.pool_state().loan_count {
+                            let _ = env.claim_by(&admin, l);
                         }
                     }
                     Op::Wait(d) => {
@@ -2926,12 +3836,14 @@ mod props {
                         env.set_time(m.now);
                     }
                     Op::Schedule { bps, grace, max_loan, max_g, restore_issuer } => {
-                        let mut p = env.params(bps);
+                        let mut p = live_params(&env.pool_state());
+                        p.cosigner_escrow_bps = bps;
                         p.grace_days = grace;
                         p.max_loan = max_loan;
+                        p.first_loan_cap = max_loan;
                         p.max_guarantees_per_member = max_g;
-                        if !restore_issuer {
-                            p.issuer = env.pool_state().issuer;
+                        if restore_issuer {
+                            p.issuer = env.issuer.pubkey();
                         }
                         let _ = env.schedule_params(&admin, p);
                     }
@@ -2942,15 +3854,32 @@ mod props {
                         }
                     }
                     Op::CancelParams => { let _ = env.cancel_params(&admin); }
-                    Op::Rebind(i) => {
-                        let n = env.new_wallet_for(&actors[i], REBIND_TOKENS);
-                        m.tokens.push(n.token);
-                        m.supply += REBIND_TOKENS;
-                        if env.rebind_wallet(&n).is_ok() {
-                            m.retired.push(actors[i].key());
-                            actors[i] = n;
+                    Op::ProposeRebind(i) => {
+                        if m.pending[i].is_none() {
+                            let n = env.new_wallet_for(&actors[i], REBIND_TOKENS);
+                            m.tokens.push(n.token);
+                            m.supply += REBIND_TOKENS;
+                            if env.propose_rebind(&n).is_ok() {
+                                m.pending[i] = Some(n);
+                            }
                         }
                     }
+                    Op::Veto(i) => {
+                        let kp = actors[i].kp.insecure_clone();
+                        if env.veto_rebind(&kp, &actors[i].person_id).is_ok() {
+                            m.pending[i] = None;
+                        }
+                    }
+                    Op::Finalize(i) => {
+                        if let Some(n) = m.pending[i].as_ref() {
+                            if env.finalize_rebind(&admin, n).is_ok() {
+                                m.retired.push(actors[i].key());
+                                actors[i] = m.pending[i].take().unwrap();
+                            }
+                        }
+                    }
+                    Op::Pause => { let _ = env.pause(&pauser); }
+                    Op::Resume => { let _ = env.resume(&admin); }
                     Op::AnnounceWindDown => { let _ = env.announce_wind_down(&admin, successor); }
                     Op::CancelWindDown => { let _ = env.cancel_wind_down(&admin); }
                     Op::Sweep => { let _ = env.sweep(successor); }

@@ -6,28 +6,52 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { assertAccountExists, assertAccountsExist, combineCodec, decodeAccount, fetchEncodedAccount, fetchEncodedAccounts, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getOptionDecoder, getOptionEncoder, getStructDecoder, getStructEncoder, getU8Decoder, getU8Encoder, transformEncoder, type Account, type Address, type ClientWithRpc, type Codec, type Decoder, type EncodedAccount, type Encoder, type FetchAccountConfig, type FetchAccountsConfig, type GetAccountInfoApi, type GetMultipleAccountsApi, type HasAddress, type MaybeAccount, type MaybeEncodedAccount, type Option, type OptionOrNullable, type ReadonlyUint8Array } from '@solana/kit';
+import { assertAccountExists, assertAccountsExist, combineCodec, decodeAccount, fetchEncodedAccount, fetchEncodedAccounts, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getI64Decoder, getI64Encoder, getOptionDecoder, getOptionEncoder, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, transformEncoder, type Account, type Address, type ClientWithRpc, type Codec, type Decoder, type EncodedAccount, type Encoder, type FetchAccountConfig, type FetchAccountsConfig, type GetAccountInfoApi, type GetMultipleAccountsApi, type HasAddress, type MaybeAccount, type MaybeEncodedAccount, type Option, type OptionOrNullable, type ReadonlyUint8Array } from '@solana/kit';
 
 export const PERSON_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([16, 242, 44, 24, 121, 11, 0, 183]);
 
 export function getPersonDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(PERSON_DISCRIMINATOR); }
 
-export type Person = { discriminator: ReadonlyUint8Array; personHash: ReadonlyUint8Array; 
+export type Person = { discriminator: ReadonlyUint8Array; 
+/** Opaque id assigned by the issuer; the mapping to a credential lives off chain. */
+personId: ReadonlyUint8Array; 
 /** The wallet currently bound to this person. */
-wallet: Address; activeLoan: Option<Address>; activeGuarantees: number; ineligible: boolean; bump: number;  };
+wallet: Address; activeLoan: Option<Address>; activeGuarantees: number; 
+/** Principal of the Active loans this person co-signs. */
+activeGuaranteeAmount: bigint; 
+/** Loans repaid on time; raises the personal cap. */
+completedLoans: number; 
+/** 0: eligible; i64::MAX: barred for good; otherwise barred until this time. */
+ineligibleUntil: bigint; 
+/** Until this time the person is on the first-loan cap (new or recovered membership). */
+restrictedUntil: bigint; 
+/** Wallet a recovery would move the person to, once `pending_wallet_at` has passed and nobody vetoed. */
+pendingWallet: Option<Address>; pendingWalletAt: bigint; bump: number;  };
 
-export type PersonArgs = { personHash: ReadonlyUint8Array; 
+export type PersonArgs = { 
+/** Opaque id assigned by the issuer; the mapping to a credential lives off chain. */
+personId: ReadonlyUint8Array; 
 /** The wallet currently bound to this person. */
-wallet: Address | HasAddress; activeLoan: OptionOrNullable<Address | HasAddress>; activeGuarantees: number; ineligible: boolean; bump: number;  };
+wallet: Address | HasAddress; activeLoan: OptionOrNullable<Address | HasAddress>; activeGuarantees: number; 
+/** Principal of the Active loans this person co-signs. */
+activeGuaranteeAmount: number | bigint; 
+/** Loans repaid on time; raises the personal cap. */
+completedLoans: number; 
+/** 0: eligible; i64::MAX: barred for good; otherwise barred until this time. */
+ineligibleUntil: number | bigint; 
+/** Until this time the person is on the first-loan cap (new or recovered membership). */
+restrictedUntil: number | bigint; 
+/** Wallet a recovery would move the person to, once `pending_wallet_at` has passed and nobody vetoed. */
+pendingWallet: OptionOrNullable<Address | HasAddress>; pendingWalletAt: number | bigint; bump: number;  };
 
 /** Gets the encoder for {@link PersonArgs} account data. */
 export function getPersonEncoder(): Encoder<PersonArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['personHash', fixEncoderSize(getBytesEncoder(), 32)], ['wallet', getAddressEncoder()], ['activeLoan', getOptionEncoder(getAddressEncoder())], ['activeGuarantees', getU8Encoder()], ['ineligible', getBooleanEncoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: PERSON_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['personId', fixEncoderSize(getBytesEncoder(), 32)], ['wallet', getAddressEncoder()], ['activeLoan', getOptionEncoder(getAddressEncoder())], ['activeGuarantees', getU8Encoder()], ['activeGuaranteeAmount', getU64Encoder()], ['completedLoans', getU16Encoder()], ['ineligibleUntil', getI64Encoder()], ['restrictedUntil', getI64Encoder()], ['pendingWallet', getOptionEncoder(getAddressEncoder())], ['pendingWalletAt', getI64Encoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: PERSON_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Person} account data. */
 export function getPersonDecoder(): Decoder<Person> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['personHash', fixDecoderSize(getBytesDecoder(), 32)], ['wallet', getAddressDecoder()], ['activeLoan', getOptionDecoder(getAddressDecoder())], ['activeGuarantees', getU8Decoder()], ['ineligible', getBooleanDecoder()], ['bump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['personId', fixDecoderSize(getBytesDecoder(), 32)], ['wallet', getAddressDecoder()], ['activeLoan', getOptionDecoder(getAddressDecoder())], ['activeGuarantees', getU8Decoder()], ['activeGuaranteeAmount', getU64Decoder()], ['completedLoans', getU16Decoder()], ['ineligibleUntil', getI64Decoder()], ['restrictedUntil', getI64Decoder()], ['pendingWallet', getOptionDecoder(getAddressDecoder())], ['pendingWalletAt', getI64Decoder()], ['bump', getU8Decoder()]]);
 }
 
 /** Gets the codec for {@link Person} account data. */

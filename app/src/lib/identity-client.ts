@@ -22,6 +22,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 export const fetchIdentityStatus = (wallet: Address) => call<StatusView>(`/api/identity/status?wallet=${wallet}`);
 export const prepareJoin = (wallet: Address) =>
   call<PreparedTx>("/api/identity/join", { method: "POST", body: JSON.stringify({ wallet }) });
+/** Proposes moving the membership to this wallet, or finalises a proposal whose delay has passed. */
 export const prepareRebind = (wallet: Address) =>
   call<PreparedTx>("/api/identity/rebind", { method: "POST", body: JSON.stringify({ wallet }) });
 

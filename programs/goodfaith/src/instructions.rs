@@ -1,9 +1,10 @@
 pub mod cancel_request;
+pub mod claim;
 pub mod cosign_loan;
 pub mod donate;
 pub mod initialize_pool;
 pub mod mark_default;
-pub mod rebind_wallet;
+pub mod recovery;
 pub mod register_member;
 pub mod repay;
 pub mod request_loan;
@@ -11,11 +12,12 @@ pub mod update_pool;
 pub mod wind_down;
 
 pub use cancel_request::*;
+pub use claim::*;
 pub use cosign_loan::*;
 pub use donate::*;
 pub use initialize_pool::*;
 pub use mark_default::*;
-pub use rebind_wallet::*;
+pub use recovery::*;
 pub use register_member::*;
 pub use repay::*;
 pub use request_loan::*;

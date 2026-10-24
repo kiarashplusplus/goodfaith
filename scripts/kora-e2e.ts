@@ -64,10 +64,10 @@ const sp = async (w: Signer, ixs: Parameters<typeof sponsored>[1], label: string
 // ---------- register (Person + Member rent sponsored; the issuer co-signs, as the identity service does) ----------
 const admin = await createKeyPairSignerFromBytes(Uint8Array.from(JSON.parse(fs.readFileSync(path.join(os.homedir(), '.config/solana/id.json'), 'utf8'))));
 assert.equal(pool.issuer, admin.address, 'the fork pool must use the admin key as issuer (npm run e2e)');
-const hashOf = (a: Address) => new Uint8Array(createHash('sha256').update(`kora-e2e:${a}`).digest());
+const idOf = (a: Address) => new Uint8Array(createHash('sha256').update(`kora-e2e:${a}`).digest());
 for (const w of [borrower, cosigner, borrower2, cosigner2]) {
   // Prepared-transaction path: build for the sponsor, the issuer and the wallet sign, Kora adds its signature and sends.
-  const ix = await prog.registerMemberIx({ wallet: w.address, payer: payer!, issuer: admin.address, pool, gatewayToken: await gw(w.address), personHash: hashOf(w.address) });
+  const ix = await prog.registerMemberIx({ wallet: w.address, payer: payer!, issuer: admin.address, pool, gatewayToken: await gw(w.address), personId: idOf(w.address) });
   const built = await tx.buildTransaction(txRpc, payer!, [ix]);
   await tx.simulate(txRpc, built);
   const signed = await partiallySignTransaction([admin.keyPair, (w as unknown as { keyPair: CryptoKeyPair }).keyPair], built);
@@ -97,17 +97,22 @@ assert.equal(await tok(borrowerAta), amount);
 assert.equal(await tok(await ata(cosigner.address)), 500n * USDC - L1.escrow);
 row('cosign (borrower had no token account)', `loan#${L1.id}`, `escrow ${fmt(L1.escrow)}`, `ATA created by the sponsor, within max_allowed_lamports`);
 
-// ---------- repay ----------
+// ---------- repay, then the claim that releases the escrow ----------
 const loanOf = async (id: bigint) => (await prog.fetchLoanById(txRpc, pool.address, id))!;
 let l = await loanOf(L1.id);
 const cw = (loan: typeof l) => prog.cosignerWalletOf(txRpc, loan);
-await sp(third, [await prog.repayIx({ payer: third.address, pool, loan: l, amount: 30n * USDC, cosignerWallet: await cw(l) })], 'repay partial');
+await sp(third, [await prog.repayIx({ payer: third.address, pool, loan: l, amount: 30n * USDC })], 'repay partial');
 l = await loanOf(L1.id);
-await sp(borrower, [await prog.repayIx({ payer: borrower.address, pool, loan: l, amount: 70n * USDC, cosignerWallet: await cw(l) })], 'repay full');
+await sp(borrower, [await prog.repayIx({ payer: borrower.address, pool, loan: l, amount: 70n * USDC })], 'repay full');
 l = await loanOf(L1.id);
 assert.equal(l.status, 'Repaid');
+assert.equal(l.refundPending, L1.escrow);
+assert.equal(await tok(await ata(cosigner.address)), 500n * USDC - L1.escrow, 'repay pushes nothing to the co-signer');
+// the co-signer presses "Release escrow" in the app: sponsored, the token account already exists
+await sp(cosigner, async () => [(await prog.claimEscrowIx({ claimer: cosigner.address, pool, loan: l, cosignerWallet: await cw(l) })).ix], 'claim');
 assert.equal(await tok(await ata(cosigner.address)), 500n * USDC);
-row('repay 30 (third) + 70 (borrower)', 'Repaid', `escrow back ${fmt(await tok(await ata(cosigner.address)))}`);
+assert.equal((await loanOf(L1.id)).refundPending, 0n);
+row('repay 30 (third) + 70 (borrower) + claim', 'Repaid', `escrow claimed ${fmt(await tok(await ata(cosigner.address)))}`, 'escrow rent back to Kora (the co-sign payer)');
 
 // ---------- donate ----------
 const vaultBefore = await tok(pool.vault);
@@ -123,7 +128,7 @@ await sp(borrower, [prog.cancelRequestIx({ canceller: borrower.address, pool: po
 assert.equal(await prog.fetchRequest(txRpc, pool.address, borrower.address), null);
 row('request + cancel', 'request rent returned to Kora');
 
-// ---------- loan 2: default with the co-signer token account re-created by the sponsor ----------
+// ---------- loan 2: default, then a claim that re-creates the co-signer's closed token account at the sponsor's expense ----------
 await sp(borrower2, async (feePayer) => [await prog.requestLoanIx({ payer: feePayer, borrower: borrower2.address, borrowerPerson: await personOf(borrower2.address), pool, borrowerGatewayToken: await gw(borrower2.address), amount, termDays: term, cosigner: cosigner2.address })], 'request b2');
 const escrow2 = escrowFor(amount, pool.cosignerEscrowBps);
 await setUsdc(cosigner2.address, escrow2); // exactly the escrow, so the account is empty afterwards
@@ -134,23 +139,26 @@ assert.equal(await tok(c2ata), 0n);
 await tx.sendInstructions(txRpc, cosigner2 as never, [getCloseAccountInstruction({ account: c2ata, destination: cosigner2.address, owner: cosigner2 }) as never], { sponsor: false });
 assert.equal(await sendLib.ataExists(txRpc, c2ata), false);
 l = await loanOf(L2.id);
-// Repay loads the co-signer's token account, so the app re-creates it (idempotent) in front of every repayment.
-await sp(third, async (feePayer) => [ataCreate(feePayer, c2ata, l.cosigner, pool.mint), await prog.repayIx({ payer: third.address, pool, loan: l, amount: 30n * USDC, cosignerWallet: await cw(l) })], 'repay partial 2');
-assert.equal(await sendLib.ataExists(txRpc, c2ata), true, 'sponsor re-created the co-signer token account for the repayment');
-await tx.sendInstructions(txRpc, cosigner2 as never, [getCloseAccountInstruction({ account: c2ata, destination: cosigner2.address, owner: cosigner2 }) as never], { sponsor: false });
+// Repayment and default never touch the co-signer's token account, so a closed account cannot block either.
+await sp(third, [await prog.repayIx({ payer: third.address, pool, loan: l, amount: 80n * USDC })], 'repay partial 2');
+assert.equal(await sendLib.ataExists(txRpc, c2ata), false, 'repayment left the closed account alone');
 const target = Number(l.dueAt) + l.graceDays * 86400 + 3600;
 await cheat('surfnet_timeTravel', [{ absoluteTimestamp: target * 1000 }]);
 await new Promise(r => setTimeout(r, 1500));
 assert.ok((await clockTs()) > Number(l.dueAt) + l.graceDays * 86400);
-await sp(third, async (feePayer) => {
-  const cosignerWallet = await cw(l);
-  const { ix, cosignerToken } = await prog.markDefaultIx({ caller: third.address, pool, loan: l, cosignerWallet });
-  return [ataCreate(feePayer, cosignerToken, cosignerWallet, pool.mint), ix];
-}, 'mark_default');
+await sp(third, [await prog.markDefaultIx({ caller: third.address, pool, loan: l })], 'mark_default');
 l = await loanOf(L2.id);
 assert.equal(l.status, 'Defaulted');
-assert.equal(await tok(c2ata), 0n); // escrow (25) < shortfall (70): all of it went to the vault
-row('repay + mark_default after the co-signer closed their token account', `loan#${L2.id}`, 'account re-created by the sponsor each time', 'Defaulted');
+assert.equal(l.refundPending, escrow2 - 20n * USDC, 'shortfall 20 came out of the escrow, the rest is owed to the co-signer');
+// the claim (by anyone) re-creates the token account, the sponsor paying its rent
+await sp(third, async (feePayer) => {
+  const cosignerWallet = await cw(l);
+  const { ix, cosignerToken } = await prog.claimEscrowIx({ claimer: third.address, pool, loan: l, cosignerWallet });
+  return [ataCreate(feePayer, cosignerToken, cosignerWallet, pool.mint), ix];
+}, 'claim 2');
+assert.equal(await tok(c2ata), escrow2 - 20n * USDC);
+assert.equal((await loanOf(L2.id)).refundPending, 0n);
+row('repay 80 + mark_default + claim after the co-signer closed their token account', `loan#${L2.id}`, 'Defaulted, shortfall 20 recovered', `claim re-created the account (sponsor paid), ${fmt(escrow2 - 20n * USDC)} returned`);
 
 // ---------- Checking-style send: no sponsor for creating a stranger's token account ----------
 const fresh = await wallet();
@@ -204,9 +212,9 @@ for (const w of [borrower, cosigner, donor, borrower2]) assert.equal(await sol(w
 // cosigner2 paid one unsponsored close (fee) and got the account rent back
 const koraSpent = koraBase - (await sol(payer!));
 const rent = async (n: number) => BigInt(await rpc.getMinimumBalanceForRentExemption(BigInt(n)).send());
-// 4 people (Person 108 + Member 74 bytes each), 2 loans (221 bytes, permanent), 4 token accounts (two borrowers, the
-// co-signer's twice), two signatures per transaction (three for registrations).
-const expected = 4n * ((await rent(108)) + (await rent(74))) + 2n * (await rent(221)) + 4n * (await rent(165)) + 10_000n * BigInt(sponsoredTxs) + 5_000n * 4n;
+// 4 people (Person 174 + Member 74 bytes each), 2 loans (237 bytes, permanent), 3 token accounts (two borrowers, the
+// second co-signer's re-created by the claim), two signatures per transaction (three for registrations).
+const expected = 4n * ((await rent(174)) + (await rent(74))) + 2n * (await rent(237)) + 3n * (await rent(165)) + 10_000n * BigInt(sponsoredTxs) + 5_000n * 4n;
 console.log('Kora spent', koraSpent, 'lamports; expected about', expected, `(${sponsoredTxs} sponsored txs; request + escrow rents came back)`);
 assert.ok(koraSpent >= expected - 100_000n && koraSpent <= expected + 200_000n, 'Kora spend within the expected range');
 row('accounting', `users paid 0`, `Kora spent ${koraSpent} lamports (${sponsoredTxs} sponsored txs)`);

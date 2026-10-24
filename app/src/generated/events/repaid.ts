@@ -12,18 +12,26 @@ export const REPAID_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([38
 
 export function getRepaidEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(REPAID_EVENT_DISCRIMINATOR); }
 
-export type RepaidEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; payer: Address; amount: bigint; totalRepaid: bigint; fullyRepaid: boolean;  };
+export type RepaidEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; payer: Address; amount: bigint; totalRepaid: bigint; fullyRepaid: boolean; 
+/** Set on the closing payment when it came after the term and grace period. */
+late: boolean; 
+/** Escrow now waiting for the co-signer to claim (closing payment only). */
+refundPending: bigint;  };
 
-export type RepaidEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; payer: Address | HasAddress; amount: number | bigint; totalRepaid: number | bigint; fullyRepaid: boolean;  };
+export type RepaidEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; payer: Address | HasAddress; amount: number | bigint; totalRepaid: number | bigint; fullyRepaid: boolean; 
+/** Set on the closing payment when it came after the term and grace period. */
+late: boolean; 
+/** Escrow now waiting for the co-signer to claim (closing payment only). */
+refundPending: number | bigint;  };
 
 /** Gets the encoder for {@link RepaidEventArgs} event data. */
 export function getRepaidEventEncoder(): FixedSizeEncoder<RepaidEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['payer', getAddressEncoder()], ['amount', getU64Encoder()], ['totalRepaid', getU64Encoder()], ['fullyRepaid', getBooleanEncoder()]]), [getConstantEncoder(REPAID_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['payer', getAddressEncoder()], ['amount', getU64Encoder()], ['totalRepaid', getU64Encoder()], ['fullyRepaid', getBooleanEncoder()], ['late', getBooleanEncoder()], ['refundPending', getU64Encoder()]]), [getConstantEncoder(REPAID_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link RepaidEvent} event data. */
 export function getRepaidEventDecoder(): FixedSizeDecoder<RepaidEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['payer', getAddressDecoder()], ['amount', getU64Decoder()], ['totalRepaid', getU64Decoder()], ['fullyRepaid', getBooleanDecoder()]]), [getConstantDecoder(REPAID_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['payer', getAddressDecoder()], ['amount', getU64Decoder()], ['totalRepaid', getU64Decoder()], ['fullyRepaid', getBooleanDecoder()], ['late', getBooleanDecoder()], ['refundPending', getU64Decoder()]]), [getConstantDecoder(REPAID_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link RepaidEvent} event data. */

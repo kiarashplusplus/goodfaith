@@ -1,8 +1,12 @@
 /**
  * The identity issuer: runs the provider check, keeps the person registry, issues gateway tokens on the fund's
- * network, and prepares the on-chain join (or wallet replacement) with the issuer's signature. The wallet adds
+ * network, and prepares the on-chain join (or wallet recovery) with the issuer's signature. The wallet adds
  * its own signature in the browser; the fee sponsor pays when it is configured.
+ *
+ * A person is an opaque random id. The keyed fingerprint of their ID fields stays in the store so the same human
+ * resolves to the same person on a later check; nothing derived from the credential reaches the chain.
  */
+import { randomBytes } from "node:crypto";
 import {
   type Address,
   type KeyPairSigner,
@@ -14,7 +18,18 @@ import {
   type GetSignatureStatusesApi,
   partiallySignTransaction,
 } from "@solana/kit";
-import { fetchCanonicalPool, fetchMember, fetchPerson, findPersonPda, registerMemberIx, rebindWalletIx, type Pool } from "../program";
+import {
+  eligibleAt,
+  fetchCanonicalPool,
+  fetchMember,
+  fetchPerson,
+  finalizeRebindIx,
+  findPersonPda,
+  proposeRebindIx,
+  registerMemberIx,
+  type Person,
+  type Pool,
+} from "../program";
 import { buildTransaction, toBase64 } from "../tx";
 import type { IdentityProvider, HeaderBag, VerifiedFields } from "./provider";
 import type { IdentityStore, WalletRecord } from "./store";
@@ -32,6 +47,8 @@ export type ServiceDeps = {
   /** Issues gateway tokens; null in unit tests that only exercise the registry. */
   gatekeeper: TokenIssuer | null;
   issuer: KeyPairSigner;
+  /** The pool's recovery authority, when this service may propose wallet recoveries; absent otherwise. */
+  recovery?: KeyPairSigner;
   rpc: ServiceRpc;
   hashSecret: string;
   /** Fee payer for prepared transactions, or null to let the wallet pay. */
@@ -49,14 +66,25 @@ export type StatusView = {
   reason?: string;
   url?: string;
   /** The person behind the approved check, as the chain sees it. */
-  person: null | { onChain: boolean; currentWallet: Address | null; isThisWallet: boolean; ineligible: boolean };
+  person: null | {
+    onChain: boolean;
+    currentWallet: Address | null;
+    isThisWallet: boolean;
+    ineligible: boolean;
+    /** A recovery in flight: the wallet it moves to and when (unix seconds) it may be finalised. */
+    pendingWallet: Address | null;
+    pendingWalletAt: number;
+  };
   /** This wallet's on-chain membership. */
   member: null | { retired: boolean };
-  /** What the wallet can do now. */
-  next: "verify" | "wait" | "join" | "rebind" | "done" | "blocked";
+  /**
+   * What the wallet can do now. `recover` proposes moving the membership here; `pending` means that move is in
+   * its veto window; `finalize` completes it.
+   */
+  next: "verify" | "wait" | "join" | "recover" | "pending" | "finalize" | "done" | "blocked";
 };
 
-export type PreparedTx = { transaction: string; feePayer: Address; sponsored: boolean; kind: "register" | "rebind" };
+export type PreparedTx = { transaction: string; feePayer: Address; sponsored: boolean; kind: "register" | "propose" | "finalize" };
 
 export class IdentityError extends Error {
   constructor(
@@ -67,6 +95,9 @@ export class IdentityError extends Error {
   }
 }
 
+const when = (unixSec: bigint) => new Date(Number(unixSec) * 1000).toUTCString();
+const CLOCK_SYSVAR = "SysvarC1ock11111111111111111111111111111111" as Address;
+
 export class IdentityService {
   private readonly now: () => number;
   constructor(private readonly d: ServiceDeps) {
@@ -75,6 +106,22 @@ export class IdentityService {
 
   get issuerAddress(): Address {
     return this.d.issuer.address;
+  }
+
+  private nowSec(): bigint {
+    return BigInt(Math.floor(this.now() / 1000));
+  }
+
+  /** The chain's clock for comparisons with on-chain deadlines (it is what the program checks); wall clock as a fallback. */
+  private async chainNow(): Promise<bigint> {
+    try {
+      const r = await this.d.rpc.getAccountInfo(CLOCK_SYSVAR, { encoding: "base64" }).send();
+      const data = r.value?.data?.[0];
+      if (data) return Buffer.from(data, "base64").readBigInt64LE(32);
+    } catch {
+      // no clock available (unit tests); fall through
+    }
+    return this.nowSec();
   }
 
   /** Starts (or resumes) the hosted identity check for a wallet. */
@@ -134,9 +181,10 @@ export class IdentityService {
     if (ageAt(fields.birthdate, new Date(this.now())) < (this.d.minAge ?? 18))
       return this.update(rec, { status: "ineligible", reason: "You must be 18 or older." });
     const hash = toHex(personHash(this.d.hashSecret, fields));
-    const person = this.d.store.getPerson(hash);
-    if (person?.bannedAt)
-      return this.update(rec, { status: "ineligible", personHash: hash, reason: "This person can no longer use Good Faith." });
+    const known = this.d.store.getPersonByCredential(hash);
+    if (known?.bannedAt)
+      return this.update(rec, { status: "ineligible", personId: known.personId, reason: "This person can no longer use Good Faith." });
+    const personId = known?.personId ?? toHex(randomBytes(32));
     let tokenAddress: string | undefined;
     if (this.d.gatekeeper) {
       try {
@@ -147,13 +195,13 @@ export class IdentityService {
       } catch (e) {
         return this.update(rec, {
           status: "error",
-          personHash: hash,
+          personId: known ? personId : undefined,
           reason: `Could not issue your pass: ${e instanceof Error ? e.message : String(e)}`,
         });
       }
     }
-    if (!person) this.d.store.putPerson({ personHash: hash, wallet: rec.wallet, createdAt: this.now() });
-    return this.update(rec, { status: "issued", personHash: hash, tokenAddress, reason: undefined, url: undefined });
+    if (!known) this.d.store.putPerson({ personId, credentialHash: hash, wallet: rec.wallet, createdAt: this.now() });
+    return this.update(rec, { status: "issued", personId, tokenAddress, reason: undefined, url: undefined });
   }
 
   async status(wallet: Address): Promise<StatusView> {
@@ -176,11 +224,30 @@ export class IdentityService {
     if (rec?.status === "pending" || rec?.status === "review") view.next = "wait";
     else if (rec?.status === "declined" || rec?.status === "ineligible") view.next = "blocked";
     else if (rec?.status === "error") view.next = "verify";
-    if (rec?.status === "issued" && rec.personHash && pool) {
-      const [pda] = await findPersonPda(pool.address, fromHex(rec.personHash));
+    if (rec?.status === "issued" && rec.personId && pool) {
+      const [pda] = await findPersonPda(pool.address, fromHex(rec.personId));
       const p = await fetchPerson(this.d.rpc, pda);
-      view.person = { onChain: !!p, currentWallet: p?.wallet ?? null, isThisWallet: p?.wallet === wallet, ineligible: !!p?.ineligible };
-      view.next = !p ? "join" : p.wallet === wallet ? "done" : "rebind";
+      const now = await this.chainNow();
+      view.person = {
+        onChain: !!p,
+        currentWallet: p?.wallet ?? null,
+        isThisWallet: p?.wallet === wallet,
+        ineligible: p ? !eligibleAt(p, now) : false,
+        pendingWallet: p?.pendingWallet ?? null,
+        pendingWalletAt: p ? Number(p.pendingWalletAt) : 0,
+      };
+      if (!p) view.next = "join";
+      else if (p.wallet === wallet) view.next = "done";
+      else if (p.pendingWallet === wallet) {
+        if (now >= p.pendingWalletAt) view.next = "finalize";
+        else {
+          view.next = "pending";
+          view.reason = `Your membership moves to this wallet after ${when(p.pendingWalletAt)} unless your old wallet objects.`;
+        }
+      } else if (p.pendingWallet) {
+        view.next = "blocked";
+        view.reason = "A move of this membership to another wallet is already pending.";
+      } else view.next = "recover";
     }
     return view;
   }
@@ -189,67 +256,107 @@ export class IdentityService {
     return fetchCanonicalPool(this.d.rpc);
   }
 
-  private async preparedFor(wallet: Address): Promise<{ rec: WalletRecord; pool: Pool; hash: Uint8Array; gatewayToken: Address }> {
+  private async preparedFor(wallet: Address): Promise<{ rec: WalletRecord; pool: Pool; personId: Uint8Array; gatewayToken: Address }> {
     const rec = this.d.store.getWallet(wallet);
-    if (!rec || rec.status !== "issued" || !rec.personHash) throw new IdentityError(409, "Verify your identity first.");
+    if (!rec || rec.status !== "issued" || !rec.personId) throw new IdentityError(409, "Verify your identity first.");
     const pool = await this.pool();
     if (!pool) throw new IdentityError(503, "The fund is not set up.");
     if (pool.issuer !== this.d.issuer.address) throw new IdentityError(500, "The identity service's key is not the fund's issuer.");
     const gatewayToken = (rec.tokenAddress as Address | undefined) ?? (await gatewayTokenAddress(wallet, pool.gatekeeperNetwork));
-    return { rec, pool, hash: fromHex(rec.personHash), gatewayToken };
+    return { rec, pool, personId: fromHex(rec.personId), gatewayToken };
   }
 
   private async sign(
-    pool: Pool,
     wallet: Address,
     build: (feePayer: Address) => Promise<Parameters<typeof buildTransaction>[2][number]>,
     kind: PreparedTx["kind"],
+    signers: KeyPairSigner[],
+    opts: { sponsorable?: boolean } = {},
   ): Promise<PreparedTx> {
-    const payer = this.d.feePayer ? await this.d.feePayer() : null;
+    const payer = opts.sponsorable === false ? null : this.d.feePayer ? await this.d.feePayer() : null;
     const feePayer = payer ?? wallet;
     const tx = await buildTransaction(this.d.rpc, feePayer, [await build(feePayer)]);
-    const signed = await partiallySignTransaction([this.d.issuer.keyPair], tx);
+    const signed = signers.length
+      ? await partiallySignTransaction(
+          signers.map((s) => s.keyPair),
+          tx,
+        )
+      : tx;
     return { transaction: toBase64(signed), feePayer, sponsored: payer !== null, kind };
   }
 
   /** The register_member transaction for a verified wallet whose person is new to the chain, issuer-signed. */
   async prepareJoin(wallet: Address): Promise<PreparedTx> {
-    const { pool, hash, gatewayToken } = await this.preparedFor(wallet);
-    const [pda] = await findPersonPda(pool.address, hash);
-    if (await fetchPerson(this.d.rpc, pda)) throw new IdentityError(409, "You already have a membership. Replace your wallet instead.");
+    const { pool, personId, gatewayToken } = await this.preparedFor(wallet);
+    const [pda] = await findPersonPda(pool.address, personId);
+    if (await fetchPerson(this.d.rpc, pda))
+      throw new IdentityError(409, "You already have a membership. Recover it to this wallet instead.");
     return this.sign(
-      pool,
       wallet,
-      (payer) => registerMemberIx({ wallet, payer, issuer: this.d.issuer.address, pool, gatewayToken, personHash: hash }),
+      (payer) => registerMemberIx({ wallet, payer, issuer: this.d.issuer.address, pool, gatewayToken, personId }),
       "register",
+      [this.d.issuer],
     );
   }
 
-  /** The rebind_wallet transaction: moves the verified person to this wallet, issuer-signed. */
+  /**
+   * Wallet recovery for a verified wallet whose person already has a membership elsewhere. The first call proposes
+   * the move (issuer and recovery authority sign; the old wallet may veto during the delay); once the delay has
+   * passed, the call returns the finalize transaction instead, which the new wallet pays for itself.
+   */
   async prepareRebind(wallet: Address): Promise<PreparedTx> {
-    const { pool, hash, gatewayToken } = await this.preparedFor(wallet);
-    const [pda] = await findPersonPda(pool.address, hash);
+    const { pool, personId, gatewayToken } = await this.preparedFor(wallet);
+    const [pda] = await findPersonPda(pool.address, personId);
     const person = await fetchPerson(this.d.rpc, pda);
     if (!person) throw new IdentityError(409, "No membership to move yet. Join instead.");
     if (person.wallet === wallet) throw new IdentityError(409, "This wallet is already linked.");
-    if (person.ineligible) throw new IdentityError(403, "This membership is on hold.");
+    const now = await this.chainNow();
+    if (person.pendingWallet === wallet) {
+      if (now < person.pendingWalletAt)
+        throw new IdentityError(409, `The move to this wallet is pending until ${when(person.pendingWalletAt)}.`);
+      return this.sign(wallet, (payer) => finalizeRebindIx({ payer, pool, person }), "finalize", [], { sponsorable: false });
+    }
+    if (person.pendingWallet) throw new IdentityError(409, "A move of this membership to another wallet is already pending.");
+    if (!eligibleAt(person, now)) throw new IdentityError(403, "This membership is on hold.");
+    const recovery = this.d.recovery;
+    if (!recovery) throw new IdentityError(503, "Wallet recovery is not enabled on this service.");
+    if (pool.recoveryAuthority !== recovery.address)
+      throw new IdentityError(500, "The identity service's recovery key is not the fund's recovery authority.");
     return this.sign(
-      pool,
       wallet,
-      (payer) => rebindWalletIx({ newWallet: wallet, payer, issuer: this.d.issuer.address, pool, person, gatewayToken }),
-      "rebind",
+      () =>
+        proposeRebindIx({
+          newWallet: wallet,
+          issuer: this.d.issuer.address,
+          recoveryAuthority: recovery.address,
+          pool,
+          person,
+          gatewayToken,
+        }),
+      "propose",
+      [this.d.issuer, recovery],
     );
   }
 
-  /** Bars a person (after a default): revokes the current wallet's pass and refuses future verifications. */
-  async ban(personHashHex: string): Promise<{ banned: boolean; revoked: Address[] }> {
-    const person = this.d.store.getPerson(personHashHex);
+  /** The on-chain Person for a verified wallet, or null when there is none yet. */
+  async personOf(wallet: Address): Promise<Person | null> {
+    const { pool, personId } = await this.preparedFor(wallet);
+    const [pda] = await findPersonPda(pool.address, personId);
+    return fetchPerson(this.d.rpc, pda);
+  }
+
+  /**
+   * Bars a person (after a default): revokes the current wallet's pass and refuses future verifications. The chain
+   * carries the eligibility bar itself; this keeps the person from re-verifying onto a fresh wallet meanwhile.
+   */
+  async ban(personIdHex: string): Promise<{ banned: boolean; revoked: Address[] }> {
+    const person = this.d.store.getPerson(personIdHex);
     if (!person) return { banned: false, revoked: [] };
     if (!person.bannedAt) this.d.store.putPerson({ ...person, bannedAt: this.now() });
-    const wallets = new Set<Address>([person.wallet as Address]);
+    const wallets = new Set<Address>([person.wallet as Address, ...(this.d.store.walletsOf(personIdHex) as Address[])]);
     const pool = await this.pool();
     if (pool) {
-      const [pda] = await findPersonPda(pool.address, fromHex(personHashHex));
+      const [pda] = await findPersonPda(pool.address, fromHex(personIdHex));
       const onChain = await fetchPerson(this.d.rpc, pda);
       if (onChain) wallets.add(onChain.wallet);
     }
@@ -263,7 +370,7 @@ export class IdentityService {
     return { banned: true, revoked };
   }
 
-  /** The person hash the service would compute for these fields (for the cranker, which knows the on-chain hash only). */
+  /** The credential fingerprint the service would compute for these fields (tests and tooling). */
   hashOf(fields: VerifiedFields): string {
     return toHex(personHash(this.d.hashSecret, fields));
   }

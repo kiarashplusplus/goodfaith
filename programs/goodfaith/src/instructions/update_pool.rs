@@ -4,9 +4,10 @@ use crate::{
     error::GoodFaithError,
     events::{
         AuthorityChanged, AuthorityProposalCancelled, AuthorityProposed, IssuerSuspended,
-        ParamsCancelled, ParamsScheduled, PoolFrozen, PoolUpdated,
+        LendingPaused, LendingResumed, ParamsCancelled, ParamsScheduled, PoolFrozen, PoolUpdated,
     },
     state::*,
+    MIN_TIMELOCK_SECONDS,
 };
 
 #[derive(Accounts)]
@@ -37,11 +38,47 @@ pub struct ApplyParams<'info> {
     pub pool: Account<'info, Pool>,
 }
 
+/// The pause authority or the authority stops new lending at once.
+#[derive(Accounts)]
+pub struct PauseLending<'info> {
+    #[account(
+        constraint = signer.key() == pool.pause_authority || pool.authority == Some(signer.key())
+            @ GoodFaithError::Unauthorized,
+    )]
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub pool: Account<'info, Pool>,
+}
+
+/// Emergency brake on new loans and guarantees. Repayments, defaults, claims and donations continue.
+pub fn pause_lending_handler(ctx: Context<PauseLending>) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    pool.paused = true;
+    emit!(LendingPaused {
+        pool: pool.key(),
+        by: ctx.accounts.signer.key(),
+    });
+    Ok(())
+}
+
+/// Only the authority lifts a pause (the pause authority can stop lending, not restart it).
+pub fn resume_lending_handler(ctx: Context<UpdatePool>) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    pool.paused = false;
+    emit!(LendingResumed { pool: pool.key() });
+    Ok(())
+}
+
 /// Step one of a settings change: announce it. It takes effect only after `pool.timelock_seconds`,
 /// measured with the timelock in force now (so lowering the timelock itself waits the old delay).
 pub fn schedule_params_handler(ctx: Context<UpdatePool>, params: PoolParams) -> Result<()> {
     params.validate()?;
     let pool = &mut ctx.accounts.pool;
+    // A pool that runs with at least the minimum notice period can never schedule its way below it.
+    require!(
+        params.timelock_seconds >= MIN_TIMELOCK_SECONDS.min(pool.timelock_seconds),
+        GoodFaithError::TimelockBelowMinimum
+    );
     let effective_at = Clock::get()?
         .unix_timestamp
         .checked_add(pool.timelock_seconds)

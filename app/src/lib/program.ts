@@ -8,6 +8,7 @@ import {
   type Instruction,
   type Rpc,
   type GetProgramAccountsApi,
+  getBase16Encoder,
   getBase58Decoder,
   getBase64Encoder,
   type GetAccountInfoApi,
@@ -40,13 +41,21 @@ import {
   type Loan as LoanData,
   getLoanRequestDiscriminatorBytes,
   getRegisterMemberInstruction,
-  getRebindWalletInstruction,
+  getProposeRebindInstruction,
+  getVetoRebindInstruction,
+  getFinalizeRebindInstruction,
   getRepayInstruction,
   getMarkDefaultInstruction,
+  getClaimEscrowInstruction,
+  getCloseExpiredRequestInstruction,
   getApplyParamsInstruction,
   getSweepToSuccessorInstruction,
+  getPauseLendingInstruction,
+  getResumeLendingInstruction,
   getLoanDiscriminatorBytes,
   getLoanSize,
+  getPersonDiscriminatorBytes,
+  type Person as PersonData,
   type PoolParams as PoolParamsData,
 } from "@/generated";
 import { CONFIG_ERRORS, GATEKEEPER_NETWORK, POOL_ADDRESS, POOL_AUTHORITY, POOL_MINT, PROGRAM_ID } from "./config";
@@ -60,7 +69,7 @@ const cfg = { programAddress: PROGRAM_ID };
 const signer = (a: Address) => createNoopSigner(a);
 
 // ---------- types ----------
-export type LoanStatus = "Active" | "Repaid" | "Defaulted";
+export type LoanStatus = "Active" | "Repaid" | "Defaulted" | "RepaidLate";
 
 /** Settings the authority can schedule (applied after the timelock). */
 export type PoolParams = {
@@ -72,6 +81,19 @@ export type PoolParams = {
   cosignerEscrowBps: number;
   issuer: Address;
   timelockSeconds: bigint;
+  recoveryAuthority: Address;
+  pauseAuthority: Address;
+  recoveryDelaySeconds: bigint;
+  requestTtlSeconds: bigint;
+  firstLoanCap: bigint;
+  loanCapStep: bigint;
+  cooldownSeconds: bigint;
+  maxExposurePerPerson: bigint;
+  disbursementWindowSeconds: bigint;
+  disbursementCapPerWindow: bigint;
+  defaultBanSeconds: bigint;
+  lateBanSeconds: bigint;
+  cosignerBanSeconds: bigint;
 };
 
 export type Pool = {
@@ -104,18 +126,53 @@ export type Pool = {
   successor: Address | null;
   activeLoans: bigint;
   totalSwept: bigint;
+  recoveryAuthority: Address;
+  pauseAuthority: Address;
+  paused: boolean;
+  windowStart: bigint;
+  windowDisbursed: bigint;
+  /** Escrow owed to co-signers of closed loans, waiting to be claimed. */
+  pendingClaims: bigint;
+  recoveryDelaySeconds: bigint;
+  requestTtlSeconds: bigint;
+  firstLoanCap: bigint;
+  loanCapStep: bigint;
+  cooldownSeconds: bigint;
+  maxExposurePerPerson: bigint;
+  disbursementWindowSeconds: bigint;
+  disbursementCapPerWindow: bigint;
+  defaultBanSeconds: bigint;
+  lateBanSeconds: bigint;
+  cosignerBanSeconds: bigint;
 };
 
 /** One verified human; eligibility and open positions live here and follow a replaced wallet. */
 export type Person = {
   address: Address;
-  /** The issuer's keyed hash of the person's ID fields (hex), as stored on chain. */
-  personHash: string;
+  /** Opaque id the issuer assigned (hex); the credential behind it lives only in the identity service. */
+  personId: string;
   wallet: Address;
   activeLoan: Address | null;
   activeGuarantees: number;
-  ineligible: boolean;
+  activeGuaranteeAmount: bigint;
+  completedLoans: number;
+  /** 0: eligible; i64 max: barred for good; else barred until this unix time. */
+  ineligibleUntil: bigint;
+  /** Until this time the person is on the first-loan cap. */
+  restrictedUntil: bigint;
+  pendingWallet: Address | null;
+  pendingWalletAt: bigint;
 };
+
+export const PERMANENT = 9223372036854775807n;
+/** Whether a person may borrow or co-sign at `now`. */
+export const eligibleAt = (p: Pick<Person, "ineligibleUntil">, now: bigint) => now >= p.ineligibleUntil;
+/** The largest loan a person may take at `now`, mirroring `Person::loan_cap`. */
+export function loanCapAt(p: Pick<Person, "restrictedUntil" | "completedLoans">, pool: Pool, now: bigint): bigint {
+  const min = (a: bigint, b: bigint) => (a < b ? a : b);
+  if (now < p.restrictedUntil) return min(pool.firstLoanCap, pool.maxLoan);
+  return min(pool.firstLoanCap + pool.loanCapStep * BigInt(p.completedLoans), pool.maxLoan);
+}
 
 /** A wallet's membership together with the standing of the person behind it. */
 export type Member = {
@@ -126,6 +183,10 @@ export type Member = {
   retired: boolean;
   activeLoan: Address | null;
   activeGuarantees: number;
+  ineligibleUntil: bigint;
+  restrictedUntil: bigint;
+  completedLoans: number;
+  /** Convenience: barred at the time of the read (use `eligibleAt` with a clock for exact boundaries). */
   ineligible: boolean;
 };
 
@@ -144,6 +205,10 @@ export type Loan = {
   openedAt: bigint;
   dueAt: bigint;
   status: LoanStatus;
+  /** When the loan left Active (0 while open). */
+  closedAt: bigint;
+  /** Escrow owed to the co-signer, still in the escrow account until claimed. */
+  refundPending: bigint;
 };
 
 export type LoanRequest = {
@@ -154,6 +219,7 @@ export type LoanRequest = {
   termDays: number;
   createdAt: bigint;
   rentPayer: Address;
+  expiresAt: bigint;
 };
 
 // ---------- PDAs ----------
@@ -172,11 +238,11 @@ export const findMemberPda = (pool: Address, wallet: Address) =>
     programAddress: PROGRAM_ID,
     seeds: [enc.encode("member"), addr.encode(pool), addr.encode(wallet)],
   });
-export const findPersonPda = (pool: Address, personHash: Uint8Array) => {
-  if (personHash.length !== 32) throw new Error("A person hash is 32 bytes.");
+export const findPersonPda = (pool: Address, personId: Uint8Array) => {
+  if (personId.length !== 32) throw new Error("A person id is 32 bytes.");
   return getProgramDerivedAddress({
     programAddress: PROGRAM_ID,
-    seeds: [enc.encode("person"), addr.encode(pool), personHash],
+    seeds: [enc.encode("person"), addr.encode(pool), personId],
   });
 };
 export const findLoanPda = (pool: Address, id: bigint) => {
@@ -204,8 +270,21 @@ const toParams = (d: PoolParamsData): PoolParams => ({
   cosignerEscrowBps: d.cosignerEscrowBps,
   issuer: d.issuer,
   timelockSeconds: d.timelockSeconds,
+  recoveryAuthority: d.recoveryAuthority,
+  pauseAuthority: d.pauseAuthority,
+  recoveryDelaySeconds: d.recoveryDelaySeconds,
+  requestTtlSeconds: d.requestTtlSeconds,
+  firstLoanCap: d.firstLoanCap,
+  loanCapStep: d.loanCapStep,
+  cooldownSeconds: d.cooldownSeconds,
+  maxExposurePerPerson: d.maxExposurePerPerson,
+  disbursementWindowSeconds: d.disbursementWindowSeconds,
+  disbursementCapPerWindow: d.disbursementCapPerWindow,
+  defaultBanSeconds: d.defaultBanSeconds,
+  lateBanSeconds: d.lateBanSeconds,
+  cosignerBanSeconds: d.cosignerBanSeconds,
 });
-const STATUSES: LoanStatus[] = ["Active", "Repaid", "Defaulted"];
+const STATUSES: LoanStatus[] = ["Active", "Repaid", "Defaulted", "RepaidLate"];
 
 type ReadRpc = Rpc<GetAccountInfoApi>;
 
@@ -273,24 +352,51 @@ export async function fetchPool(rpc: ReadRpc, a: Address): Promise<Pool | null> 
     successor: unwrap(d.successor),
     activeLoans: d.activeLoans,
     totalSwept: d.totalSwept,
+    recoveryAuthority: d.recoveryAuthority,
+    pauseAuthority: d.pauseAuthority,
+    paused: d.paused,
+    windowStart: d.windowStart,
+    windowDisbursed: d.windowDisbursed,
+    pendingClaims: d.pendingClaims,
+    recoveryDelaySeconds: d.recoveryDelaySeconds,
+    requestTtlSeconds: d.requestTtlSeconds,
+    firstLoanCap: d.firstLoanCap,
+    loanCapStep: d.loanCapStep,
+    cooldownSeconds: d.cooldownSeconds,
+    maxExposurePerPerson: d.maxExposurePerPerson,
+    disbursementWindowSeconds: d.disbursementWindowSeconds,
+    disbursementCapPerWindow: d.disbursementCapPerWindow,
+    defaultBanSeconds: d.defaultBanSeconds,
+    lateBanSeconds: d.lateBanSeconds,
+    cosignerBanSeconds: d.cosignerBanSeconds,
   };
 }
+
+/** New loans and guarantees are possible: not paused and not winding down. */
+export const lendingOpen = (pool: Pool, now: bigint) => !pool.paused && !windingDown(pool, now);
 
 /** True once an announced wind-down has taken effect: no new loans or donations. */
 export const windingDown = (pool: Pool, now: bigint) => pool.windDownAt !== null && now >= pool.windDownAt;
 
-export async function fetchPerson(rpc: ReadRpc, a: Address): Promise<Person | null> {
-  const acc = await fetchChecked(rpc, a, GoodfaithAccount.Person);
-  if (!acc) return null;
-  const d = decodePerson(acc).data;
+function toPerson(address: Address, d: PersonData): Person {
   return {
-    address: a,
-    personHash: Array.from(d.personHash, (x) => x.toString(16).padStart(2, "0")).join(""),
+    address,
+    personId: Array.from(d.personId, (x) => x.toString(16).padStart(2, "0")).join(""),
     wallet: d.wallet,
     activeLoan: unwrap(d.activeLoan),
     activeGuarantees: d.activeGuarantees,
-    ineligible: d.ineligible,
+    activeGuaranteeAmount: d.activeGuaranteeAmount,
+    completedLoans: d.completedLoans,
+    ineligibleUntil: d.ineligibleUntil,
+    restrictedUntil: d.restrictedUntil,
+    pendingWallet: unwrap(d.pendingWallet),
+    pendingWalletAt: d.pendingWalletAt,
   };
+}
+
+export async function fetchPerson(rpc: ReadRpc, a: Address): Promise<Person | null> {
+  const acc = await fetchChecked(rpc, a, GoodfaithAccount.Person);
+  return acc ? toPerson(a, decodePerson(acc).data) : null;
 }
 
 /** The wallet's membership merged with its person's standing; null when the wallet never joined. */
@@ -308,7 +414,10 @@ export async function fetchMember(rpc: ReadRpc, pool: Address, wallet: Address):
     retired: d.retired,
     activeLoan: person.activeLoan,
     activeGuarantees: person.activeGuarantees,
-    ineligible: person.ineligible,
+    ineligibleUntil: person.ineligibleUntil,
+    restrictedUntil: person.restrictedUntil,
+    completedLoans: person.completedLoans,
+    ineligible: !eligibleAt(person, BigInt(Math.floor(Date.now() / 1000))),
   };
 }
 
@@ -375,6 +484,8 @@ function toLoan(address: Address, d: LoanData): Loan {
     dueAt: d.dueAt,
     graceDays: d.graceDays,
     status: STATUSES[Number(d.status)] ?? "Active",
+    closedAt: d.closedAt,
+    refundPending: d.refundPending,
   };
 }
 
@@ -436,6 +547,7 @@ function toRequest(address: Address, d: LoanRequestData): LoanRequest {
     termDays: d.termDays,
     createdAt: d.createdAt,
     rentPayer: d.rentPayer,
+    expiresAt: d.expiresAt,
   };
 }
 
@@ -463,6 +575,47 @@ export async function fetchRequestsForCosigner(rpc: ScanRpc, pool: Address, cosi
   return out;
 }
 
+/**
+ * Person layout: Borsh options are variable-length, so the `pending_wallet` tag sits at 100 while `active_loan`
+ * is None and at 132 while it is Some (8 + 32 + 32 + 1 or 33 + 1 + 8 + 2 + 8 + 8).
+ */
+const PERSON_PENDING_TAG_OFFSETS = [100n, 132n];
+
+/** Every person of this pool with a wallet recovery in flight (the cranker finalises the due ones). */
+export async function fetchPendingRecoveries(rpc: ScanRpc, pool: Address): Promise<Person[]> {
+  const disc = b58(getPersonDiscriminatorBytes());
+  const some = b58(new Uint8Array([1]));
+  const scans = await Promise.all(
+    PERSON_PENDING_TAG_OFFSETS.map((offset) =>
+      scanProgramAccounts(rpc, [
+        { memcmp: { offset: 0n, bytes: disc, encoding: "base58" } },
+        { memcmp: { offset, bytes: some, encoding: "base58" } },
+      ]),
+    ),
+  );
+  const seen = new Set<Address>();
+  const out: Person[] = [];
+  for (const p of decodeAll(scans.flat(), (acc) => toPerson(acc.address, decodePerson(acc).data))) {
+    if (seen.has(p.address) || !p.pendingWallet) continue;
+    seen.add(p.address);
+    const [expected] = await findPersonPda(pool, new Uint8Array(getBase16Encoder().encode(p.personId)));
+    if (expected === p.address) out.push(p);
+  }
+  return out;
+}
+
+/** Every open request in this pool (the cranker closes the expired ones). */
+export async function fetchRequests(rpc: ScanRpc, pool: Address): Promise<LoanRequest[]> {
+  const disc = b58(getLoanRequestDiscriminatorBytes());
+  const accounts = await scanProgramAccounts(rpc, [{ memcmp: { offset: 0n, bytes: disc, encoding: "base58" } }]);
+  const out: LoanRequest[] = [];
+  for (const r of decodeAll(accounts, (acc) => toRequest(acc.address, decodeLoanRequest(acc).data))) {
+    const [expected] = await findRequestPda(pool, r.borrower);
+    if (expected === r.address) out.push(r);
+  }
+  return out;
+}
+
 // ---------- instructions ----------
 // Signer accounts are passed as no-op signers: transactions are compiled first and
 // signed afterwards by the wallet (and the fee payer), see tx.ts.
@@ -482,17 +635,17 @@ export async function donateIx(a: { donor: Address; pool: Pool; amount: bigint }
   );
 }
 
-/** Joining: the wallet, the fee payer and the pool's issuer all sign (the issuer vouches for `personHash`). */
+/** Joining: the wallet, the fee payer and the pool's issuer all sign (the issuer vouches for `personId`). */
 export async function registerMemberIx(a: {
   wallet: Address;
   payer: Address;
   issuer: Address;
   pool: Pool;
   gatewayToken: Address;
-  personHash: Uint8Array;
+  personId: Uint8Array;
 }): Promise<Instruction> {
   const [member] = await findMemberPda(a.pool.address, a.wallet);
-  const [person] = await findPersonPda(a.pool.address, a.personHash);
+  const [person] = await findPersonPda(a.pool.address, a.personId);
   return getRegisterMemberInstruction(
     {
       wallet: signer(a.wallet),
@@ -503,37 +656,104 @@ export async function registerMemberIx(a: {
       member,
       gatewayToken: a.gatewayToken,
       systemProgram: SYSTEM_PROGRAM_ADDRESS,
-      personHash: a.personHash,
+      personId: a.personId,
     },
     cfg,
   );
 }
 
-/** Wallet replacement: the new wallet, the fee payer and the issuer sign; the old wallet is retired. */
-export async function rebindWalletIx(a: {
+/**
+ * Wallet recovery, step one: the new wallet, the issuer and the recovery authority sign. Nothing moves until
+ * `pool.recoveryDelaySeconds` pass without a veto from the old wallet.
+ */
+export async function proposeRebindIx(a: {
   newWallet: Address;
-  payer: Address;
   issuer: Address;
+  recoveryAuthority: Address;
   pool: Pool;
   person: Person;
   gatewayToken: Address;
 }): Promise<Instruction> {
-  const [oldMember] = await findMemberPda(a.pool.address, a.person.wallet);
-  const [newMember] = await findMemberPda(a.pool.address, a.newWallet);
-  return getRebindWalletInstruction(
+  return getProposeRebindInstruction(
     {
       newWallet: signer(a.newWallet),
-      payer: signer(a.payer),
       issuer: signer(a.issuer),
+      recoveryAuthority: signer(a.recoveryAuthority),
       pool: a.pool.address,
       person: a.person.address,
+      gatewayToken: a.gatewayToken,
+    },
+    cfg,
+  );
+}
+
+/** The old wallet (or the authority) stops a pending recovery. */
+export function vetoRebindIx(a: { signer: Address; pool: Pool; person: Person }): Instruction {
+  return getVetoRebindInstruction({ signer: signer(a.signer), pool: a.pool.address, person: a.person.address }, cfg);
+}
+
+/** Wallet recovery, step two, by anyone once the delay has passed; `payer` covers the new Member's rent. */
+export async function finalizeRebindIx(a: { payer: Address; pool: Pool; person: Person }): Promise<Instruction> {
+  if (!a.person.pendingWallet) throw new Error("No recovery is pending for this person.");
+  const [oldMember] = await findMemberPda(a.pool.address, a.person.wallet);
+  const [newMember] = await findMemberPda(a.pool.address, a.person.pendingWallet);
+  return getFinalizeRebindInstruction(
+    {
+      payer: signer(a.payer),
+      pool: a.pool.address,
+      person: a.person.address,
+      newWallet: a.person.pendingWallet,
       oldMember,
       newMember,
-      gatewayToken: a.gatewayToken,
       systemProgram: SYSTEM_PROGRAM_ADDRESS,
     },
     cfg,
   );
+}
+
+/**
+ * Anyone moves a closed loan's leftover escrow to the co-signer's current wallet (`cosignerWalletOf`) and closes
+ * the escrow account. The token account must exist; create it in the same transaction when needed.
+ */
+export async function claimEscrowIx(a: {
+  claimer: Address;
+  pool: Pool;
+  loan: Loan;
+  cosignerWallet: Address;
+}): Promise<{ ix: Instruction; cosignerToken: Address }> {
+  const [escrow] = await findEscrowPda(a.loan.address);
+  const cosignerToken = await findAta(a.cosignerWallet, a.pool.mint);
+  const ix = getClaimEscrowInstruction(
+    {
+      claimer: signer(a.claimer),
+      pool: a.pool.address,
+      mint: a.pool.mint,
+      loan: a.loan.address,
+      escrow,
+      cosignerPerson: a.loan.cosignerPerson,
+      cosignerToken,
+      rentPayer: a.loan.rentPayer,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    },
+    cfg,
+  );
+  return { ix, cosignerToken };
+}
+
+/** Anyone closes an expired request; its rent goes back to whoever paid it. */
+export function closeExpiredRequestIx(a: { closer: Address; pool: Address; request: LoanRequest }): Instruction {
+  return getCloseExpiredRequestInstruction(
+    { closer: signer(a.closer), pool: a.pool, request: a.request.address, rentPayer: a.request.rentPayer },
+    cfg,
+  );
+}
+
+/** The pause authority (or the authority) stops new lending at once; only the authority resumes. */
+export function pauseLendingIx(a: { signer: Address; pool: Pool }): Instruction {
+  return getPauseLendingInstruction({ signer: signer(a.signer), pool: a.pool.address }, cfg);
+}
+export function resumeLendingIx(a: { authority: Address; pool: Pool }): Instruction {
+  return getResumeLendingInstruction({ authority: signer(a.authority), pool: a.pool.address }, cfg);
 }
 
 /** Permissionless: applies a scheduled settings change once its timelock has elapsed. */
@@ -591,6 +811,8 @@ export async function cosignLoanIx(a: {
   cosignerPerson: Address;
   borrowerGatewayToken: Address;
   cosignerGatewayToken: Address;
+  /** The co-signer's own open loan (`Member.activeLoan`), required when they have one. */
+  cosignerActiveLoan?: Address | null;
   /** exactly what the co-signer was shown; the program rejects the tx if the request no longer matches */
   expectedAmount: bigint;
   expectedTermDays: number;
@@ -620,6 +842,7 @@ export async function cosignLoanIx(a: {
       cosignerGatewayToken: a.cosignerGatewayToken,
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
       systemProgram: SYSTEM_PROGRAM_ADDRESS,
+      cosignerActiveLoan: a.cosignerActiveLoan ?? undefined,
       expectedAmount: a.expectedAmount,
       expectedTermDays: a.expectedTermDays,
       maxEscrow: a.maxEscrow,
@@ -636,14 +859,8 @@ export function cancelRequestIx(a: { canceller: Address; pool: Address; request:
   );
 }
 
-/** `cosignerWallet` is the co-signer's current wallet (see `cosignerWalletOf`): the escrow refund goes to its token account. */
-export async function repayIx(a: {
-  payer: Address;
-  pool: Pool;
-  loan: Loan;
-  amount: bigint;
-  cosignerWallet: Address;
-}): Promise<Instruction> {
+/** Repayment never touches the co-signer's token account; the closing payment leaves the escrow to be claimed. */
+export async function repayIx(a: { payer: Address; pool: Pool; loan: Loan; amount: bigint }): Promise<Instruction> {
   const [escrow] = await findEscrowPda(a.loan.address);
   return getRepayInstruction(
     {
@@ -654,7 +871,6 @@ export async function repayIx(a: {
       loan: a.loan.address,
       escrow,
       payerToken: await findAta(a.payer, a.pool.mint),
-      cosignerToken: await findAta(a.cosignerWallet, a.pool.mint),
       borrowerPerson: a.loan.borrowerPerson,
       cosignerPerson: a.loan.cosignerPerson,
       rentPayer: a.loan.rentPayer,
@@ -665,19 +881,10 @@ export async function repayIx(a: {
   );
 }
 
-/**
- * Anyone may call this once a loan is past due plus its grace period. The co-signer's current wallet
- * (`cosignerWalletOf`) must have a token account; the caller creates it when needed.
- */
-export async function markDefaultIx(a: {
-  caller: Address;
-  pool: Pool;
-  loan: Loan;
-  cosignerWallet: Address;
-}): Promise<{ ix: Instruction; cosignerToken: Address }> {
+/** Anyone may call this once a loan is past due plus its grace period. Leftover escrow waits to be claimed. */
+export async function markDefaultIx(a: { caller: Address; pool: Pool; loan: Loan }): Promise<Instruction> {
   const [escrow] = await findEscrowPda(a.loan.address);
-  const cosignerToken = await findAta(a.cosignerWallet, a.pool.mint);
-  const ix = getMarkDefaultInstruction(
+  return getMarkDefaultInstruction(
     {
       caller: signer(a.caller),
       pool: a.pool.address,
@@ -685,7 +892,6 @@ export async function markDefaultIx(a: {
       vault: a.pool.vault,
       loan: a.loan.address,
       escrow,
-      cosignerToken,
       borrowerPerson: a.loan.borrowerPerson,
       cosignerPerson: a.loan.cosignerPerson,
       rentPayer: a.loan.rentPayer,
@@ -693,7 +899,6 @@ export async function markDefaultIx(a: {
     },
     cfg,
   );
-  return { ix, cosignerToken };
 }
 
 /** Program error codes per docs/spec.md order (Anchor custom errors start at 6000). */
@@ -724,6 +929,19 @@ const ERROR_NAMES = [
   "NothingPending",
   "LoansOutstanding",
   "InvalidSuccessor",
+  "Paused",
+  "RequestExpired",
+  "RequestNotExpired",
+  "OverPersonalCap",
+  "OverExposure",
+  "OverDisbursementCap",
+  "ReciprocalGuarantee",
+  "RecoveryPending",
+  "RecoveryNotPending",
+  "RecoveryDelayNotElapsed",
+  "NothingToClaim",
+  "TimelockBelowMinimum",
+  "MissingCosignerLoan",
 ];
 const ERROR_COPY: Record<string, string> = {
   AmountZero: "Enter an amount greater than zero.",
@@ -752,6 +970,19 @@ const ERROR_COPY: Record<string, string> = {
   NothingPending: "There is no scheduled change.",
   LoansOutstanding: "Some loans are still open.",
   InvalidSuccessor: "That isn't a valid successor account.",
+  Paused: "New loans are paused right now. Repayments still work.",
+  RequestExpired: "This request has expired. Ask for a new one.",
+  RequestNotExpired: "This request hasn't expired yet.",
+  OverPersonalCap: "That is more than your current loan limit. It grows as you repay loans on time.",
+  OverExposure: "That would put you or your co-signer over the limit of open loans and guarantees.",
+  OverDisbursementCap: "The fund has lent its limit for now. Try again later.",
+  ReciprocalGuarantee: "You and your co-signer can't guarantee each other at the same time.",
+  RecoveryPending: "A wallet recovery is already in progress.",
+  RecoveryNotPending: "No wallet recovery is in progress.",
+  RecoveryDelayNotElapsed: "The recovery waiting period hasn't passed yet.",
+  NothingToClaim: "Nothing to claim on this loan.",
+  TimelockBelowMinimum: "The notice period can't be set below the minimum.",
+  MissingCosignerLoan: "The co-signer's open loan must be included. Please try again.",
 };
 
 const WALLET_REJECTED = /user rejected|rejected the request|user denied|user declined|declined by user|rejected by user/i;

@@ -19,7 +19,7 @@ pub struct RequestLoan<'info> {
     pub pool: Box<Account<'info, Pool>>,
     pub mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(
-        seeds = [PERSON_SEED, pool.key().as_ref(), borrower_person.person_hash.as_ref()],
+        seeds = [PERSON_SEED, pool.key().as_ref(), borrower_person.person_id.as_ref()],
         bump = borrower_person.bump,
         constraint = borrower_person.wallet == borrower.key() @ GoodFaithError::WalletNotBound,
     )]
@@ -53,18 +53,30 @@ pub fn request_loan_handler(
 ) -> Result<()> {
     let a = ctx.accounts;
     let now = Clock::get()?.unix_timestamp;
+    require!(!a.pool.paused, GoodFaithError::Paused);
     require!(!a.pool.winding_down(now), GoodFaithError::WindingDown);
     require!(amount > 0, GoodFaithError::AmountZero);
     require!(amount <= a.pool.max_loan, GoodFaithError::OverLoanCap);
+    require!(
+        amount <= a.borrower_person.loan_cap(&a.pool, now),
+        GoodFaithError::OverPersonalCap
+    );
     require!(
         term_days > 0 && term_days <= a.pool.max_term_days,
         GoodFaithError::TermTooLong
     );
     require_keys_neq!(cosigner, a.borrower.key(), GoodFaithError::SelfCosign);
-    require!(!a.borrower_person.ineligible, GoodFaithError::Ineligible);
+    require!(a.borrower_person.eligible(now), GoodFaithError::Ineligible);
     require!(
         a.borrower_person.active_loan.is_none(),
         GoodFaithError::BorrowerHasLoan
+    );
+    let exposure = amount
+        .checked_add(a.borrower_person.active_guarantee_amount)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    require!(
+        exposure <= a.pool.max_exposure_per_person,
+        GoodFaithError::OverExposure
     );
     verify_gateway_token(
         &a.borrower_gateway_token,
@@ -72,6 +84,9 @@ pub fn request_loan_handler(
         &a.pool.gatekeeper_network,
         now,
     )?;
+    let expires_at = now
+        .checked_add(a.pool.request_ttl_seconds)
+        .ok_or(GoodFaithError::MathOverflow)?;
 
     a.request.set_inner(LoanRequest {
         borrower: a.borrower.key(),
@@ -81,6 +96,7 @@ pub fn request_loan_handler(
         created_at: now,
         rent_payer: a.payer.key(),
         bump: ctx.bumps.request,
+        expires_at,
     });
     emit!(LoanRequested {
         pool: a.pool.key(),
@@ -88,6 +104,7 @@ pub fn request_loan_handler(
         cosigner,
         amount,
         term_days,
+        expires_at,
     });
     Ok(())
 }

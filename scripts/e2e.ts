@@ -65,21 +65,34 @@ await setUsdc(borrower.address, 0n);
 await setUsdc(cosigner.address, 500n * USDC);
 await setUsdc(cosigner2.address, 500n * USDC);
 await setUsdc(third.address, 200n * USDC);
-/** One stable 32-byte person hash per e2e wallet (the issuer service derives real ones from verified ID fields). */
-const hashOf = (a: Address) => new Uint8Array(createHash('sha256').update(`e2e:${a}`).digest());
+/** One stable opaque 32-byte person id per e2e wallet (the issuer service assigns random ones). */
+const idOf = (a: Address) => new Uint8Array(createHash('sha256').update(`e2e:${a}`).digest());
 const TIMELOCK = 3600n;
+const RECOVERY_DELAY = 3600n;
+const DAY = 86_400n;
+const PERMANENT = 9223372036854775807n;
+/** Pool settings for the fork: the admin key plays every role (issuer, recovery and pause authority); launch separates them. */
+const params = (timelockSeconds: bigint) => ({
+  gatekeeperNetwork: NETWORK, maxLoan: 1000n * USDC, maxTermDays: 30, graceDays: 3, maxGuaranteesPerMember: 2, cosignerEscrowBps: 2500,
+  issuer: admin.address, timelockSeconds, recoveryAuthority: admin.address, pauseAuthority: admin.address,
+  recoveryDelaySeconds: RECOVERY_DELAY, requestTtlSeconds: 7n * DAY, firstLoanCap: 1000n * USDC, loanCapStep: 100n * USDC, cooldownSeconds: 0n,
+  maxExposurePerPerson: 10_000n * USDC, disbursementWindowSeconds: DAY, disbursementCapPerWindow: 0n,
+  defaultBanSeconds: PERMANENT, lateBanSeconds: 0n, cosignerBanSeconds: PERMANENT,
+});
 
 const [pool] = await gf.findPoolPda({ mint: MINT });
 const [vault] = await gf.findVaultPda({ pool });
 const existing = await rpc.getAccountInfo(pool, { encoding: 'base64' }).send();
 if (!existing.value) {
-  await send([await gf.getInitializePoolInstructionAsync({ payer: admin, mint: MINT, params: { gatekeeperNetwork: NETWORK, maxLoan: 1000n * USDC, maxTermDays: 30, graceDays: 3, maxGuaranteesPerMember: 2, cosignerEscrowBps: 2500, issuer: admin.address, timelockSeconds: TIMELOCK } })], admin, 'initialize_pool');
+  await send([await gf.getInitializePoolInstructionAsync({ payer: admin, mint: MINT, params: params(TIMELOCK) })], admin, 'initialize_pool');
 }
 const p0 = await fetchPool(pool);
 assert.equal(p0.gatekeeperNetwork, NETWORK, 'existing pool uses a different gatekeeper network');
 assert.equal(p0.mint, MINT);
 assert.equal(p0.issuer, admin.address, 'existing pool has a different issuer');
-row('initialize_pool', existing.value ? 'reused existing pool' : 'created', `net=${p0.gatekeeperNetwork.slice(0, 6)}.. bps=${p0.cosignerEscrowBps} grace=${p0.graceDays}d timelock=${p0.timelockSeconds}s issuer=admin`);
+assert.equal(p0.recoveryAuthority, admin.address);
+assert.equal(p0.paused, false);
+row('initialize_pool', existing.value ? 'reused existing pool' : 'created', `net=${p0.gatekeeperNetwork.slice(0, 6)}.. bps=${p0.cosignerEscrowBps} grace=${p0.graceDays}d timelock=${p0.timelockSeconds}s recovery delay=${p0.recoveryDelaySeconds}s request ttl=${p0.requestTtlSeconds}s issuer=recovery=pause=admin`);
 
 const ataOf = { donor: await ata(donor.address), borrower: await ata(borrower.address), cosigner: await ata(cosigner.address), cosigner2: await ata(cosigner2.address), third: await ata(third.address) };
 
@@ -95,7 +108,7 @@ row('donate 1000', `vault ${fmt(await tok(vault))}`, `donor ${fmt(await tok(ataO
 // ---------- Register (issuer co-signs) ----------
 const gwB = await plantGateway(borrower.address), gwC = await plantGateway(cosigner.address), gwC2 = await plantGateway(cosigner2.address), gwThird = await plantGateway(third.address);
 const registerIx = (w: typeof borrower, gatewayToken: Address, issuer: typeof borrower | typeof admin = admin) =>
-  gf.getRegisterMemberInstructionAsync({ wallet: w, payer: w, issuer, pool, gatewayToken, personHash: hashOf(w.address) });
+  gf.getRegisterMemberInstructionAsync({ wallet: w, payer: w, issuer, pool, gatewayToken, personId: idOf(w.address) });
 // negatives: a token owned by someone else, and a registration the issuer did not sign
 const negErr = await expectFail(send([await registerIx(borrower, gwThird)], borrower, 'register wrong token'), 'wrong-owner gateway token');
 row('register w/ wrong-owner token', 'rejected', errName(negErr));
@@ -105,16 +118,19 @@ await send([await registerIx(borrower, gwB)], borrower, 'register borrower');
 await send([await registerIx(cosigner, gwC)], cosigner, 'register cosigner');
 const [mB] = await gf.findMemberPda({ pool, wallet: borrower.address });
 const [mC] = await gf.findMemberPda({ pool, wallet: cosigner.address });
-const [pB] = await gf.findPersonPda({ pool, personHash: hashOf(borrower.address) });
-const [pC] = await gf.findPersonPda({ pool, personHash: hashOf(cosigner.address) });
+const [pB] = await gf.findPersonPda({ pool, personId: idOf(borrower.address) });
+const [pC] = await gf.findPersonPda({ pool, personId: idOf(cosigner.address) });
 const getMember = async (a: Address) => (await gf.fetchMember(rpc as any, a, { commitment: 'confirmed' })).data;
 const getPerson = async (a: Address) => (await gf.fetchPerson(rpc as any, a, { commitment: 'confirmed' })).data;
 assert.equal((await getMember(mB)).person, pB);
-assert.equal((await getPerson(pB)).ineligible, false);
+assert.equal((await getPerson(pB)).ineligibleUntil, 0n);
 assert.equal((await getPerson(pB)).wallet, borrower.address);
-// one person, one wallet: the same hash with a second wallet is refused
-const dup = await expectFail(send([await gf.getRegisterMemberInstructionAsync({ wallet: third, payer: third, issuer: admin, pool, gatewayToken: gwThird, personHash: hashOf(borrower.address) })], third, 'duplicate person'), 'duplicate person');
+assert.equal((await getPerson(pB)).pendingWallet.__option, 'None');
+// one person, one wallet: the same id with a second wallet is refused
+const dup = await expectFail(send([await gf.getRegisterMemberInstructionAsync({ wallet: third, payer: third, issuer: admin, pool, gatewayToken: gwThird, personId: idOf(borrower.address) })], third, 'duplicate person'), 'duplicate person');
 row('register_member', `borrower+cosigner accepted (issuer-signed, ${gateway.mode === 'issued' ? 'tokens issued by the gateway program' : 'cloned REAL civic token bytes'})`, `same person, second wallet: rejected (${errName(dup).slice(0, 40)})`);
+
+const loanOf = async (a: Address) => (await gf.fetchLoan(rpc as any, a, { commitment: 'confirmed' })).data;
 
 // ---------- Loan 1 ----------
 type Party = { signer: typeof borrower; gw: Address; person: Address; token: Address };
@@ -141,18 +157,21 @@ async function openLoan(amount: bigint, termDays: number, b: Party = B, c: Party
   assert.equal(pa.activeLoans, pBefore.activeLoans + 1n);
   return { loan, escrow: escrowAddr, escrowAmt: escrow, id, request };
 }
+const claimIx = async (claimer: any, loan: Address) => {
+  const l = await loanOf(loan);
+  const cosignerWallet = (await getPerson(l.cosignerPerson)).wallet;
+  return gf.getClaimEscrowInstructionAsync({ claimer, mint: MINT, loan, cosignerPerson: l.cosignerPerson, cosignerToken: await ata(cosignerWallet), rentPayer: l.rentPayer });
+};
 const L1 = await openLoan(100n * USDC, 7);
 row('request+cosign loan#1 100', `escrow ${fmt(L1.escrowAmt)}`, `borrower ${fmt(await tok(ataOf.borrower))}`, `cosigner ${fmt(await tok(ataOf.cosigner))}`, `vault ${fmt(await tok(vault))}`);
 assert.equal((await getPerson(pB)).activeLoan.__option, 'Some');
 const rq = await rpc.getAccountInfo((await gf.findRequestPda({ pool, borrower: borrower.address }))[0], { encoding: 'base64' }).send();
 assert.equal(rq.value, null, 'request closed');
 
-const loanOf = async (a: Address) => (await gf.fetchLoan(rpc as any, a, { commitment: 'confirmed' })).data;
-/** Repay with the escrow refund going to the co-signer person's *current* wallet. */
+/** Repay touches no co-signer account: the escrow waits in the loan until it is claimed. */
 const repayIx = async (payer: any, payerToken: Address, loan: Address, escrow: Address, rentPayer: Address, amount: bigint) => {
   const l = await loanOf(loan);
-  const cosignerWallet = (await getPerson(l.cosignerPerson)).wallet;
-  return gf.getRepayInstructionAsync({ payer, mint: MINT, vault, loan, escrow, payerToken, cosignerToken: await ata(cosignerWallet), borrowerPerson: l.borrowerPerson, cosignerPerson: l.cosignerPerson, rentPayer, amount });
+  return gf.getRepayInstructionAsync({ payer, mint: MINT, vault, loan, escrow, payerToken, borrowerPerson: l.borrowerPerson, cosignerPerson: l.cosignerPerson, rentPayer, amount });
 };
 
 // partial repay by third party
@@ -168,17 +187,28 @@ row('overpay 61 (rem 60)', 'rejected');
 // full repay: remaining 60 by borrower (needs USDC: borrower has 100)
 const cBefore = await tok(ataOf.cosigner), rentBefore = await sol(l.rentPayer);
 await send([await repayIx(borrower, ataOf.borrower, L1.loan, L1.escrow, l.rentPayer, 60n * USDC)], borrower, 'repay full');
-assert.equal(await tok(ataOf.cosigner), cBefore + L1.escrowAmt);
+assert.equal(await tok(ataOf.cosigner), cBefore, 'nothing is pushed to the co-signer at repayment');
 assert.equal(await tok(ataOf.borrower), 40n * USDC);
-assert.equal((await rpc.getAccountInfo(L1.escrow, { encoding: 'base64' }).send()).value, null, 'escrow closed');
-l = await loanOf(L1.loan); assert.equal(l.status, gf.LoanStatus.Repaid);
+assert.equal(await tok(L1.escrow), L1.escrowAmt, 'escrow still holds the deposit');
+l = await loanOf(L1.loan); assert.equal(l.status, gf.LoanStatus.Repaid); assert.equal(l.refundPending, L1.escrowAmt); assert.ok(l.closedAt > 0n);
 assert.equal((await getPerson(pB)).activeLoan.__option, 'None');
+assert.equal((await getPerson(pB)).completedLoans, 1);
 assert.equal((await getPerson(pC)).activeGuarantees, 0);
+assert.equal((await getPerson(pC)).activeGuaranteeAmount, 0n);
 p = await fetchPool(pool);
 assert.equal(p.totalRepaid, p0.totalRepaid + 100n * USDC);
 assert.equal(p.activeLoans, 0n);
+assert.equal(p.pendingClaims, p0.pendingClaims + L1.escrowAmt);
+row('full repay 60', `Repaid, refund_pending ${fmt(l.refundPending)} waits in the escrow`, `completed_loans 1`, `vault ${fmt(await tok(vault))}`, `totalRepaid +${fmt(p.totalRepaid - p0.totalRepaid)}`);
+// claim_escrow: anyone releases the deposit to the co-signer's current wallet and the escrow rent goes back to its payer
+await send([await claimIx(third, L1.loan)], third, 'claim_escrow');
+assert.equal(await tok(ataOf.cosigner), cBefore + L1.escrowAmt);
+assert.equal((await rpc.getAccountInfo(L1.escrow, { encoding: 'base64' }).send()).value, null, 'escrow closed');
+assert.equal((await loanOf(L1.loan)).refundPending, 0n);
+assert.equal((await fetchPool(pool)).pendingClaims, p0.pendingClaims);
 assert.ok((await sol(l.rentPayer)) > rentBefore - 1n);
-row('full repay 60', `escrow back to cosigner ${fmt(await tok(ataOf.cosigner))}`, `escrow acct closed`, `vault ${fmt(await tok(vault))}`, `totalRepaid +${fmt(p.totalRepaid - p0.totalRepaid)}`);
+const twice = await expectFail(send([await gf.getClaimEscrowInstructionAsync({ claimer: third, mint: MINT, loan: L1.loan, cosignerPerson: pC, cosignerToken: ataOf.cosigner, rentPayer: l.rentPayer })], third, 'claim twice'), 'second claim');
+row('claim_escrow (third party)', `escrow ${fmt(L1.escrowAmt)} to the co-signer`, 'escrow acct closed, rent back', `second claim: ${errName(twice)}`);
 
 // ---------- cancel_request ----------
 {
@@ -201,17 +231,36 @@ row('full repay 60', `escrow back to cosigner ${fmt(await tok(ataOf.cosigner))}`
   row('cancel_request (cosigner)', 'request closed');
 }
 
-// ---------- rebind_wallet: the co-signer loses their keys and moves to cosigner2 ----------
+// ---------- wallet recovery: the co-signer loses their keys and moves to cosigner2 (propose, veto, propose, finalize) ----------
 {
-  const impostor = await expectFail(send([await gf.getRebindWalletInstructionAsync({ newWallet: cosigner2, payer: cosigner2, issuer: third, pool, person: pC, oldMember: mC, gatewayToken: gwC2 })], cosigner2, 'rebind without issuer'), 'rebind without the issuer');
-  await send([await gf.getRebindWalletInstructionAsync({ newWallet: cosigner2, payer: cosigner2, issuer: admin, pool, person: pC, oldMember: mC, gatewayToken: gwC2 })], cosigner2, 'rebind_wallet');
+  const propose = (issuer: typeof admin | typeof third, recoveryAuthority: typeof admin | typeof third = admin) =>
+    gf.getProposeRebindInstruction({ newWallet: cosigner2, issuer, recoveryAuthority, pool, person: pC, gatewayToken: gwC2 });
+  const impostor = await expectFail(send([propose(third)], cosigner2, 'propose without issuer'), 'propose without the issuer');
+  const noRecovery = await expectFail(send([propose(admin, third)], cosigner2, 'propose without recovery'), 'propose without the recovery authority');
+  await send([propose(admin)], cosigner2, 'propose_rebind');
+  let pc = await getPerson(pC);
+  assert.equal(pc.pendingWallet.__option === 'Some' ? pc.pendingWallet.value : null, cosigner2.address, 'proposal recorded');
+  assert.equal(pc.wallet, cosigner.address, 'nothing moves yet');
   const [mC2] = await gf.findMemberPda({ pool, wallet: cosigner2.address });
+  const early = await expectFail(send([await gf.getFinalizeRebindInstructionAsync({ payer: third, pool, person: pC, newWallet: cosigner2.address, oldMember: mC, newMember: mC2 })], third, 'finalize early'), 'finalize before the delay');
+  // the old wallet still has its keys after all and objects
+  const strangerVeto = await expectFail(send([gf.getVetoRebindInstruction({ signer: third, pool, person: pC })], third, 'veto by stranger'), 'stranger veto');
+  await send([gf.getVetoRebindInstruction({ signer: cosigner, pool, person: pC })], cosigner, 'veto_rebind');
+  assert.equal((await getPerson(pC)).pendingWallet.__option, 'None', 'proposal dropped');
+  row('propose_rebind + veto', `impostor issuer ${errName(impostor)}`, `no recovery authority ${errName(noRecovery)}`, `finalize early ${errName(early)}`, `stranger veto ${errName(strangerVeto)}`, 'old wallet vetoed');
+  // proposed again; after the delay anyone finalises
+  await send([propose(admin)], cosigner2, 'propose_rebind again');
+  pc = await getPerson(pC);
+  await cheat('surfnet_timeTravel', [{ absoluteTimestamp: (Number(pc.pendingWalletAt) + 60) * 1000 }]);
+  await new Promise(r => setTimeout(r, 1500));
+  await send([await gf.getFinalizeRebindInstructionAsync({ payer: third, pool, person: pC, newWallet: cosigner2.address, oldMember: mC, newMember: mC2 })], third, 'finalize_rebind');
   assert.equal((await getMember(mC)).retired, true, 'old wallet retired');
   assert.equal((await getMember(mC2)).person, pC, 'new wallet bound to the same person');
   assert.equal((await getPerson(pC)).wallet, cosigner2.address);
+  assert.equal((await getPerson(pC)).pendingWallet.__option, 'None');
   // the retired wallet can no longer be named as a co-signer
   const retired = await expectFail(send([await gf.getRequestLoanInstructionAsync({ payer: borrower, borrower, mint: MINT, borrowerPerson: pB, cosignerMember: mC, borrowerGatewayToken: gwB, amount: 10n * USDC, termDays: 5, cosigner: cosigner.address })], borrower, 'request naming retired wallet'), 'retired co-signer');
-  row('rebind_wallet', `impostor issuer ${errName(impostor)}`, 'co-signer moved to a new wallet, old one retired', `request naming old wallet: ${errName(retired)}`);
+  row('finalize_rebind (third party, after the delay)', 'co-signer moved to a new wallet, old one retired', `request naming old wallet: ${errName(retired)}`);
   C = { signer: cosigner2, gw: gwC2, person: pC, token: ataOf.cosigner2 };
 }
 
@@ -220,7 +269,12 @@ const L2 = await openLoan(100n * USDC, 7);
 row('loan#2 100 (new co-signer wallet)', `escrow ${fmt(L2.escrowAmt)}`, `borrower ${fmt(await tok(ataOf.borrower))}`, `cosigner2 ${fmt(await tok(ataOf.cosigner2))}`, `vault ${fmt(await tok(vault))}`);
 l = await loanOf(L2.loan);
 const frozenAtStart = p0.authority.__option === 'None';
-const paramsOf = (x: Awaited<ReturnType<typeof fetchPool>>) => ({ gatekeeperNetwork: x.gatekeeperNetwork, maxLoan: x.maxLoan, maxTermDays: x.maxTermDays, graceDays: x.graceDays, maxGuaranteesPerMember: x.maxGuaranteesPerMember, cosignerEscrowBps: x.cosignerEscrowBps, issuer: x.issuer, timelockSeconds: x.timelockSeconds });
+const paramsOf = (x: Awaited<ReturnType<typeof fetchPool>>) => ({
+  gatekeeperNetwork: x.gatekeeperNetwork, maxLoan: x.maxLoan, maxTermDays: x.maxTermDays, graceDays: x.graceDays, maxGuaranteesPerMember: x.maxGuaranteesPerMember, cosignerEscrowBps: x.cosignerEscrowBps,
+  issuer: x.issuer, timelockSeconds: x.timelockSeconds, recoveryAuthority: x.recoveryAuthority, pauseAuthority: x.pauseAuthority, recoveryDelaySeconds: x.recoveryDelaySeconds, requestTtlSeconds: x.requestTtlSeconds,
+  firstLoanCap: x.firstLoanCap, loanCapStep: x.loanCapStep, cooldownSeconds: x.cooldownSeconds, maxExposurePerPerson: x.maxExposurePerPerson, disbursementWindowSeconds: x.disbursementWindowSeconds,
+  disbursementCapPerWindow: x.disbursementCapPerWindow, defaultBanSeconds: x.defaultBanSeconds, lateBanSeconds: x.lateBanSeconds, cosignerBanSeconds: x.cosignerBanSeconds,
+});
 let newGrace = p.graceDays;
 if (frozenAtStart) {
   row('schedule_params', 'skipped: pool already frozen (restart surfpool for a fresh fork)');
@@ -234,9 +288,10 @@ if (frozenAtStart) {
   assert.equal(ps.pendingParams.__option, 'Some');
   assert.ok(ps.paramsEffectiveAt >= BigInt(await clockTs()) + TIMELOCK - 60n, 'effective after the timelock');
   const early = await expectFail(send([gf.getApplyParamsInstruction({ pool })], third, 'apply early'), 'apply before the timelock');
-  row('schedule_params grace +7', `stranger ${errName(strangerErr)}`, `pending, effective in ${ps.paramsEffectiveAt - BigInt(await clockTs())}s`, `apply now: ${errName(early)}`);
+  const tooShort = await expectFail(send([gf.getScheduleParamsInstruction({ authority: admin, pool, params: { ...paramsOf(pBefore), timelockSeconds: 0n } })], admin, 'schedule timelock 0'), 'notice period below the minimum');
+  row('schedule_params grace +7', `stranger ${errName(strangerErr)}`, `pending, effective in ${ps.paramsEffectiveAt - BigInt(await clockTs())}s`, `apply now: ${errName(early)}`, `timelock -> 0: ${errName(tooShort)}`);
 }
-const earlyDefault = await expectFail(send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, cosignerToken: ataOf.cosigner2, borrowerPerson: pB, cosignerPerson: pC, rentPayer: l.rentPayer })], third, 'early default'), 'early default');
+const earlyDefault = await expectFail(send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, borrowerPerson: pB, cosignerPerson: pC, rentPayer: l.rentPayer })], third, 'early default'), 'early default');
 row('mark_default too early', 'rejected', errName(earlyDefault));
 // partial repay 30 so shortfall is 70 > escrow 25 -> recovered 25, lost 45, co-signer barred
 await send([await repayIx(third, ataOf.third, L2.loan, L2.escrow, l.rentPayer, 30n * USDC)], third, 'repay partial 2');
@@ -257,14 +312,14 @@ if (!frozenAtStart) {
   row('apply_params (by a third party, after the timelock)', `pool grace ${newGrace}d`, `loan#2 keeps ${l.graceDays}d`);
 }
 const pre = { vault: await tok(vault), c: await tok(ataOf.cosigner2), p: await fetchPool(pool) };
-await send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, cosignerToken: ataOf.cosigner2, borrowerPerson: pB, cosignerPerson: pC, rentPayer: l.rentPayer })], third, 'mark_default');
+await send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, borrowerPerson: pB, cosignerPerson: pC, rentPayer: l.rentPayer })], third, 'mark_default');
 const shortfall = 70n * USDC, recovered = L2.escrowAmt < shortfall ? L2.escrowAmt : shortfall;
 assert.equal(await tok(vault), pre.vault + recovered);
-assert.equal(await tok(ataOf.cosigner2), pre.c + (L2.escrowAmt - recovered));
-assert.equal((await rpc.getAccountInfo(L2.escrow, { encoding: 'base64' }).send()).value, null);
-l = await loanOf(L2.loan); assert.equal(l.status, gf.LoanStatus.Defaulted);
+assert.equal(await tok(ataOf.cosigner2), pre.c, 'nothing pushed to the co-signer');
+assert.equal((await rpc.getAccountInfo(L2.escrow, { encoding: 'base64' }).send()).value, null, 'fully absorbed escrow closes at once');
+l = await loanOf(L2.loan); assert.equal(l.status, gf.LoanStatus.Defaulted); assert.equal(l.refundPending, L2.escrowAmt - recovered);
 const personB = await getPerson(pB), personC = await getPerson(pC);
-assert.equal(personB.ineligible, true); assert.equal(personC.ineligible, true, 'the fund lost money, so the co-signer is barred too');
+assert.equal(personB.ineligibleUntil, PERMANENT); assert.equal(personC.ineligibleUntil, PERMANENT, 'the fund lost money, so the co-signer is barred too');
 assert.equal(personB.activeLoan.__option, 'None'); assert.equal(personC.activeGuarantees, 0);
 p = await fetchPool(pool);
 assert.equal(p.totalRecovered, pre.p.totalRecovered + recovered);
@@ -276,6 +331,41 @@ row('mark_default', `recovered ${fmt(recovered)}`, `lost ${fmt(shortfall - recov
   const [cosignerMember] = await gf.findMemberPda({ pool, wallet: cosigner2.address });
   await expectFail(send([await gf.getRequestLoanInstructionAsync({ payer: borrower, borrower, mint: MINT, borrowerPerson: pB, cosignerMember, borrowerGatewayToken: gwB, amount: 10n * USDC, termDays: 7, cosigner: cosigner2.address })], borrower, 'request after default'), 'ineligible request');
   row('request after default', 'rejected (ineligible)');
+}
+
+// ---------- pause_lending (instant brake) and request expiry ----------
+if (!frozenAtStart) {
+  const fourth = await wallet(), fifth = await wallet();
+  for (const w of [fourth, fifth]) await setSol(w.address, 1_000_000_000n);
+  await setUsdc(fourth.address, 0n);
+  await setUsdc(fifth.address, 100n * USDC);
+  const gw4 = await plantGateway(fourth.address), gw5 = await plantGateway(fifth.address);
+  await send([await registerIx(fourth, gw4)], fourth, 'register fourth');
+  await send([await registerIx(fifth, gw5)], fifth, 'register fifth');
+  const [p4] = await gf.findPersonPda({ pool, personId: idOf(fourth.address) });
+  const [m5] = await gf.findMemberPda({ pool, wallet: fifth.address });
+  const reqIx = () => gf.getRequestLoanInstructionAsync({ payer: fourth, borrower: fourth, mint: MINT, borrowerPerson: p4, cosignerMember: m5, borrowerGatewayToken: gw4, amount: 10n * USDC, termDays: 5, cosigner: fifth.address });
+  const strangerPause = await expectFail(send([gf.getPauseLendingInstruction({ signer: third, pool })], third, 'pause by stranger'), 'stranger pause');
+  await send([gf.getPauseLendingInstruction({ signer: admin, pool })], admin, 'pause_lending');
+  assert.equal((await fetchPool(pool)).paused, true);
+  const whilePaused = await expectFail(send([await reqIx()], fourth, 'request while paused'), 'request while paused');
+  await send([gf.getResumeLendingInstruction({ authority: admin, pool })], admin, 'resume_lending');
+  assert.equal((await fetchPool(pool)).paused, false);
+  row('pause_lending / resume_lending', `stranger ${errName(strangerPause)}`, `request while paused: ${errName(whilePaused)}`, 'resumed by the authority');
+  await send([await reqIx()], fourth, 'request (to expire)');
+  const [request] = await gf.findRequestPda({ pool, borrower: fourth.address });
+  const req = (await gf.fetchLoanRequest(rpc as any, request, { commitment: 'confirmed' })).data;
+  const notYet = await expectFail(send([gf.getCloseExpiredRequestInstruction({ closer: third, pool, request, rentPayer: fourth.address })], third, 'close before expiry'), 'close before expiry');
+  await cheat('surfnet_timeTravel', [{ absoluteTimestamp: (Number(req.expiresAt) + 60) * 1000 }]);
+  await new Promise(r => setTimeout(r, 1500));
+  const [cm] = await gf.findMemberPda({ pool, wallet: fourth.address });
+  const expiredCosign = await expectFail(send([await gf.getCosignLoanInstructionAsync({ payer: fifth, cosigner: fifth, mint: MINT, vault, request, requestRentPayer: fourth.address, borrowerPerson: p4, cosignerPerson: (await getMember(m5)).person, borrowerToken: await ata(fourth.address), cosignerToken: await ata(fifth.address), loan: await loanPda(pool, (await fetchPool(pool)).loanCount), borrowerGatewayToken: gw4, cosignerGatewayToken: gw5, expectedAmount: 10n * USDC, expectedTermDays: 5, maxEscrow: 3n * USDC })], fifth, 'cosign expired'), 'cosign an expired request');
+  void cm;
+  const solBefore = await sol(fourth.address);
+  await send([gf.getCloseExpiredRequestInstruction({ closer: third, pool, request, rentPayer: fourth.address })], third, 'close_expired_request');
+  assert.equal((await rpc.getAccountInfo(request, { encoding: 'base64' }).send()).value, null, 'request closed');
+  assert.ok((await sol(fourth.address)) > solBefore, 'rent back to the borrower');
+  row('request expiry', `close before expiry: ${errName(notYet)}`, `cosign after expiry: ${errName(expiredCosign)}`, 'closed by a third party after the TTL, rent back to the borrower');
 }
 
 // ---------- authority handover (two-step) ----------
@@ -320,7 +410,7 @@ if (!frozenAtStart) {
   await cheat('surfnet_setAccount', [M2, { lamports: 1_461_600, owner: TOKEN_PROGRAM, data: mintData.toString('hex') }]);
   const [poolW] = await gf.findPoolPda({ mint: M2 });
   const [vaultW] = await gf.findVaultPda({ pool: poolW });
-  await send([await gf.getInitializePoolInstructionAsync({ payer: admin, mint: M2, params: { gatekeeperNetwork: NETWORK, maxLoan: 1000n * USDC, maxTermDays: 30, graceDays: 3, maxGuaranteesPerMember: 2, cosignerEscrowBps: 2500, issuer: admin.address, timelockSeconds: 0n } })], admin, 'initialize_pool W');
+  await send([await gf.getInitializePoolInstructionAsync({ payer: admin, mint: M2, params: params(0n) })], admin, 'initialize_pool W');
   await cheat('surfnet_setTokenAccount', [donor.address, M2, { amount: Number(100n * USDC), state: 'initialized' }]);
   await cheat('surfnet_setTokenAccount', [third.address, M2, { amount: 0, state: 'initialized' }]);
   const ataFor = async (owner: Address, mint: Address): Promise<Address> => {
@@ -360,4 +450,4 @@ p = await fetchPool(pool);
 console.log('\nPool', pool, { donated: fmt(p.totalDonated), lent: fmt(p.totalLent), repaid: fmt(p.totalRepaid), recovered: fmt(p.totalRecovered), lost: fmt(p.totalLost), loanCount: String(p.loanCount), activeLoans: String(p.activeLoans) });
 console.log('\n' + ['step', 'detail...'].join(' | ')); for (const r of rows) console.log(r.join(' | '));
 console.log('\nE2E PASS');
-fs.writeFileSync(path.join(here, 'e2e-result.json'), JSON.stringify({ pool, vault, authority: (await fetchPool(pool)).authority.__option === 'None' ? 'none' : admin.address, issuer: admin.address, network: NETWORK, mint: MINT }, null, 1));
+fs.writeFileSync(path.join(here, 'e2e-result.json'), JSON.stringify({ pool, vault, authority: (await fetchPool(pool)).authority.__option === 'None' ? 'none' : admin.address, issuer: admin.address, recoveryAuthority: admin.address, pauseAuthority: admin.address, network: NETWORK, mint: MINT }, null, 1));

@@ -175,6 +175,7 @@ function Terms({ wallet, pool, request, onDone }: { wallet: Address; pool: Pool;
                   request,
                   borrowerPerson: b.person,
                   cosignerPerson: c.person,
+                  cosignerActiveLoan: c.activeLoan,
                   borrowerGatewayToken: await gatewayTokenAddress(request.borrower, network),
                   cosignerGatewayToken: await gatewayTokenAddress(request.cosigner, network),
                   expectedAmount: request.amount,

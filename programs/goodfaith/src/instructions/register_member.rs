@@ -5,10 +5,10 @@ use crate::{
     MEMBER_SEED, PERSON_SEED,
 };
 
-/// Joins the fund: the issuer vouches that `person_hash` is one verified human and that
-/// `wallet` belongs to them; the wallet proves control; the payer covers rent.
+/// Joins the fund: the issuer vouches that `person_id` is one verified human and that `wallet`
+/// belongs to them; the wallet proves control; the payer covers rent.
 #[derive(Accounts)]
-#[instruction(person_hash: [u8; 32])]
+#[instruction(person_id: [u8; 32])]
 pub struct RegisterMember<'info> {
     pub wallet: Signer<'info>,
     /// Pays account rent (fee sponsor, may equal wallet).
@@ -21,7 +21,7 @@ pub struct RegisterMember<'info> {
         init,
         payer = payer,
         space = 8 + Person::INIT_SPACE,
-        seeds = [PERSON_SEED, pool.key().as_ref(), person_hash.as_ref()],
+        seeds = [PERSON_SEED, pool.key().as_ref(), person_id.as_ref()],
         bump,
     )]
     pub person: Account<'info, Person>,
@@ -38,20 +38,31 @@ pub struct RegisterMember<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn register_member_handler(ctx: Context<RegisterMember>, person_hash: [u8; 32]) -> Result<()> {
+pub fn register_member_handler(ctx: Context<RegisterMember>, person_id: [u8; 32]) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
     verify_gateway_token(
         &ctx.accounts.gateway_token,
         &ctx.accounts.wallet.key(),
         &ctx.accounts.pool.gatekeeper_network,
-        Clock::get()?.unix_timestamp,
+        now,
     )?;
+    let restricted_until = now
+        .checked_add(ctx.accounts.pool.cooldown_seconds)
+        .ok_or(GoodFaithError::MathOverflow)?;
     let person = &mut ctx.accounts.person;
-    person.person_hash = person_hash;
-    person.wallet = ctx.accounts.wallet.key();
-    person.active_loan = None;
-    person.active_guarantees = 0;
-    person.ineligible = false;
-    person.bump = ctx.bumps.person;
+    person.set_inner(Person {
+        person_id,
+        wallet: ctx.accounts.wallet.key(),
+        active_loan: None,
+        active_guarantees: 0,
+        active_guarantee_amount: 0,
+        completed_loans: 0,
+        ineligible_until: 0,
+        restricted_until,
+        pending_wallet: None,
+        pending_wallet_at: 0,
+        bump: ctx.bumps.person,
+    });
     let member = &mut ctx.accounts.member;
     member.wallet = ctx.accounts.wallet.key();
     member.person = person.key();

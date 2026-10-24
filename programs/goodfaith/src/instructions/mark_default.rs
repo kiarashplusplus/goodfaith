@@ -5,7 +5,6 @@ use anchor_spl::token_interface::{
 
 use crate::{
     error::GoodFaithError, events::LoanDefaulted, state::*, ESCROW_SEED, LOAN_SEED, POOL_SEED,
-    SECONDS_PER_DAY,
 };
 
 #[derive(Accounts)]
@@ -44,30 +43,18 @@ pub struct MarkDefault<'info> {
     pub borrower_person: Box<Account<'info, Person>>,
     #[account(mut, address = loan.cosigner_person)]
     pub cosigner_person: Box<Account<'info, Person>>,
-    // Any escrow left over goes to the co-signer's current wallet.
-    #[account(
-        mut,
-        token::mint = mint,
-        token::authority = cosigner_person.wallet,
-    )]
-    pub cosigner_token: Box<InterfaceAccount<'info, TokenAccount>>,
-    /// CHECK: receives the escrow account rent; must match `loan.rent_payer`.
+    /// CHECK: receives the escrow account rent when nothing is left to claim; must match `loan.rent_payer`.
     #[account(mut, address = loan.rent_payer)]
     pub rent_payer: UncheckedAccount<'info>,
     pub token_program: Interface<'info, TokenInterface>,
 }
 
+/// After the term and grace period, anyone settles the loan: the unpaid balance comes out of the escrow
+/// into the vault; whatever is left waits for the co-signer to claim.
 pub fn mark_default_handler(mut ctx: Context<MarkDefault>) -> Result<()> {
     let a = &mut ctx.accounts;
     let now = Clock::get()?.unix_timestamp;
-    let grace = i64::from(a.loan.grace_days)
-        .checked_mul(SECONDS_PER_DAY)
-        .ok_or(GoodFaithError::MathOverflow)?;
-    let deadline = a
-        .loan
-        .due_at
-        .checked_add(grace)
-        .ok_or(GoodFaithError::MathOverflow)?;
+    let deadline = a.loan.deadline().ok_or(GoodFaithError::MathOverflow)?;
     require!(now > deadline, GoodFaithError::NotYetDefaultable);
 
     let shortfall = a
@@ -87,36 +74,40 @@ pub fn mark_default_handler(mut ctx: Context<MarkDefault>) -> Result<()> {
     let decimals = a.mint.decimals;
     let mint_key = a.mint.key();
     let seeds: &[&[u8]] = &[POOL_SEED, mint_key.as_ref(), &[a.pool.bump]];
-    for (amount, to) in [
-        (recovered, a.vault.to_account_info()),
-        (returned, a.cosigner_token.to_account_info()),
-    ] {
-        if amount > 0 {
-            token_interface::transfer_checked(
-                CpiContext::new_with_signer(
-                    a.token_program.key(),
-                    TransferChecked {
-                        from: a.escrow.to_account_info(),
-                        mint: a.mint.to_account_info(),
-                        to,
-                        authority: a.pool.to_account_info(),
-                    },
-                    &[seeds],
-                ),
-                amount,
-                decimals,
-            )?;
-        }
+    if recovered > 0 {
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                a.token_program.key(),
+                TransferChecked {
+                    from: a.escrow.to_account_info(),
+                    mint: a.mint.to_account_info(),
+                    to: a.vault.to_account_info(),
+                    authority: a.pool.to_account_info(),
+                },
+                &[seeds],
+            ),
+            recovered,
+            decimals,
+        )?;
     }
-    token_interface::close_account(CpiContext::new_with_signer(
-        a.token_program.key(),
-        CloseAccount {
-            account: a.escrow.to_account_info(),
-            destination: a.rent_payer.to_account_info(),
-            authority: a.pool.to_account_info(),
-        },
-        &[seeds],
-    ))?;
+    if returned > 0 {
+        a.loan.refund_pending = returned;
+        a.pool.pending_claims = a
+            .pool
+            .pending_claims
+            .checked_add(returned)
+            .ok_or(GoodFaithError::MathOverflow)?;
+    } else {
+        token_interface::close_account(CpiContext::new_with_signer(
+            a.token_program.key(),
+            CloseAccount {
+                account: a.escrow.to_account_info(),
+                destination: a.rent_payer.to_account_info(),
+                authority: a.pool.to_account_info(),
+            },
+            &[seeds],
+        ))?;
+    }
 
     a.pool.total_recovered = a
         .pool
@@ -135,17 +126,25 @@ pub fn mark_default_handler(mut ctx: Context<MarkDefault>) -> Result<()> {
         .ok_or(GoodFaithError::MathOverflow)?;
 
     a.loan.status = LoanStatus::Defaulted;
-    a.borrower_person.ineligible = true;
+    a.loan.closed_at = now;
+    let default_ban = a.pool.default_ban_seconds;
+    a.borrower_person.bar(now, default_ban);
     a.borrower_person.active_loan = None;
     // The co-signer's deposit did its job: if the fund was made whole, they keep their standing.
     let cosigner_barred = lost > 0;
     if cosigner_barred {
-        a.cosigner_person.ineligible = true;
+        let cosigner_ban = a.pool.cosigner_ban_seconds;
+        a.cosigner_person.bar(now, cosigner_ban);
     }
     a.cosigner_person.active_guarantees = a
         .cosigner_person
         .active_guarantees
         .checked_sub(1)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    a.cosigner_person.active_guarantee_amount = a
+        .cosigner_person
+        .active_guarantee_amount
+        .checked_sub(a.loan.principal)
         .ok_or(GoodFaithError::MathOverflow)?;
 
     emit!(LoanDefaulted {
@@ -157,7 +156,9 @@ pub fn mark_default_handler(mut ctx: Context<MarkDefault>) -> Result<()> {
         recovered,
         lost,
         escrow_returned: returned,
-        cosigner_barred,
+        cosigner_barred: cosigner_barred && a.pool.cosigner_ban_seconds > 0,
+        borrower_ineligible_until: a.borrower_person.ineligible_until,
+        cosigner_ineligible_until: a.cosigner_person.ineligible_until,
     });
     Ok(())
 }

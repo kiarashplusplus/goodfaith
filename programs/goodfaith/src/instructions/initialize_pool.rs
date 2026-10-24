@@ -50,6 +50,10 @@ pub fn initialize_pool_handler(ctx: Context<InitializePool>, params: PoolParams)
     pool.successor = None;
     pool.active_loans = 0;
     pool.total_swept = 0;
+    pool.paused = false;
+    pool.window_start = Clock::get()?.unix_timestamp;
+    pool.window_disbursed = 0;
+    pool.pending_claims = 0;
     pool.bump = ctx.bumps.pool;
     pool.vault_bump = ctx.bumps.vault;
     emit!(PoolInitialized {

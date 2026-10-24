@@ -17,22 +17,30 @@ export type Loan = { discriminator: ReadonlyUint8Array; id: bigint; borrower: Ad
 /** Grace period fixed when the loan opened; later pool changes do not apply. */
 graceDays: number; status: LoanStatus; bump: number; escrowBump: number; 
 /** The people behind the wallets at opening; eligibility and escrow returns follow these. */
-borrowerPerson: Address; cosignerPerson: Address;  };
+borrowerPerson: Address; cosignerPerson: Address; 
+/** When the loan left Active. */
+closedAt: bigint; 
+/** Escrow owed to the co-signer, still in the escrow account until `claim_escrow`. */
+refundPending: bigint;  };
 
 export type LoanArgs = { id: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; rentPayer: Address | HasAddress; principal: number | bigint; repaid: number | bigint; escrowed: number | bigint; openedAt: number | bigint; dueAt: number | bigint; 
 /** Grace period fixed when the loan opened; later pool changes do not apply. */
 graceDays: number; status: LoanStatusArgs; bump: number; escrowBump: number; 
 /** The people behind the wallets at opening; eligibility and escrow returns follow these. */
-borrowerPerson: Address | HasAddress; cosignerPerson: Address | HasAddress;  };
+borrowerPerson: Address | HasAddress; cosignerPerson: Address | HasAddress; 
+/** When the loan left Active. */
+closedAt: number | bigint; 
+/** Escrow owed to the co-signer, still in the escrow account until `claim_escrow`. */
+refundPending: number | bigint;  };
 
 /** Gets the encoder for {@link LoanArgs} account data. */
 export function getLoanEncoder(): FixedSizeEncoder<LoanArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['id', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['rentPayer', getAddressEncoder()], ['principal', getU64Encoder()], ['repaid', getU64Encoder()], ['escrowed', getU64Encoder()], ['openedAt', getI64Encoder()], ['dueAt', getI64Encoder()], ['graceDays', getU16Encoder()], ['status', getLoanStatusEncoder()], ['bump', getU8Encoder()], ['escrowBump', getU8Encoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()]]), (value) => ({ ...value, discriminator: LOAN_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['id', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['rentPayer', getAddressEncoder()], ['principal', getU64Encoder()], ['repaid', getU64Encoder()], ['escrowed', getU64Encoder()], ['openedAt', getI64Encoder()], ['dueAt', getI64Encoder()], ['graceDays', getU16Encoder()], ['status', getLoanStatusEncoder()], ['bump', getU8Encoder()], ['escrowBump', getU8Encoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()], ['closedAt', getI64Encoder()], ['refundPending', getU64Encoder()]]), (value) => ({ ...value, discriminator: LOAN_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Loan} account data. */
 export function getLoanDecoder(): FixedSizeDecoder<Loan> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['id', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['rentPayer', getAddressDecoder()], ['principal', getU64Decoder()], ['repaid', getU64Decoder()], ['escrowed', getU64Decoder()], ['openedAt', getI64Decoder()], ['dueAt', getI64Decoder()], ['graceDays', getU16Decoder()], ['status', getLoanStatusDecoder()], ['bump', getU8Decoder()], ['escrowBump', getU8Decoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['id', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['rentPayer', getAddressDecoder()], ['principal', getU64Decoder()], ['repaid', getU64Decoder()], ['escrowed', getU64Decoder()], ['openedAt', getI64Decoder()], ['dueAt', getI64Decoder()], ['graceDays', getU16Decoder()], ['status', getLoanStatusDecoder()], ['bump', getU8Decoder()], ['escrowBump', getU8Decoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()], ['closedAt', getI64Decoder()], ['refundPending', getU64Decoder()]]);
 }
 
 /** Gets the codec for {@link Loan} account data. */
@@ -85,5 +93,5 @@ export async function fetchAllMaybeLoan(
 }
 
 export function getLoanSize(): number {
-  return 221;
+  return 237;
 }
