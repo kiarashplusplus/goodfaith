@@ -14,7 +14,7 @@ personId: ReadonlyUint8Array;
 };
 
 export async function findPersonPda(seeds: PersonSeeds, config: { programAddress?: Address | HasAddress | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress: programAddressInput = 'BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd' as Address<'BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd'> } = config;
+  const { programAddress: programAddressInput = 'BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq' as Address<'BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq'> } = config;
   const programAddress = typeof programAddressInput === 'string' ? programAddressInput : programAddressInput.address;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([112, 101, 114, 115, 111, 110])), getAddressEncoder().encode(seeds.pool), fixEncoderSize(getBytesEncoder(), 32).encode(seeds.personId)]});
 }

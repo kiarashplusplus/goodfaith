@@ -91,7 +91,7 @@ jobs:
       NEXT_PUBLIC_CLUSTER: devnet
       NEXT_PUBLIC_RPC_URL: https://api.devnet.solana.com
       NEXT_PUBLIC_POOL_MINT: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
-      NEXT_PUBLIC_PROGRAM_ID: BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd
+      NEXT_PUBLIC_PROGRAM_ID: BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq
       NEXT_PUBLIC_POOL_AUTHORITY: none
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
@@ -262,7 +262,7 @@ jobs:
           load: true
           tags: goodfaith-app:ci
           build-args: |
-            NEXT_PUBLIC_PROGRAM_ID=BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd
+            NEXT_PUBLIC_PROGRAM_ID=BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq
             NEXT_PUBLIC_POOL_AUTHORITY=none
             GOODFAITH_VERSION=${{ github.sha }}
           cache-from: type=gha

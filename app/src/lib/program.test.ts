@@ -5,8 +5,8 @@ import { findEscrowPda, findLoanPda, findMemberPda, findPoolPda, findRequestPda,
 import { POOL_MINT, PROGRAM_ID } from "./config";
 
 // Known addresses for the devnet USDC mint under the default program id (scripts/e2e-result.json).
-const POOL = address("Cm8TDDJ7KqqB2oxgsHGcB5iBjdorjrzPrw3dLpEtHR9u");
-const VAULT = address("7ARa6ScRL2UUTqz5KLabaoP9BKDAHDGe8cs2fhtCUuMa");
+const POOL = address("6WhSVqUVvjQ9ana2JAvx4gBKK2o1P7m2K6aCxeXWxCeA");
+const VAULT = address("FUbBuu4hfSDpiK5po711MesY8KureDLQ4R1utvs1zFCj");
 const A = address("2agNDw6soEttnATLgkhxup22GGoeCa7KVNfxyeeuHbve");
 const B = address("uniqobk8oGh4XBLMqM68K8M2zNu3CdYX7q5go7whQiv");
 

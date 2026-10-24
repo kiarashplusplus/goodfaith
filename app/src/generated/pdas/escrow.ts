@@ -13,7 +13,7 @@ loan: Address | HasAddress;
 };
 
 export async function findEscrowPda(seeds: EscrowSeeds, config: { programAddress?: Address | HasAddress | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress: programAddressInput = 'BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd' as Address<'BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd'> } = config;
+  const { programAddress: programAddressInput = 'BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq' as Address<'BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq'> } = config;
   const programAddress = typeof programAddressInput === 'string' ? programAddressInput : programAddressInput.address;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([101, 115, 99, 114, 111, 119])), getAddressEncoder().encode(seeds.loan)]});
 }

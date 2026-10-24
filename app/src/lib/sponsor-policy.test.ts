@@ -35,7 +35,7 @@ import {
   utcDay,
 } from "./sponsor-policy";
 
-const PROGRAM = address("BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd");
+const PROGRAM = address("BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq");
 const payer = address("78DWc8FZ3iVru1z1jDy9wdPsTHqhGYiQRhtyVU6u9RHU");
 const wallet = address("5MhvzaqhN3tqQ2F4tqYwu7MWFoMFzTXFibKvDC3wGqSU");
 const other = address("uniqobk8oGh4XBLMqM68K8M2zNu3CdYX7q5go7whQiv");

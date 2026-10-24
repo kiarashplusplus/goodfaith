@@ -14,7 +14,7 @@ wallet: Address | HasAddress;
 };
 
 export async function findMemberPda(seeds: MemberSeeds, config: { programAddress?: Address | HasAddress | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress: programAddressInput = 'BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd' as Address<'BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd'> } = config;
+  const { programAddress: programAddressInput = 'BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq' as Address<'BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq'> } = config;
   const programAddress = typeof programAddressInput === 'string' ? programAddressInput : programAddressInput.address;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([109, 101, 109, 98, 101, 114])), getAddressEncoder().encode(seeds.pool), getAddressEncoder().encode(seeds.wallet)]});
 }

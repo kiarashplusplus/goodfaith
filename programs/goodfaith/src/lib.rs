@@ -11,7 +11,7 @@ pub use constants::*;
 pub use instructions::*;
 pub use state::*;
 
-declare_id!("BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd");
+declare_id!("BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq");
 
 #[program]
 pub mod goodfaith {

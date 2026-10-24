@@ -13,7 +13,7 @@ mint: Address | HasAddress;
 };
 
 export async function findPoolPda(seeds: PoolSeeds, config: { programAddress?: Address | HasAddress | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress: programAddressInput = 'BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd' as Address<'BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd'> } = config;
+  const { programAddress: programAddressInput = 'BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq' as Address<'BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq'> } = config;
   const programAddress = typeof programAddressInput === 'string' ? programAddressInput : programAddressInput.address;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([112, 111, 111, 108])), getAddressEncoder().encode(seeds.mint)]});
 }
