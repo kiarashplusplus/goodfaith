@@ -5,7 +5,17 @@ import { createNoopSigner, type Address } from "@solana/kit";
 import { getCreateAssociatedTokenIdempotentInstruction } from "@solana-program/token";
 import { Button, GhostButton, Notice, TxStatus } from "./ui";
 import { useApp, useNow } from "@/lib/hooks";
-import { claimEscrowIx, cosignerWalletOf, markDefaultIx, type Loan, type Pool } from "@/lib/program";
+import {
+  claimEscrowIx,
+  collectRecoveryIx,
+  cosignerWalletOf,
+  lossOutstanding,
+  owedAfterSettlement,
+  owedToCosigner,
+  settleIx,
+  type Loan,
+  type Pool,
+} from "@/lib/program";
 import { loanTiming } from "@/lib/loan-status";
 import { CHIP } from "./status-chip";
 import { formatUsdc } from "@/lib/format";
@@ -13,6 +23,9 @@ import { sendInstructions } from "@/lib/tx";
 import { useRun } from "@/lib/use-run";
 
 const date = (unixSec: bigint) => new Date(Number(unixSec) * 1000).toLocaleDateString();
+/** "90 days" or "for good". */
+const bar = (seconds: bigint) =>
+  seconds === 9223372036854775807n ? "for good" : seconds === 0n ? "not at all" : `for ${Number(seconds / 86_400n)} days`;
 
 function sortLoans(loans: Loan[]): Loan[] {
   return [...loans].sort((a, b) => {
@@ -69,6 +82,9 @@ function LoanRow({
   const chip = CHIP[t.state];
   const role = loan.borrower === wallet ? "you borrowed" : "you co-signed";
   const owed = loan.principal - loan.repaid;
+  const settled = loan.status === "Defaulted" || loan.status === "Restituted";
+  const toCosigner = owedToCosigner(loan);
+  const stillOwed = loan.status === "Defaulted" ? owedAfterSettlement(loan) : 0n;
 
   return (
     <li className="py-3 text-sm">
@@ -76,20 +92,32 @@ function LoanRow({
         <div>
           <span className="font-medium">Loan #{loan.id.toString()}</span> · {role} {formatUsdc(loan.principal)}
           {loan.status === "Active" && <>, {formatUsdc(owed)} left</>}
+          {loan.status === "Defaulted" && <>, {formatUsdc(stillOwed)} still owed</>}
           <div className="text-xs text-stone-500">
             Opened {date(loan.openedAt)} · Due {date(loan.dueAt)}
             {t.label && ` · ${t.label}`}
           </div>
+          {settled && (
+            <div className="text-xs text-stone-500">
+              {loan.recovered > 0n && <>Escrow covered {formatUsdc(loan.recovered)}. </>}
+              {lossOutstanding(loan) > 0n && <>The fund is still short {formatUsdc(lossOutstanding(loan))}. </>}
+              {loan.recoveryPending > 0n && <>{formatUsdc(loan.recoveryPending)} waits in escrow for the fund. </>}
+              {toCosigner > 0n && <>{formatUsdc(toCosigner)} waits for the co-signer. </>}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${chip.className}`}>{chip.text}</span>
-          {loan.status === "Active" && <GhostButton onClick={() => onPay(loan)}>Pay</GhostButton>}
-          {loan.status !== "Active" && loan.refundPending > 0n && !result && (
+          {(loan.status === "Active" || loan.status === "Defaulted") && (
+            <GhostButton onClick={() => onPay(loan)}>{loan.status === "Defaulted" ? "Pay back" : "Pay"}</GhostButton>
+          )}
+          {loan.status !== "Active" && toCosigner > 0n && !result && (
             <GhostButton
               disabled={busy || !signer}
               onClick={() =>
                 run(async () => {
-                  // The deposit waits in escrow until someone claims it for the co-signer's current wallet.
+                  // What is owed waits in escrow (and, after a restitution, in the vault) until someone claims it
+                  // for the co-signer's current wallet.
                   const sig = await sendInstructions(rpc, signer!, async (feePayer) => {
                     const cosignerWallet = await cosignerWalletOf(rpc, loan);
                     const { ix, cosignerToken } = await claimEscrowIx({ claimer: wallet, pool, loan, cosignerWallet });
@@ -108,12 +136,26 @@ function LoanRow({
                 })
               }
             >
-              {busy ? "Working..." : `Release ${formatUsdc(loan.refundPending)} escrow`}
+              {busy ? "Working..." : `Release ${formatUsdc(toCosigner)} to the co-signer`}
+            </GhostButton>
+          )}
+          {settled && loan.recoveryPending > 0n && !result && (
+            <GhostButton
+              disabled={busy || !signer}
+              onClick={() =>
+                run(async () => {
+                  const sig = await sendInstructions(rpc, signer!, [await collectRecoveryIx({ collector: wallet, pool, loan })]);
+                  onChanged();
+                  return sig;
+                })
+              }
+            >
+              {busy ? "Working..." : `Move ${formatUsdc(loan.recoveryPending)} to the fund`}
             </GhostButton>
           )}
           {t.state === "defaultable" && !result && (
             <GhostButton onClick={() => setConfirming((c) => !c)} aria-expanded={confirming}>
-              Mark as defaulted
+              Settle
             </GhostButton>
           )}
         </div>
@@ -121,22 +163,25 @@ function LoanRow({
       {confirming && !result && (
         <div className="mt-3">
           <Notice tone="warn">
-            <strong>This is final.</strong> The co-signer&apos;s escrow ({formatUsdc(loan.escrowed)}) goes to the fund to cover what is
-            still owed ({formatUsdc(owed)}). Anything left over waits for the co-signer to collect. The borrower is barred for the
-            fund&apos;s default period; the co-signer only if the escrow did not cover everything owed. Anyone can do this once the grace
-            period has passed.
+            <strong>Settling records the outcome; it moves no money by itself.</strong> Of the co-signer&apos;s escrow (
+            {formatUsdc(loan.escrowed)}), {formatUsdc(owed < loan.escrowed ? owed : loan.escrowed)} is set aside for the fund to cover what
+            is owed ({formatUsdc(owed)}); the rest waits for the co-signer. The borrower is barred {bar(loan.defaultBanSeconds)}
+            {owed > loan.escrowed ? `, the co-signer ${bar(loan.cosignerBanSeconds)} because the escrow does not cover everything` : ""}.
+            Anyone can do this once the grace period has passed; the borrower can pay back what is owed afterwards, which{" "}
+            {loan.lateBanSeconds > 0n ? `shortens their bar to ${Number(loan.lateBanSeconds / 86_400n)} days` : "lifts their bar"} and
+            reimburses the co-signer.
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 disabled={busy || !signer}
                 onClick={() =>
                   run(async () => {
-                    const sig = await sendInstructions(rpc, signer!, [await markDefaultIx({ caller: wallet, pool, loan })]);
+                    const sig = await sendInstructions(rpc, signer!, [await settleIx({ caller: wallet, pool, loan })]);
                     onChanged();
                     return sig;
                   })
                 }
               >
-                {busy ? "Working..." : "Confirm default"}
+                {busy ? "Working..." : "Confirm settlement"}
               </Button>
               <GhostButton disabled={busy} onClick={() => setConfirming(false)}>
                 Keep waiting

@@ -14,16 +14,19 @@ describe("server environment", () => {
       PERSONA_WEBHOOK_SECRET: "w",
       ISSUER_SECRET: "[1]",
       GATEKEEPER_SECRET: "[1]",
-      RECOVERY_SECRET: "[1]",
       PERSON_HASH_SECRETS: "1:x",
       IDENTITY_ADMIN_KEY: "adm",
       IDENTITY_DB_URL: "postgres://x",
+      NOTIFY_WEBHOOK_URL: "https://relay.example/notify",
     });
     expect(e).toEqual({
       sponsor: { enabled: true, proxied: true, upstream: true, auth: "hmac+key" },
-      identity: { configured: true, provider: "persona", recovery: true, store: "postgres" },
+      identity: { configured: true, provider: "persona", notifier: "webhook", store: "postgres" },
       problems: [],
     });
+    expect(readServerEnv({ RECOVERY_SECRET: "[1]" }).problems).toEqual([
+      "RECOVERY_SECRET is set on the web service: the recovery key belongs to the operator's recovery CLI (scripts/recovery.ts), not the app.",
+    ]);
   });
   it("flags secrets exposed as NEXT_PUBLIC_, a proxy without upstream, missing auth and provider settings", () => {
     const e = readServerEnv({
@@ -43,7 +46,7 @@ describe("server environment", () => {
       "IDENTITY_ADMIN_KEY is not set: the cranker cannot revoke passes.",
       "IDENTITY_DB_PATH=memory loses every record on restart; not for mainnet.",
     ]);
-    expect(e.identity).toMatchObject({ configured: true, recovery: false, store: "memory" });
+    expect(e.identity).toMatchObject({ configured: true, notifier: "console", store: "memory" });
     expect(readServerEnv({ KORA_URL: "http://k" }).problems).toContain(
       "Kora is reachable without KORA_API_KEY or KORA_HMAC_SECRET; the upstream must not be exposed without auth.",
     );
@@ -55,7 +58,7 @@ describe("server environment", () => {
   it("reports nothing configured as such", () => {
     expect(readServerEnv({})).toEqual({
       sponsor: { enabled: false, proxied: false, upstream: false, auth: "none" },
-      identity: { configured: false, provider: "none", recovery: false, store: "sqlite" },
+      identity: { configured: false, provider: "none", notifier: "console", store: "sqlite" },
       problems: [],
     });
   });

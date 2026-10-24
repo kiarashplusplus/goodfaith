@@ -10,7 +10,8 @@ import { createSolanaRpc, type Address } from "@solana/kit";
 import { PROGRAM_ID, RPC_URL } from "@/lib/config";
 import { openStore } from "@/lib/identity/db";
 import { serverKoraPayer } from "@/lib/kora-server";
-import { checkCaps, inspectTransaction, limitsFromEnv, type CreatedAta } from "@/lib/sponsor-policy";
+import { budgetFromEnv, checkBudget, checkCaps, inspectTransaction, limitsFromEnv, type CreatedAta } from "@/lib/sponsor-policy";
+import { GLOBAL_TX_ROW, GLOBAL_WALLETS_ROW } from "@/lib/identity/store";
 import {
   ALLOWED_METHODS,
   MAX_BODY_BYTES,
@@ -72,12 +73,22 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!inspection.ok) return reply(jsonRpcError(id, PROXY_ERROR.TRANSACTION_REFUSED, inspection.reason));
   const store = openStore();
   const newAtas = await missing(inspection.atas);
-  const caps = checkCaps(await store.getSponsorUsage(inspection.wallet), newAtas.length, limitsFromEnv(process.env), Date.now());
+  const now = Date.now();
+  const usage = await store.getSponsorUsage(inspection.wallet);
+  const caps = checkCaps(usage, newAtas.length, limitsFromEnv(process.env), now);
   if (!caps.ok) return reply(jsonRpcError(id, PROXY_ERROR.WALLET_CAP, caps.reason));
+  // The fund-wide budget: one wallet's caps bound one person, this bounds a crowd of fresh wallets.
+  const [globalTxs, globalWallets] = await Promise.all([store.getSponsorUsage(GLOBAL_TX_ROW), store.getSponsorUsage(GLOBAL_WALLETS_ROW)]);
+  const budget = checkBudget(globalTxs, globalWallets, usage === null, budgetFromEnv(process.env), now);
+  if (!budget.ok) return reply(jsonRpcError(id, PROXY_ERROR.BUDGET_EXHAUSTED, budget.reason));
 
   const res = await forward(cfg, id, body, ALLOWED_METHODS[method].timeoutMs);
   // Count only what Kora sent; refused or failed attempts are already bounded by the per-client limiter.
-  if (res.ok && (await isResult(res.clone()))) await store.putSponsorUsage({ wallet: inspection.wallet, ...caps.next });
+  if (res.ok && (await isResult(res.clone()))) {
+    await store.putSponsorUsage({ wallet: inspection.wallet, ...caps.next });
+    await store.putSponsorUsage({ wallet: GLOBAL_TX_ROW, ...budget.nextTxs });
+    await store.putSponsorUsage({ wallet: GLOBAL_WALLETS_ROW, ...budget.nextWallets });
+  }
   return res;
 }
 

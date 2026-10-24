@@ -45,7 +45,10 @@ import {
   getVetoRebindInstruction,
   getFinalizeRebindInstruction,
   getRepayInstruction,
-  getMarkDefaultInstruction,
+  getSettleInstruction,
+  getCollectRecoveryInstruction,
+  getRestituteInstruction,
+  getLiftBarInstruction,
   getClaimEscrowInstruction,
   getCloseExpiredRequestInstruction,
   getApplyParamsInstruction,
@@ -69,7 +72,8 @@ const cfg = { programAddress: PROGRAM_ID };
 const signer = (a: Address) => createNoopSigner(a);
 
 // ---------- types ----------
-export type LoanStatus = "Active" | "Repaid" | "Defaulted" | "RepaidLate";
+/** Active → Repaid (in full, by the deadline) | Defaulted (settled after it) → Restituted (the shortfall paid back). */
+export type LoanStatus = "Active" | "Repaid" | "Defaulted" | "Restituted";
 
 /** Settings the authority can schedule (applied after the timelock). */
 export type PoolParams = {
@@ -94,6 +98,12 @@ export type PoolParams = {
   defaultBanSeconds: bigint;
   lateBanSeconds: bigint;
   cosignerBanSeconds: bigint;
+  /** A repaid loan raises the cap only when it ran at least this long... */
+  seasoningSeconds: bigint;
+  /** ...and at most once per this interval. */
+  capStepIntervalSeconds: bigint;
+  /** Ceiling on principal out on loan (0: none). */
+  maxOutstandingPrincipal: bigint;
 };
 
 export type Pool = {
@@ -144,6 +154,19 @@ export type Pool = {
   defaultBanSeconds: bigint;
   lateBanSeconds: bigint;
   cosignerBanSeconds: bigint;
+  seasoningSeconds: bigint;
+  capStepIntervalSeconds: bigint;
+  maxOutstandingPrincipal: bigint;
+  /** Principal still owed on Active loans. */
+  outstandingPrincipal: bigint;
+  /** Escrow owed to the fund by settled loans, still in escrow accounts until collected. */
+  recoveriesPending: bigint;
+  /** Reimbursements owed to co-signers out of the vault (restitution of escrow that was used). */
+  vaultClaims: bigint;
+  /** Paid back after settlement, by or for borrowers. */
+  totalRestituted: bigint;
+  /** Reimbursements paid to co-signers out of the vault. */
+  totalReimbursed: bigint;
 };
 
 /** One verified human; eligibility and open positions live here and follow a replaced wallet. */
@@ -162,6 +185,10 @@ export type Person = {
   restrictedUntil: bigint;
   pendingWallet: Address | null;
   pendingWalletAt: bigint;
+  /** When the cap last stepped up. */
+  lastCapStepAt: bigint;
+  /** Settled loans this person co-signed whose loss is not yet paid back. */
+  unrestitutedLosses: number;
 };
 
 export const PERMANENT = 9223372036854775807n;
@@ -209,6 +236,34 @@ export type Loan = {
   closedAt: bigint;
   /** Escrow owed to the co-signer, still in the escrow account until claimed. */
   refundPending: bigint;
+  /** Principal unpaid at settlement. */
+  shortfall: bigint;
+  /** Escrow applied to the shortfall at settlement; the rest of the shortfall was lost. */
+  recovered: bigint;
+  /** Of `recovered`, still in the escrow account until collected into the vault. */
+  recoveryPending: bigint;
+  /** Paid back after settlement. */
+  restituted: bigint;
+  /** Reimbursement owed to the co-signer out of the vault. */
+  reimbursementPending: bigint;
+  /** Bars this loan set at settlement (0: none); relaxed once the loan is restituted. */
+  borrowerBarUntil: bigint;
+  cosignerBarUntil: bigint;
+  /** Consequences fixed when the loan opened. */
+  defaultBanSeconds: bigint;
+  lateBanSeconds: bigint;
+  cosignerBanSeconds: bigint;
+};
+
+/** What the co-signer can still collect: the escrow refund plus any reimbursement from the vault. */
+export const owedToCosigner = (l: Pick<Loan, "refundPending" | "reimbursementPending">) => l.refundPending + l.reimbursementPending;
+/** What the borrower still owes after a settlement. */
+export const owedAfterSettlement = (l: Pick<Loan, "shortfall" | "restituted">) => l.shortfall - l.restituted;
+/** The fund's loss on a settled loan that is not yet made good. */
+export const lossOutstanding = (l: Pick<Loan, "shortfall" | "recovered" | "restituted">) => {
+  const lost = l.shortfall - l.recovered;
+  const back = l.restituted < lost ? l.restituted : lost;
+  return lost - back;
 };
 
 export type LoanRequest = {
@@ -283,8 +338,11 @@ const toParams = (d: PoolParamsData): PoolParams => ({
   defaultBanSeconds: d.defaultBanSeconds,
   lateBanSeconds: d.lateBanSeconds,
   cosignerBanSeconds: d.cosignerBanSeconds,
+  seasoningSeconds: d.seasoningSeconds,
+  capStepIntervalSeconds: d.capStepIntervalSeconds,
+  maxOutstandingPrincipal: d.maxOutstandingPrincipal,
 });
-const STATUSES: LoanStatus[] = ["Active", "Repaid", "Defaulted", "RepaidLate"];
+const STATUSES: LoanStatus[] = ["Active", "Repaid", "Defaulted", "Restituted"];
 
 type ReadRpc = Rpc<GetAccountInfoApi>;
 
@@ -369,6 +427,14 @@ export async function fetchPool(rpc: ReadRpc, a: Address): Promise<Pool | null> 
     defaultBanSeconds: d.defaultBanSeconds,
     lateBanSeconds: d.lateBanSeconds,
     cosignerBanSeconds: d.cosignerBanSeconds,
+    seasoningSeconds: d.seasoningSeconds,
+    capStepIntervalSeconds: d.capStepIntervalSeconds,
+    maxOutstandingPrincipal: d.maxOutstandingPrincipal,
+    outstandingPrincipal: d.outstandingPrincipal,
+    recoveriesPending: d.recoveriesPending,
+    vaultClaims: d.vaultClaims,
+    totalRestituted: d.totalRestituted,
+    totalReimbursed: d.totalReimbursed,
   };
 }
 
@@ -391,6 +457,8 @@ function toPerson(address: Address, d: PersonData): Person {
     restrictedUntil: d.restrictedUntil,
     pendingWallet: unwrap(d.pendingWallet),
     pendingWalletAt: d.pendingWalletAt,
+    lastCapStepAt: d.lastCapStepAt,
+    unrestitutedLosses: d.unrestitutedLosses,
   };
 }
 
@@ -486,6 +554,16 @@ function toLoan(address: Address, d: LoanData): Loan {
     status: STATUSES[Number(d.status)] ?? "Active",
     closedAt: d.closedAt,
     refundPending: d.refundPending,
+    shortfall: d.shortfall,
+    recovered: d.recovered,
+    recoveryPending: d.recoveryPending,
+    restituted: d.restituted,
+    reimbursementPending: d.reimbursementPending,
+    borrowerBarUntil: d.borrowerBarUntil,
+    cosignerBarUntil: d.cosignerBarUntil,
+    defaultBanSeconds: d.defaultBanSeconds,
+    lateBanSeconds: d.lateBanSeconds,
+    cosignerBanSeconds: d.cosignerBanSeconds,
   };
 }
 
@@ -663,8 +741,9 @@ export async function registerMemberIx(a: {
 }
 
 /**
- * Wallet recovery, step one: the new wallet, the issuer and the recovery authority sign. Nothing moves until
- * `pool.recoveryDelaySeconds` pass without a veto from the old wallet.
+ * Wallet recovery, step one: the issuer and the recovery authority sign (the new wallet only needs a valid pass, so
+ * the recovery key can live with an operator). Nothing moves until `pool.recoveryDelaySeconds` pass without a veto
+ * from the old wallet.
  */
 export async function proposeRebindIx(a: {
   newWallet: Address;
@@ -676,7 +755,7 @@ export async function proposeRebindIx(a: {
 }): Promise<Instruction> {
   return getProposeRebindInstruction(
     {
-      newWallet: signer(a.newWallet),
+      newWallet: a.newWallet,
       issuer: signer(a.issuer),
       recoveryAuthority: signer(a.recoveryAuthority),
       pool: a.pool.address,
@@ -712,24 +791,30 @@ export async function finalizeRebindIx(a: { payer: Address; pool: Pool; person: 
 }
 
 /**
- * Anyone moves a closed loan's leftover escrow to the co-signer's current wallet (`cosignerWalletOf`) and closes
- * the escrow account. The token account must exist; create it in the same transaction when needed.
+ * Anyone moves what a closed loan owes its co-signer to the co-signer's current wallet (`cosignerWalletOf`): the
+ * escrow refund from the escrow account (passed only while one is pending, so a closed escrow is never required)
+ * and any reimbursement from the vault. The token account must exist; create it in the same transaction when needed.
+ * `withEscrow: false` leaves the escrow out on purpose (a frozen one) and collects the vault part alone.
  */
 export async function claimEscrowIx(a: {
   claimer: Address;
   pool: Pool;
   loan: Loan;
   cosignerWallet: Address;
+  withEscrow?: boolean;
 }): Promise<{ ix: Instruction; cosignerToken: Address }> {
   const [escrow] = await findEscrowPda(a.loan.address);
   const cosignerToken = await findAta(a.cosignerWallet, a.pool.mint);
+  // The escrow account exists while the loan is open or while either entitlement still waits in it.
+  const includeEscrow = a.withEscrow ?? (a.loan.status === "Active" || a.loan.refundPending > 0n || a.loan.recoveryPending > 0n);
   const ix = getClaimEscrowInstruction(
     {
       claimer: signer(a.claimer),
       pool: a.pool.address,
       mint: a.pool.mint,
+      vault: a.pool.vault,
       loan: a.loan.address,
-      escrow,
+      escrow: includeEscrow ? escrow : undefined,
       cosignerPerson: a.loan.cosignerPerson,
       cosignerToken,
       rentPayer: a.loan.rentPayer,
@@ -881,15 +966,18 @@ export async function repayIx(a: { payer: Address; pool: Pool; loan: Loan; amoun
   );
 }
 
-/** Anyone may call this once a loan is past due plus its grace period. Leftover escrow waits to be claimed. */
-export async function markDefaultIx(a: { caller: Address; pool: Pool; loan: Loan }): Promise<Instruction> {
+/**
+ * Anyone settles a loan once it is past due plus its grace period. Settlement moves no tokens: it records what the
+ * escrow covers (collected into the vault by `collectRecoveryIx`) and what is owed back to the co-signer
+ * (`claimEscrowIx`), and bars the people involved for the durations fixed when the loan opened.
+ */
+export async function settleIx(a: { caller: Address; pool: Pool; loan: Loan }): Promise<Instruction> {
   const [escrow] = await findEscrowPda(a.loan.address);
-  return getMarkDefaultInstruction(
+  return getSettleInstruction(
     {
       caller: signer(a.caller),
       pool: a.pool.address,
       mint: a.pool.mint,
-      vault: a.pool.vault,
       loan: a.loan.address,
       escrow,
       borrowerPerson: a.loan.borrowerPerson,
@@ -899,6 +987,50 @@ export async function markDefaultIx(a: { caller: Address; pool: Pool; loan: Loan
     },
     cfg,
   );
+}
+
+/** Anyone moves a settled loan's recovery from its escrow into the vault. */
+export async function collectRecoveryIx(a: { collector: Address; pool: Pool; loan: Loan }): Promise<Instruction> {
+  const [escrow] = await findEscrowPda(a.loan.address);
+  return getCollectRecoveryInstruction(
+    {
+      collector: signer(a.collector),
+      pool: a.pool.address,
+      mint: a.pool.mint,
+      vault: a.pool.vault,
+      loan: a.loan.address,
+      escrow,
+      rentPayer: a.loan.rentPayer,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    },
+    cfg,
+  );
+}
+
+/**
+ * Anyone pays back part of a settled loan's shortfall: the fund's loss first, then the co-signer's used escrow
+ * (claimable from the vault). At the full shortfall the loan is Restituted and its bars relax.
+ */
+export async function restituteIx(a: { payer: Address; pool: Pool; loan: Loan; amount: bigint }): Promise<Instruction> {
+  return getRestituteInstruction(
+    {
+      payer: signer(a.payer),
+      pool: a.pool.address,
+      mint: a.pool.mint,
+      vault: a.pool.vault,
+      loan: a.loan.address,
+      borrowerPerson: a.loan.borrowerPerson,
+      cosignerPerson: a.loan.cosignerPerson,
+      payerToken: await findAta(a.payer, a.pool.mint),
+      amount: a.amount,
+    },
+    cfg,
+  );
+}
+
+/** The authority ends a bar early; `reason` is the 32-byte hash of a written, published reason. */
+export function liftBarIx(a: { authority: Address; pool: Pool; person: Address; reason: Uint8Array }): Instruction {
+  return getLiftBarInstruction({ authority: signer(a.authority), pool: a.pool.address, person: a.person, reason: a.reason }, cfg);
 }
 
 /** Program error codes per docs/spec.md order (Anchor custom errors start at 6000). */
@@ -942,6 +1074,12 @@ const ERROR_NAMES = [
   "NothingToClaim",
   "TimelockBelowMinimum",
   "MissingCosignerLoan",
+  "LoanPastDeadline",
+  "NothingOwed",
+  "NothingToCollect",
+  "OverOutstandingCeiling",
+  "LoanNotSettled",
+  "NotBarred",
 ];
 const ERROR_COPY: Record<string, string> = {
   AmountZero: "Enter an amount greater than zero.",
@@ -983,6 +1121,12 @@ const ERROR_COPY: Record<string, string> = {
   NothingToClaim: "Nothing to claim on this loan.",
   TimelockBelowMinimum: "The notice period can't be set below the minimum.",
   MissingCosignerLoan: "The co-signer's open loan must be included. Please try again.",
+  LoanPastDeadline: "The deadline has passed. The loan is settled first, then what is owed can be paid back.",
+  NothingOwed: "Nothing is owed on this loan.",
+  NothingToCollect: "Nothing to collect on this loan.",
+  OverOutstandingCeiling: "The fund has reached its limit of money out on loan. Try again once loans are repaid.",
+  LoanNotSettled: "This loan hasn't been settled yet.",
+  NotBarred: "This member isn't barred.",
 };
 
 const WALLET_REJECTED = /user rejected|rejected the request|user denied|user declined|declined by user|rejected by user/i;
@@ -1002,6 +1146,8 @@ export function sponsorErrorCopy(e: KoraError): string {
       return "The fee sponsor doesn't cover this kind of transaction.";
     case KORA_CODES.WALLET_CAP:
       return "This wallet has used its sponsored transactions for now. Try again tomorrow or pay the network fee yourself.";
+    case KORA_CODES.BUDGET:
+      return "The fee sponsor has reached its daily budget. Try again tomorrow or pay the network fee yourself.";
   }
   const m = e.message;
   if (/not (in the )?allow|disallowed|not allowed/i.test(m)) return "The fee sponsor doesn't cover this kind of transaction.";

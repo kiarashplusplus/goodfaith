@@ -11,11 +11,13 @@ type Row = Record<string, unknown>;
 export const PG_SCHEMA_SQL = `
   create table if not exists wallets (
     wallet text primary key, inquiry_id text not null, url text, status text not null, person_id text, link_to text, reason text,
-    token_address text, created_at bigint not null, updated_at bigint not null
+    token_address text, contact text, created_at bigint not null, updated_at bigint not null
   );
   create index if not exists wallets_inquiry on wallets(inquiry_id);
   create index if not exists wallets_person on wallets(person_id);
-  create table if not exists persons (person_id text primary key, wallet text not null, banned_at bigint, created_at bigint not null);
+  create table if not exists persons (
+    person_id text primary key, wallet text not null, banned_at bigint, banned_until bigint, contact text, created_at bigint not null
+  );
   create table if not exists credentials (
     hash text primary key, key_version integer not null, person_id text not null, linked_at bigint not null, via text not null
   );
@@ -23,6 +25,9 @@ export const PG_SCHEMA_SQL = `
   create table if not exists recoveries (person_id text primary key, new_wallet text not null, opened_at bigint not null);
   create table if not exists sponsorship (wallet text primary key, day text not null, day_txs integer not null, atas_total integer not null);
   create table if not exists events (event_id text primary key, seen_at bigint not null);
+  alter table wallets add column if not exists contact text;
+  alter table persons add column if not exists banned_until bigint;
+  alter table persons add column if not exists contact text;
 `;
 
 export class PgStore implements IdentityStore {
@@ -48,6 +53,7 @@ export class PgStore implements IdentityStore {
       linkTo: (r.link_to as string | null) ?? undefined,
       reason: (r.reason as string | null) ?? undefined,
       tokenAddress: (r.token_address as string | null) ?? undefined,
+      contact: (r.contact as string | null) ?? undefined,
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at),
     };
@@ -69,11 +75,11 @@ export class PgStore implements IdentityStore {
   }
   async putWallet(r: WalletRecord) {
     await this.q(
-      `insert into wallets (wallet, inquiry_id, url, status, person_id, link_to, reason, token_address, created_at, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `insert into wallets (wallet, inquiry_id, url, status, person_id, link_to, reason, token_address, contact, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        on conflict (wallet) do update set inquiry_id = excluded.inquiry_id, url = excluded.url, status = excluded.status,
          person_id = excluded.person_id, link_to = excluded.link_to, reason = excluded.reason, token_address = excluded.token_address,
-         updated_at = excluded.updated_at`,
+         contact = excluded.contact, updated_at = excluded.updated_at`,
       [
         r.wallet,
         r.inquiryId,
@@ -83,6 +89,7 @@ export class PgStore implements IdentityStore {
         r.linkTo ?? null,
         r.reason ?? null,
         r.tokenAddress ?? null,
+        r.contact ?? null,
         r.createdAt,
         r.updatedAt,
       ],
@@ -95,14 +102,17 @@ export class PgStore implements IdentityStore {
       personId: r.person_id as string,
       wallet: r.wallet as string,
       bannedAt: r.banned_at == null ? undefined : Number(r.banned_at),
+      bannedUntil: r.banned_until == null ? undefined : Number(r.banned_until),
+      contact: (r.contact as string | null) ?? undefined,
       createdAt: Number(r.created_at),
     };
   }
   async putPerson(p: PersonRecord) {
     await this.q(
-      `insert into persons (person_id, wallet, banned_at, created_at) values ($1, $2, $3, $4)
-       on conflict (person_id) do update set wallet = excluded.wallet, banned_at = excluded.banned_at`,
-      [p.personId, p.wallet, p.bannedAt ?? null, p.createdAt],
+      `insert into persons (person_id, wallet, banned_at, banned_until, contact, created_at) values ($1, $2, $3, $4, $5, $6)
+       on conflict (person_id) do update set wallet = excluded.wallet, banned_at = excluded.banned_at,
+         banned_until = excluded.banned_until, contact = excluded.contact`,
+      [p.personId, p.wallet, p.bannedAt ?? null, p.bannedUntil ?? null, p.contact ?? null, p.createdAt],
     );
   }
   async walletsOf(id: string) {
@@ -122,9 +132,15 @@ export class PgStore implements IdentityStore {
   async credentialsOf(id: string) {
     return (await this.q("select * from credentials where person_id = $1 order by linked_at", [id])).map((r) => this.toCredential(r));
   }
+  private toRecovery(r: Row): RecoveryRecord {
+    return { personId: r.person_id as string, newWallet: r.new_wallet as string, openedAt: Number(r.opened_at) };
+  }
   async getRecovery(id: string) {
     const r = (await this.q("select * from recoveries where person_id = $1", [id]))[0];
-    return r ? { personId: r.person_id as string, newWallet: r.new_wallet as string, openedAt: Number(r.opened_at) } : null;
+    return r ? this.toRecovery(r) : null;
+  }
+  async listRecoveries() {
+    return (await this.q("select * from recoveries order by opened_at")).map((r) => this.toRecovery(r));
   }
   async putRecovery(rec: RecoveryRecord) {
     await this.q(

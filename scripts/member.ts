@@ -6,7 +6,9 @@
 //   npm run member -- request <amount> <termDays> <cosignerWallet>
 //   npm run member -- cancel
 //   npm run member -- cosign <borrowerWallet>
-//   npm run member -- repay <loanId> <amount>
+//   npm run member -- repay <loanId> <amount>          (before the deadline)
+//   npm run member -- pay-back <loanId> <amount>       (after it: settles the loan first when nobody has, then pays)
+//   npm run member -- settle <loanId> | collect <loanId>
 //   npm run member -- claim <loanId>
 //   npm run member -- close-expired <borrowerWallet>
 //   npm run member -- veto | finalize
@@ -83,7 +85,10 @@ export async function run(argv: string[], out: (line: string) => void = console.
       for (const l of await prog.fetchLoansFor(txRpc, pool, w)) {
         const role = l.borrowerPerson === m.person ? 'borrowed' : 'co-signed';
         const t = loanTiming(l, now);
-        out(`loan #${l.id}   ${role} ${fmt(l.principal)}, repaid ${fmt(l.repaid)}, ${l.status} (${t.state})${l.refundPending > 0n ? `, escrow ${fmt(l.refundPending)} to claim (member claim ${l.id})` : ''}`);
+        const owedBack = l.status === 'Defaulted' ? `, ${fmt(prog.owedAfterSettlement(l))} still owed (member pay-back ${l.id} <amount>)` : '';
+        const toCosigner = prog.owedToCosigner(l) > 0n ? `, ${fmt(prog.owedToCosigner(l))} owed to the co-signer (member claim ${l.id})` : '';
+        const toFund = l.recoveryPending > 0n ? `, ${fmt(l.recoveryPending)} waiting for the fund (member collect ${l.id})` : '';
+        out(`loan #${l.id}   ${role} ${fmt(l.principal)}, repaid ${fmt(l.repaid)}, ${l.status} (${t.state})${owedBack}${toCosigner}${toFund}`);
       }
       return;
     }
@@ -129,15 +134,39 @@ export async function run(argv: string[], out: (line: string) => void = console.
       out(`repaid ${amount} on loan #${id}: ${await send([await prog.repayIx({ payer: me, pool, loan, amount: amountOf(amount) })])}`);
       return;
     }
+    case 'pay-back': {
+      const [id, amount] = args;
+      if (!id || !amount) throw new Error('usage: pay-back <loanId> <amount>');
+      const loan = await loanById(id);
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      if (loan.status === 'Active' && loanTiming(loan, now).state !== 'defaultable') throw new Error(`loan #${id} is still repayable: use repay`);
+      if (loan.status !== 'Active' && loan.status !== 'Defaulted') throw new Error(`loan #${id} is ${loan.status}: nothing is owed`);
+      const ixs = loan.status === 'Active' ? [await prog.settleIx({ caller: me, pool, loan })] : [];
+      ixs.push(await prog.restituteIx({ payer: me, pool, loan, amount: amountOf(amount) }));
+      out(`${loan.status === 'Active' ? 'settled and ' : ''}paid back ${amount} on loan #${id}: ${await send(ixs)}`);
+      return;
+    }
+    case 'settle': {
+      const loan = await loanById(args[0] ?? '');
+      out(`settled loan #${loan.id}: ${await send([await prog.settleIx({ caller: me, pool, loan })])}`);
+      return;
+    }
+    case 'collect': {
+      const loan = await loanById(args[0] ?? '');
+      if (loan.recoveryPending === 0n) throw new Error(`loan #${loan.id} has nothing to collect for the fund`);
+      out(`moved ${fmt(loan.recoveryPending)} to the fund: ${await send([await prog.collectRecoveryIx({ collector: me, pool, loan })])}`);
+      return;
+    }
     case 'claim': {
       const loan = await loanById(args[0] ?? '');
-      if (loan.refundPending === 0n) throw new Error(`loan #${loan.id} has nothing to claim`);
+      const owed = prog.owedToCosigner(loan);
+      if (owed === 0n) throw new Error(`loan #${loan.id} has nothing to claim`);
       const to = await prog.cosignerWalletOf(txRpc, loan);
       const sig = await send(async (feePayer) => {
         const { ix, cosignerToken } = await prog.claimEscrowIx({ claimer: me, pool, loan, cosignerWallet: to });
         return [ataCreate(feePayer, cosignerToken, to), ix];
       });
-      out(`released ${fmt(loan.refundPending)} to ${to}: ${sig}`);
+      out(`released ${fmt(owed)} to ${to}: ${sig}`);
       return;
     }
     case 'close-expired': {

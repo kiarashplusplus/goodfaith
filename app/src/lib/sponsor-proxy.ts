@@ -28,6 +28,8 @@ export const PROXY_ERROR = {
   BODY_TOO_LARGE: -32007,
   /** The transaction is outside the sponsorship policy (see sponsor-policy.ts). */
   TRANSACTION_REFUSED: -32008,
+  /** The sponsor's own daily budget (all wallets together) is used up. */
+  BUDGET_EXHAUSTED: -32010,
   /** The wallet has used its sponsored transactions or token accounts. */
   WALLET_CAP: -32009,
 } as const;

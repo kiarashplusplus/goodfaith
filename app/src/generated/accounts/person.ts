@@ -26,7 +26,11 @@ ineligibleUntil: bigint;
 /** Until this time the person is on the first-loan cap (new or recovered membership). */
 restrictedUntil: bigint; 
 /** Wallet a recovery would move the person to, once `pending_wallet_at` has passed and nobody vetoed. */
-pendingWallet: Option<Address>; pendingWalletAt: bigint; bump: number;  };
+pendingWallet: Option<Address>; pendingWalletAt: bigint; bump: number; 
+/** When `completed_loans` last went up; spaces cap steps out in time. */
+lastCapStepAt: bigint; 
+/** Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0. */
+unrestitutedLosses: number;  };
 
 export type PersonArgs = { 
 /** Opaque id assigned by the issuer; the mapping to a credential lives off chain. */
@@ -42,16 +46,20 @@ ineligibleUntil: number | bigint;
 /** Until this time the person is on the first-loan cap (new or recovered membership). */
 restrictedUntil: number | bigint; 
 /** Wallet a recovery would move the person to, once `pending_wallet_at` has passed and nobody vetoed. */
-pendingWallet: OptionOrNullable<Address | HasAddress>; pendingWalletAt: number | bigint; bump: number;  };
+pendingWallet: OptionOrNullable<Address | HasAddress>; pendingWalletAt: number | bigint; bump: number; 
+/** When `completed_loans` last went up; spaces cap steps out in time. */
+lastCapStepAt: number | bigint; 
+/** Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0. */
+unrestitutedLosses: number;  };
 
 /** Gets the encoder for {@link PersonArgs} account data. */
 export function getPersonEncoder(): Encoder<PersonArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['personId', fixEncoderSize(getBytesEncoder(), 32)], ['wallet', getAddressEncoder()], ['activeLoan', getOptionEncoder(getAddressEncoder())], ['activeGuarantees', getU8Encoder()], ['activeGuaranteeAmount', getU64Encoder()], ['completedLoans', getU16Encoder()], ['ineligibleUntil', getI64Encoder()], ['restrictedUntil', getI64Encoder()], ['pendingWallet', getOptionEncoder(getAddressEncoder())], ['pendingWalletAt', getI64Encoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: PERSON_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['personId', fixEncoderSize(getBytesEncoder(), 32)], ['wallet', getAddressEncoder()], ['activeLoan', getOptionEncoder(getAddressEncoder())], ['activeGuarantees', getU8Encoder()], ['activeGuaranteeAmount', getU64Encoder()], ['completedLoans', getU16Encoder()], ['ineligibleUntil', getI64Encoder()], ['restrictedUntil', getI64Encoder()], ['pendingWallet', getOptionEncoder(getAddressEncoder())], ['pendingWalletAt', getI64Encoder()], ['bump', getU8Encoder()], ['lastCapStepAt', getI64Encoder()], ['unrestitutedLosses', getU8Encoder()]]), (value) => ({ ...value, discriminator: PERSON_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Person} account data. */
 export function getPersonDecoder(): Decoder<Person> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['personId', fixDecoderSize(getBytesDecoder(), 32)], ['wallet', getAddressDecoder()], ['activeLoan', getOptionDecoder(getAddressDecoder())], ['activeGuarantees', getU8Decoder()], ['activeGuaranteeAmount', getU64Decoder()], ['completedLoans', getU16Decoder()], ['ineligibleUntil', getI64Decoder()], ['restrictedUntil', getI64Decoder()], ['pendingWallet', getOptionDecoder(getAddressDecoder())], ['pendingWalletAt', getI64Decoder()], ['bump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['personId', fixDecoderSize(getBytesDecoder(), 32)], ['wallet', getAddressDecoder()], ['activeLoan', getOptionDecoder(getAddressDecoder())], ['activeGuarantees', getU8Decoder()], ['activeGuaranteeAmount', getU64Decoder()], ['completedLoans', getU16Decoder()], ['ineligibleUntil', getI64Decoder()], ['restrictedUntil', getI64Decoder()], ['pendingWallet', getOptionDecoder(getAddressDecoder())], ['pendingWalletAt', getI64Decoder()], ['bump', getU8Decoder()], ['lastCapStepAt', getI64Decoder()], ['unrestitutedLosses', getU8Decoder()]]);
 }
 
 /** Gets the codec for {@link Person} account data. */

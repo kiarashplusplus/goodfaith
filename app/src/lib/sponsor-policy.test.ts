@@ -22,7 +22,7 @@ import {
   getTransferInstruction,
 } from "@solana-program/token";
 import { getTransferSolInstruction } from "@solana-program/system";
-import { checkCaps, COMPUTE_BUDGET_PROGRAM, inspectTransaction, limitsFromEnv, utcDay } from "./sponsor-policy";
+import { COMPUTE_BUDGET_PROGRAM, budgetFromEnv, checkBudget, checkCaps, inspectTransaction, limitsFromEnv, utcDay } from "./sponsor-policy";
 
 const PROGRAM = address("BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd");
 const payer = address("78DWc8FZ3iVru1z1jDy9wdPsTHqhGYiQRhtyVU6u9RHU");
@@ -158,5 +158,34 @@ describe("caps", () => {
   it("reads limits from the environment with defaults", () => {
     expect(limitsFromEnv({})).toEqual({ dailyTxs: 40, totalAtas: 12 });
     expect(limitsFromEnv({ SPONSOR_DAILY_TX_PER_WALLET: "5", SPONSOR_ATA_PER_WALLET: "2" })).toEqual({ dailyTxs: 5, totalAtas: 2 });
+  });
+});
+
+describe("global budget", () => {
+  const limits = { dailyTxs: 3, dailyNewWallets: 1 };
+  const t0 = Date.UTC(2026, 9, 24, 12);
+  const ok = (r: ReturnType<typeof checkBudget>) => {
+    if (!r.ok) throw new Error(r.reason);
+    return r;
+  };
+  it("counts every sponsored transaction and each wallet's first one, per UTC day", () => {
+    const a = ok(checkBudget(null, null, true, limits, t0));
+    expect(a.nextTxs).toEqual({ day: "2026-10-24", dayTxs: 1, atasTotal: 0 });
+    expect(a.nextWallets).toEqual({ day: "2026-10-24", dayTxs: 1, atasTotal: 0 });
+    // a second new wallet today is over the new-wallet budget; a known wallet is fine
+    expect(checkBudget(a.nextTxs, a.nextWallets, true, limits, t0)).toMatchObject({ ok: false, reason: /new wallets/ });
+    const b = ok(checkBudget(a.nextTxs, a.nextWallets, false, limits, t0));
+    expect(b.nextTxs.dayTxs).toBe(2);
+    expect(b.nextWallets.dayTxs).toBe(1);
+    const c = ok(checkBudget(b.nextTxs, b.nextWallets, false, limits, t0));
+    expect(checkBudget(c.nextTxs, c.nextWallets, false, limits, t0)).toMatchObject({ ok: false, reason: /today's budget/ });
+    // a new day starts both counters again
+    const d = ok(checkBudget(c.nextTxs, c.nextWallets, true, limits, t0 + 86_400_000));
+    expect(d.nextTxs).toEqual({ day: "2026-10-25", dayTxs: 1, atasTotal: 0 });
+    expect(d.nextWallets.dayTxs).toBe(1);
+  });
+  it("reads the budget from the environment with defaults", () => {
+    expect(budgetFromEnv({})).toEqual({ dailyTxs: 2000, dailyNewWallets: 200 });
+    expect(budgetFromEnv({ SPONSOR_DAILY_BUDGET_TX: "10", SPONSOR_DAILY_NEW_WALLETS: "2" })).toEqual({ dailyTxs: 10, dailyNewWallets: 2 });
   });
 });

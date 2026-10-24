@@ -24,6 +24,7 @@ type LaunchFile = {
   mint: string; decimals: number; maxLoan: number; maxTermDays: number; graceDays: number; maxGuaranteesPerMember: number; cosignerEscrowBps: number;
   timelockDays: number; recoveryDelayDays: number; requestTtlDays: number; firstLoanCap: number; loanCapStep: number; cooldownDays: number;
   maxExposurePerPerson: number; disbursementWindowDays: number; disbursementCapPerWindow: number; defaultBanDays: number; lateBanDays: number; cosignerBanDays: number;
+  seasoningDays: number; capStepIntervalDays: number; maxOutstandingPrincipal: number;
 };
 const file = JSON.parse(fs.readFileSync(flag('params') ?? path.join(here, 'launch.json'), 'utf8')) as LaunchFile;
 const base = (tokens: number) => BigInt(Math.round(tokens * 10 ** file.decimals));
@@ -74,6 +75,9 @@ const params = {
   defaultBanSeconds: days(file.defaultBanDays),
   lateBanSeconds: days(file.lateBanDays),
   cosignerBanSeconds: days(file.cosignerBanDays),
+  seasoningSeconds: days(file.seasoningDays),
+  capStepIntervalSeconds: days(file.capStepIntervalDays),
+  maxOutstandingPrincipal: base(file.maxOutstandingPrincipal),
 };
 
 const [pool] = await gf.findPoolPda({ mint });
@@ -104,9 +108,9 @@ issuer          ${p.issuer}
 recovery        ${p.recoveryAuthority}
 pause           ${p.pauseAuthority}
 network         ${p.gatekeeperNetwork}
-max loan        ${fmt(p.maxLoan)} (first ${fmt(p.firstLoanCap)}, +${fmt(p.loanCapStep)} per on-time loan, ${d(p.cooldownSeconds)} cooldown)
+max loan        ${fmt(p.maxLoan)} (first ${fmt(p.firstLoanCap)}, +${fmt(p.loanCapStep)} per on-time loan held ${d(p.seasoningSeconds)}, at most one step per ${d(p.capStepIntervalSeconds)}, ${d(p.cooldownSeconds)} cooldown)
 term / grace    ${p.maxTermDays} / ${p.graceDays} days, escrow ${p.cosignerEscrowBps / 100}%, ${p.maxGuaranteesPerMember} guarantees
-exposure        ${fmt(p.maxExposurePerPerson)} per person; ${fmt(p.disbursementCapPerWindow)} per ${d(p.disbursementWindowSeconds)}
+exposure        ${fmt(p.maxExposurePerPerson)} per person; ${fmt(p.disbursementCapPerWindow)} per ${d(p.disbursementWindowSeconds)}; ${p.maxOutstandingPrincipal === 0n ? 'no ceiling' : `${fmt(p.maxOutstandingPrincipal)} ceiling`} on principal out on loan
 notice          ${d(p.timelockSeconds)}; recovery delay ${d(p.recoveryDelaySeconds)}; request ttl ${d(p.requestTtlSeconds)}
 bars            default ${d(p.defaultBanSeconds)}, late ${d(p.lateBanSeconds)}, co-signer ${d(p.cosignerBanSeconds)}
 paused          ${p.paused}
@@ -120,7 +124,8 @@ NEXT_PUBLIC_POOL_MINT=${mint}
 NEXT_PUBLIC_POOL_ADDRESS=${pool}
 NEXT_PUBLIC_POOL_AUTHORITY=${authority}
 NEXT_PUBLIC_GATEKEEPER_NETWORK=${p.gatekeeperNetwork}
-# the identity service holds ISSUER_SECRET for ${p.issuer}, RECOVERY_SECRET for ${p.recoveryAuthority}, GATEKEEPER_SECRET for a gatekeeper on ${p.gatekeeperNetwork}
+# the identity service holds ISSUER_SECRET for ${p.issuer} and GATEKEEPER_SECRET for a gatekeeper on ${p.gatekeeperNetwork};
+# the operator's recovery CLI (scripts/recovery.ts) holds RECOVERY_KEYPAIR for ${p.recoveryAuthority}
 `);
 if (problems.length) {
   console.error('PROBLEMS:\n  ' + problems.join('\n  '));

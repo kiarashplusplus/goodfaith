@@ -155,8 +155,20 @@ describe("stores", () => {
       expect((await s.getWallet(W1))!.linkTo).toBe("ab");
       expect(await s.getPerson("ab")).toBeNull();
       await s.putPerson({ personId: "ab", wallet: W1, createdAt: 3 });
-      await s.putPerson({ personId: "ab", wallet: W1, bannedAt: 4, createdAt: 3 });
-      expect(await s.getPerson("ab")).toEqual({ personId: "ab", wallet: W1, bannedAt: 4, createdAt: 3 });
+      expect(await s.getPerson("ab")).toEqual({ personId: "ab", wallet: W1, createdAt: 3 });
+      await s.putPerson({ personId: "ab", wallet: W1, bannedAt: 4, bannedUntil: 1_800_000_000, contact: "m@example.com", createdAt: 3 });
+      expect(await s.getPerson("ab")).toEqual({
+        personId: "ab",
+        wallet: W1,
+        bannedAt: 4,
+        bannedUntil: 1_800_000_000,
+        contact: "m@example.com",
+        createdAt: 3,
+      });
+      await s.putPerson({ ...(await s.getPerson("ab"))!, bannedUntil: undefined });
+      expect((await s.getPerson("ab"))!.bannedUntil).toBeUndefined();
+      await s.putWallet({ ...(await s.getWallet(W1))!, contact: "m@example.com" });
+      expect((await s.getWallet(W1))!.contact).toBe("m@example.com");
       expect(await s.walletsOf("ab")).toEqual([W1]);
       expect(await s.walletsOf("zz")).toEqual([]);
       expect(await s.getCredential("cd")).toBeNull();
@@ -167,9 +179,13 @@ describe("stores", () => {
       expect(await s.credentialsOf("zz")).toEqual([]);
       expect(await s.getRecovery("ab")).toBeNull();
       await s.putRecovery({ personId: "ab", newWallet: NET, openedAt: 7 });
+      await s.putRecovery({ personId: "zz", newWallet: W1, openedAt: 6 });
       expect(await s.getRecovery("ab")).toEqual({ personId: "ab", newWallet: NET, openedAt: 7 });
+      expect((await s.listRecoveries()).map((r) => r.personId)).toEqual(["zz", "ab"]);
       await s.deleteRecovery("ab");
+      await s.deleteRecovery("zz");
       expect(await s.getRecovery("ab")).toBeNull();
+      expect(await s.listRecoveries()).toEqual([]);
       expect(await s.getSponsorUsage(W1)).toBeNull();
       await s.putSponsorUsage({ wallet: W1, day: "2026-10-24", dayTxs: 3, atasTotal: 1 });
       await s.putSponsorUsage({ wallet: W1, day: "2026-10-25", dayTxs: 1, atasTotal: 2 });

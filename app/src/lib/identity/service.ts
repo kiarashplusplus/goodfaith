@@ -34,7 +34,8 @@ import {
 } from "../program";
 import { buildTransaction, toBase64 } from "../tx";
 import type { IdentityProvider, HeaderBag, VerifiedFields } from "./provider";
-import type { IdentityStore, WalletRecord } from "./store";
+import type { Notifier, NotifyKind } from "./notify";
+import { PERMANENT_UNTIL, type IdentityStore, type PersonRecord, type RecoveryRecord, type WalletRecord } from "./store";
 import type { TokenIssuer } from "./gatekeeper";
 import { ageAt, fromHex, HashKeyring, toHex } from "./person-hash";
 import { gatewayTokenAddress } from "../gateway";
@@ -49,8 +50,6 @@ export type ServiceDeps = {
   /** Issues gateway tokens; null in unit tests that only exercise the registry. */
   gatekeeper: TokenIssuer | null;
   issuer: KeyPairSigner;
-  /** The pool's recovery authority, when this service may propose wallet recoveries; absent otherwise. */
-  recovery?: KeyPairSigner;
   rpc: ServiceRpc;
   /** Current and previous fingerprint keys. */
   keyring: HashKeyring;
@@ -58,8 +57,8 @@ export type ServiceDeps = {
   feePayer?: () => Promise<Address | null>;
   /** Token validity, seconds (default one year). */
   tokenTtlSec?: number;
-  /** Seconds a recovery request waits on the service before the proposal is signed (default 0). */
-  recoveryReviewSec?: number;
+  /** Where notices go (recovery requests, bars); the server log when absent. */
+  notifier?: Notifier;
   requiredState?: string;
   minAge?: number;
   now?: () => number;
@@ -76,24 +75,38 @@ export type StatusView = {
     currentWallet: Address | null;
     isThisWallet: boolean;
     ineligible: boolean;
+    /** Unix seconds until which the person is barred on chain (0 none; a very large value means for good). */
+    barredUntil: number;
     /** A recovery in flight: the wallet it moves to and when (unix seconds) it may be finalised. */
     pendingWallet: Address | null;
     pendingWalletAt: number;
-    /** A service-side recovery request for this wallet: when (unix seconds) the proposal can be signed. */
-    reviewUntil: number | null;
+    /** A recovery request for this wallet waiting for the operator: when (unix seconds) it was opened. */
+    requestedAt: number | null;
   };
   /** This wallet's on-chain membership. */
   member: null | { retired: boolean };
   /**
-   * What the wallet can do now. `recover` asks to move the membership here; `review` means that request waits on
-   * the service; `pending` means the on-chain proposal is in its veto window; `finalize` completes it.
+   * What the wallet can do now. `recover` asks to move the membership here; `review` means that request waits for
+   * the operator; `pending` means the on-chain proposal is in its veto window; `finalize` completes it.
    */
   next: "verify" | "wait" | "join" | "recover" | "review" | "pending" | "finalize" | "done" | "blocked";
 };
 
 export type PreparedTx = { transaction: string; feePayer: Address; sponsored: boolean; kind: "register" | "propose" | "finalize" };
-/** A recovery request that is not yet due for signing. */
-export type RecoveryReview = { kind: "review"; readyAt: number };
+/** A recovery request recorded for the operator's review. */
+export type RecoveryReview = { kind: "review"; requestedAt: number };
+/** What the operator sees about a recovery request: the chain's view of the person next to the request. */
+export type RecoveryView = {
+  personId: string;
+  newWallet: Address;
+  requestedAt: number;
+  hasContact: boolean;
+  onChain: boolean;
+  currentWallet: Address | null;
+  pendingWallet: Address | null;
+  pendingWalletAt: number;
+  barredUntil: number;
+};
 
 export class IdentityError extends Error {
   constructor(
@@ -133,13 +146,39 @@ export class IdentityService {
     return this.nowSec();
   }
 
-  /** Starts (or resumes) the hosted identity check for a wallet. */
-  async start(wallet: Address): Promise<{ inquiryId: string; url: string; status: WalletRecord["status"] }> {
+  /** Permanent, temporary or no bar, as the store knows it (the chain is authoritative for lending). */
+  private barOf(person: PersonRecord | null | undefined): "none" | "temporary" | "permanent" {
+    if (!person?.bannedUntil) return "none";
+    if (person.bannedUntil >= PERMANENT_UNTIL) return "permanent";
+    return Number(this.nowSec()) < person.bannedUntil ? "temporary" : "none";
+  }
+
+  private async notify(
+    kind: NotifyKind,
+    personId: string,
+    detail: string,
+    extra: { wallet?: Address; data?: Record<string, string | number> } = {},
+  ) {
+    if (!this.d.notifier) return;
+    const person = await this.d.store.getPerson(personId);
+    await this.d.notifier.send({
+      kind,
+      personId,
+      wallet: extra.wallet,
+      contact: person?.contact,
+      at: this.now(),
+      detail,
+      data: extra.data,
+    });
+  }
+
+  /** Starts (or resumes) the hosted identity check for a wallet; `contact` is where notices may go. */
+  async start(wallet: Address, contact?: string): Promise<{ inquiryId: string; url: string; status: WalletRecord["status"] }> {
     const existing = await this.d.store.getWallet(wallet);
     if (existing?.status === "issued") throw new IdentityError(409, "This wallet is already verified.");
     if (existing?.status === "pending" && existing.url) return { inquiryId: existing.inquiryId, url: existing.url, status: "pending" };
     if (existing?.status === "review") throw new IdentityError(409, "Your check is being reviewed. Please wait.");
-    return this.open(wallet, existing, undefined);
+    return this.open(wallet, existing ? { ...existing, contact: contact ?? existing.contact } : existing, undefined, contact);
   }
 
   /**
@@ -153,11 +192,11 @@ export class IdentityService {
       return { inquiryId: existing.inquiryId, url: existing.url, status: "pending" };
     if (existing.status !== "issued") throw new IdentityError(409, "This wallet is not in good standing.");
     const person = await this.d.store.getPerson(existing.personId);
-    if (!person || person.bannedAt) throw new IdentityError(403, "This person can no longer use Good Faith.");
+    if (!person || this.barOf(person) === "permanent") throw new IdentityError(403, "This person can no longer use Good Faith.");
     return this.open(wallet, existing, existing.personId);
   }
 
-  private async open(wallet: Address, existing: WalletRecord | null, linkTo: string | undefined) {
+  private async open(wallet: Address, existing: WalletRecord | null, linkTo: string | undefined, contact?: string) {
     const { inquiryId, url } = await this.d.provider.createInquiry(wallet);
     const t = this.now();
     await this.d.store.putWallet({
@@ -168,6 +207,7 @@ export class IdentityService {
       status: "pending",
       linkTo,
       reason: undefined,
+      contact: contact ?? existing?.contact,
       createdAt: existing?.createdAt ?? t,
       updatedAt: t,
     });
@@ -244,7 +284,9 @@ export class IdentityService {
     const found = await this.resolve(fields);
     if (rec.linkTo) return this.link(rec, found);
     const person = found.known ? await this.d.store.getPerson(found.personId) : null;
-    if (person?.bannedAt)
+    // A permanent bar refuses the person on any wallet. A temporary one does not: the chain refuses their loans and
+    // guarantees anyway, and a pass lets them recover a lost wallet and collect what they are owed meanwhile.
+    if (this.barOf(person) === "permanent")
       return this.update(rec, { status: "ineligible", personId: found.personId, reason: "This person can no longer use Good Faith." });
     if (rec.personId && rec.personId !== found.personId)
       return this.update(rec, { status: "ineligible", reason: "This wallet already belongs to another verified person." });
@@ -264,7 +306,7 @@ export class IdentityService {
       }
     }
     if (!found.known) {
-      await this.d.store.putPerson({ personId: found.personId, wallet: rec.wallet, createdAt: this.now() });
+      await this.d.store.putPerson({ personId: found.personId, wallet: rec.wallet, contact: rec.contact, createdAt: this.now() });
       await this.d.store.putCredential({
         hash: found.hash,
         keyVersion: found.version,
@@ -272,6 +314,8 @@ export class IdentityService {
         linkedAt: this.now(),
         via: "verify",
       });
+    } else if (person && rec.contact && person.contact !== rec.contact) {
+      await this.d.store.putPerson({ ...person, contact: rec.contact });
     }
     return this.update(rec, { status: "issued", personId: found.personId, tokenAddress, reason: undefined, url: undefined });
   }
@@ -315,16 +359,17 @@ export class IdentityService {
       const [pda] = await findPersonPda(pool.address, fromHex(rec.personId));
       const p = await fetchPerson(this.d.rpc, pda);
       const now = await this.chainNow();
-      const review = p && p.wallet !== wallet ? await this.d.store.getRecovery(rec.personId) : null;
-      const reviewUntil = review?.newWallet === wallet ? Math.floor(review.openedAt / 1000) + (this.d.recoveryReviewSec ?? 0) : null;
+      const request = p && p.wallet !== wallet ? await this.d.store.getRecovery(rec.personId) : null;
+      const requestedAt = request?.newWallet === wallet ? Math.floor(request.openedAt / 1000) : null;
       view.person = {
         onChain: !!p,
         currentWallet: p?.wallet ?? null,
         isThisWallet: p?.wallet === wallet,
         ineligible: p ? !eligibleAt(p, now) : false,
+        barredUntil: p && !eligibleAt(p, now) ? Number(p.ineligibleUntil) : 0,
         pendingWallet: p?.pendingWallet ?? null,
         pendingWalletAt: p ? Number(p.pendingWalletAt) : 0,
-        reviewUntil,
+        requestedAt,
       };
       if (!p) view.next = "join";
       else if (p.wallet === wallet) view.next = "done";
@@ -337,12 +382,12 @@ export class IdentityService {
       } else if (p.pendingWallet) {
         view.next = "blocked";
         view.reason = "A move of this membership to another wallet is already pending.";
-      } else if (review && review.newWallet !== wallet) {
+      } else if (request && request.newWallet !== wallet) {
         view.next = "blocked";
         view.reason = "A move of this membership to another wallet is already requested.";
-      } else if (reviewUntil !== null && Math.floor(this.now() / 1000) < reviewUntil) {
+      } else if (requestedAt !== null) {
         view.next = "review";
-        view.reason = `Your request to move the membership here is being reviewed until ${when(reviewUntil)}.`;
+        view.reason = "Your request to move the membership here is waiting for the operator's review.";
       } else view.next = "recover";
     }
     return view;
@@ -396,13 +441,14 @@ export class IdentityService {
   }
 
   /**
-   * Wallet recovery for a verified wallet whose person already has a membership elsewhere. The first call opens a
-   * request; once the service-side review period has passed the call returns the proposal (issuer and recovery
-   * authority sign; the old wallet may veto during the on-chain delay); once that delay has passed too, the call
-   * returns the finalize transaction instead, which the new wallet pays for itself.
+   * Wallet recovery for a verified wallet whose person already has a membership elsewhere. The call records a
+   * request for the operator (who proposes it on chain with the recovery key, see `prepareProposal`); the old wallet
+   * may veto during the on-chain delay; once that delay has passed the call returns the finalize transaction, which
+   * the new wallet pays for itself. A barred person may recover too: the bar follows the person, and the new wallet
+   * is how they reach what they are owed.
    */
   async prepareRebind(wallet: Address): Promise<PreparedTx | RecoveryReview> {
-    const { rec, pool, personId, gatewayToken } = await this.preparedFor(wallet);
+    const { rec, pool, personId } = await this.preparedFor(wallet);
     const [pda] = await findPersonPda(pool.address, personId);
     const person = await fetchPerson(this.d.rpc, pda);
     if (!person) throw new IdentityError(409, "No membership to move yet. Join instead.");
@@ -415,45 +461,118 @@ export class IdentityService {
       return this.sign(wallet, (payer) => finalizeRebindIx({ payer, pool, person }), "finalize", [], { sponsorable: false });
     }
     if (person.pendingWallet) throw new IdentityError(409, "A move of this membership to another wallet is already pending.");
-    if (!eligibleAt(person, now)) throw new IdentityError(403, "This membership is on hold.");
-    const recovery = this.d.recovery;
-    if (!recovery) throw new IdentityError(503, "Wallet recovery is not enabled on this service.");
-    if (pool.recoveryAuthority !== recovery.address)
-      throw new IdentityError(500, "The identity service's recovery key is not the fund's recovery authority.");
-    // Service-side review: the request is recorded first and signed only once the review period has passed.
-    const reviewSec = this.d.recoveryReviewSec ?? 0;
     let request = await this.d.store.getRecovery(rec.personId!);
     if (request && request.newWallet !== wallet)
       throw new IdentityError(409, "A move of this membership to another wallet is already requested.");
     if (!request) {
       request = { personId: rec.personId!, newWallet: wallet, openedAt: this.now() };
       await this.d.store.putRecovery(request);
+      await this.notify(
+        "recovery_requested",
+        rec.personId!,
+        `A request to move your membership to wallet ${wallet} was opened. If this was not you, keep your current wallet: it can object once the move is proposed.`,
+        {
+          wallet,
+          data: { currentWallet: person.wallet },
+        },
+      );
     }
-    const readyAt = Math.floor(request.openedAt / 1000) + reviewSec;
-    if (Math.floor(this.now() / 1000) < readyAt) return { kind: "review", readyAt };
-    return this.sign(
-      wallet,
-      () =>
-        proposeRebindIx({
-          newWallet: wallet,
-          issuer: this.d.issuer.address,
-          recoveryAuthority: recovery.address,
-          pool,
-          person,
-          gatewayToken,
-        }),
-      "propose",
-      [this.d.issuer, recovery],
-    );
+    return { kind: "review", requestedAt: Math.floor(request.openedAt / 1000) };
   }
 
-  /** Withdraws a service-side recovery request for this wallet (an on-chain proposal is vetoed on chain instead). */
+  /** Withdraws a recovery request for this wallet (an on-chain proposal is vetoed on chain instead). */
   async cancelRecovery(wallet: Address): Promise<boolean> {
     const rec = await this.d.store.getWallet(wallet);
     if (!rec?.personId) return false;
     const request = await this.d.store.getRecovery(rec.personId);
     if (!request || request.newWallet !== wallet) return false;
     await this.d.store.deleteRecovery(rec.personId);
+    return true;
+  }
+
+  /** The operator's queue: every open request with the chain's view of the person. */
+  async listRecoveries(): Promise<RecoveryView[]> {
+    const pool = await this.pool();
+    const now = await this.chainNow();
+    const out: RecoveryView[] = [];
+    for (const r of await this.d.store.listRecoveries()) {
+      const stored = await this.d.store.getPerson(r.personId);
+      const p = pool ? await fetchPerson(this.d.rpc, (await findPersonPda(pool.address, fromHex(r.personId)))[0]) : null;
+      out.push({
+        personId: r.personId,
+        newWallet: r.newWallet as Address,
+        requestedAt: Math.floor(r.openedAt / 1000),
+        hasContact: !!stored?.contact,
+        onChain: !!p,
+        currentWallet: p?.wallet ?? null,
+        pendingWallet: p?.pendingWallet ?? null,
+        pendingWalletAt: p ? Number(p.pendingWalletAt) : 0,
+        barredUntil: p && !eligibleAt(p, now) ? Number(p.ineligibleUntil) : 0,
+      });
+    }
+    return out;
+  }
+
+  private async requestOf(personIdHex: string): Promise<RecoveryRecord> {
+    const request = await this.d.store.getRecovery(personIdHex);
+    if (!request) throw new IdentityError(404, "No recovery request for this person.");
+    return request;
+  }
+
+  /**
+   * For the operator's recovery CLI: the `propose_rebind` for a recorded request, built with the operator's key as
+   * fee payer and signed by the issuer. The CLI adds the recovery authority's signature and sends it; the web
+   * service never holds that key.
+   */
+  async prepareProposal(personIdHex: string, feePayer: Address): Promise<PreparedTx> {
+    const request = await this.requestOf(personIdHex);
+    const wallet = request.newWallet as Address;
+    const { pool, personId, gatewayToken } = await this.preparedFor(wallet);
+    const [pda] = await findPersonPda(pool.address, personId);
+    const person = await fetchPerson(this.d.rpc, pda);
+    if (!person) throw new IdentityError(409, "The person has no membership on chain.");
+    if (person.wallet === wallet) throw new IdentityError(409, "That wallet is already the current one.");
+    if (person.pendingWallet) throw new IdentityError(409, "A move of this membership is already pending on chain.");
+    if (pool.recoveryAuthority !== feePayer)
+      throw new IdentityError(400, "The fee payer must be the fund's recovery authority (the key that signs next).");
+    const tx = await buildTransaction(this.d.rpc, feePayer, [
+      await proposeRebindIx({ newWallet: wallet, issuer: this.d.issuer.address, recoveryAuthority: feePayer, pool, person, gatewayToken }),
+    ]);
+    const signed = await partiallySignTransaction([this.d.issuer.keyPair], tx);
+    return { transaction: toBase64(signed), feePayer, sponsored: false, kind: "propose" };
+  }
+
+  /** The operator reports that the proposal is on chain: the member hears about the veto window. */
+  async recoveryProposed(personIdHex: string, signature: string): Promise<{ notified: boolean }> {
+    const request = await this.requestOf(personIdHex);
+    const pool = await this.pool();
+    const p = pool ? await fetchPerson(this.d.rpc, (await findPersonPda(pool.address, fromHex(personIdHex)))[0]) : null;
+    const until = p?.pendingWallet === request.newWallet ? when(p.pendingWalletAt) : "the recovery delay has passed";
+    await this.notify(
+      "recovery_proposed",
+      personIdHex,
+      `The move of your membership to wallet ${request.newWallet} is proposed on chain (${signature}). Your current wallet can object until ${until}; otherwise the move completes.`,
+      {
+        wallet: request.newWallet as Address,
+        data: { signature, currentWallet: p?.wallet ?? "", pendingWalletAt: p ? Number(p.pendingWalletAt) : 0 },
+      },
+    );
+    return { notified: !!this.d.notifier };
+  }
+
+  /** The operator turns a request down; the member can ask again. */
+  async rejectRecovery(personIdHex: string): Promise<boolean> {
+    const request = await this.d.store.getRecovery(personIdHex);
+    if (!request) return false;
+    await this.d.store.deleteRecovery(personIdHex);
+    await this.notify(
+      "recovery_rejected",
+      personIdHex,
+      `The request to move your membership to wallet ${request.newWallet} was not approved.`,
+      {
+        wallet: request.newWallet as Address,
+      },
+    );
     return true;
   }
 
@@ -465,14 +584,39 @@ export class IdentityService {
   }
 
   /**
-   * Bars a person (after a default): revokes the passes of every wallet they verified with and refuses future
-   * checks. The chain carries the eligibility bar itself; this keeps the person from re-verifying onto a fresh
-   * wallet meanwhile.
+   * Mirrors a bar the chain set (after a settlement): `untilSec` as the chain has it. A permanent bar (no `untilSec`,
+   * or the chain's i64 max) revokes the passes of every wallet the person verified with and refuses future checks.
+   * A temporary bar is only recorded: the chain refuses the person's loans and guarantees meanwhile, their passes
+   * stay so they can recover a wallet and collect what they are owed, and it ends by itself. An `untilSec` in the
+   * past lifts a bar (the authority's `lift_bar`, or a restitution that relaxed it).
    */
-  async ban(personIdHex: string): Promise<{ banned: boolean; revoked: Address[] }> {
+  async ban(
+    personIdHex: string,
+    untilSec?: number,
+  ): Promise<{ banned: boolean; until: number | null; permanent: boolean; revoked: Address[] }> {
     const person = await this.d.store.getPerson(personIdHex);
-    if (!person) return { banned: false, revoked: [] };
-    if (!person.bannedAt) await this.d.store.putPerson({ ...person, bannedAt: this.now() });
+    if (!person) return { banned: false, until: null, permanent: false, revoked: [] };
+    const permanent = untilSec === undefined || untilSec >= PERMANENT_UNTIL;
+    if (!permanent && untilSec! <= Number(this.nowSec())) {
+      if (person.bannedUntil) {
+        await this.d.store.putPerson({ ...person, bannedUntil: undefined });
+        await this.notify("bar_lifted", personIdHex, "Your Good Faith membership is in good standing again.");
+      }
+      return { banned: false, until: null, permanent: false, revoked: [] };
+    }
+    const until = permanent ? PERMANENT_UNTIL : untilSec!;
+    if (person.bannedUntil !== until) {
+      await this.d.store.putPerson({ ...person, bannedAt: this.now(), bannedUntil: until });
+      await this.notify(
+        "barred",
+        personIdHex,
+        permanent
+          ? "Your Good Faith membership is barred. Paying back what the fund lost restores it; you can still collect what you are owed."
+          : `Your Good Faith membership is barred until ${when(until)}. Paying back what the fund lost shortens that; you can still collect what you are owed.`,
+        { data: { until } },
+      );
+    }
+    if (!permanent) return { banned: true, until, permanent: false, revoked: [] };
     await this.d.store.deleteRecovery(personIdHex);
     const wallets = new Set<Address>([person.wallet as Address, ...((await this.d.store.walletsOf(personIdHex)) as Address[])]);
     const pool = await this.pool();
@@ -488,7 +632,7 @@ export class IdentityService {
       const rec = await this.d.store.getWallet(w);
       if (rec) await this.update(rec, { status: "ineligible", linkTo: undefined, reason: "This person can no longer use Good Faith." });
     }
-    return { banned: true, revoked };
+    return { banned: true, until: PERMANENT_UNTIL, permanent: true, revoked };
   }
 
   /** The credential fingerprint the service would compute for these fields under the current key (tests and tooling). */

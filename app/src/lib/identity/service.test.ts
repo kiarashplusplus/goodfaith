@@ -15,7 +15,8 @@ import {
 } from "@solana/kit";
 import { IdentityService, IdentityError, type PreparedTx } from "./service";
 import { MockProvider, MOCK_FIELDS_TX } from "./mock";
-import { MemoryStore } from "./store";
+import { MemoryNotifier } from "./notify";
+import { MemoryStore, PERMANENT_UNTIL } from "./store";
 import type { TokenIssuer } from "./gatekeeper";
 import { fromHex, HashKeyring, personHash, toHex } from "./person-hash";
 
@@ -96,6 +97,7 @@ const rpc = {
 } as unknown as ConstructorParameters<typeof IdentityService>[0]["rpc"];
 
 let provider: MockProvider, store: MemoryStore, gk: FakeGatekeeper, issuer: KeyPairSigner, recovery: KeyPairSigner, svc: IdentityService;
+let notes: MemoryNotifier;
 let w1: Address, w2: Address;
 let clock = 1_760_000_000_000;
 const now = () => clock;
@@ -113,9 +115,9 @@ const make = (over: Partial<ConstructorParameters<typeof IdentityService>[0]> = 
     store,
     gatekeeper: gk,
     issuer,
-    recovery,
     rpc,
     keyring: keyring(),
+    notifier: notes,
     now,
     feePayer: async () => null,
     ...over,
@@ -126,6 +128,7 @@ beforeEach(async () => {
   provider = new MockProvider("s");
   store = new MemoryStore();
   gk = new FakeGatekeeper();
+  notes = new MemoryNotifier();
   issuer = await generateKeyPairSigner();
   recovery = await generateKeyPairSigner();
   w1 = (await generateKeyPairSigner()).address;
@@ -214,18 +217,44 @@ describe("webhook", () => {
     expect(await store.getWallet(w1)).toMatchObject({ reason: "This wallet already belongs to another verified person." });
   });
 
-  it("refuses a banned person on any wallet, revoking every wallet they verified with", async () => {
+  it("refuses a permanently banned person on any wallet, revoking every wallet they verified with", async () => {
     await approve(w1);
     await approve(w2); // the same person verified from a second wallet earlier
     const id = (await store.getWallet(w1))!.personId!;
-    expect(await svc.ban(id)).toEqual({ banned: true, revoked: [w1, w2] });
+    expect(await svc.ban(id)).toEqual({ banned: true, until: PERMANENT_UNTIL, permanent: true, revoked: [w1, w2] });
     expect(gk.revoked).toEqual([w1, w2]);
     expect(await store.getWallet(w1)).toMatchObject({ status: "ineligible" });
     expect(await store.getWallet(w2)).toMatchObject({ status: "ineligible" });
+    expect(notes.sent.map((e) => e.kind)).toEqual(["barred"]);
     const w3 = (await generateKeyPairSigner()).address;
     expect(await approve(w3)).toBe("ineligible"); // same ID fields, new wallet
     expect(await store.getWallet(w3)).toMatchObject({ reason: "This person can no longer use Good Faith." });
-    expect(await svc.ban("00".repeat(32))).toEqual({ banned: false, revoked: [] });
+    expect(await svc.ban("00".repeat(32))).toEqual({ banned: false, until: null, permanent: false, revoked: [] });
+  });
+
+  it("records a temporary bar without revoking anything, tells the member, and lifts it on request", async () => {
+    await svc.start(w1, "member@example.test");
+    const { inquiryId } = (await store.getWallet(w1))!;
+    expect(await svc.handleWebhook(new Headers(provider.sign()), provider.decide(inquiryId, "approved"))).toBe("issued");
+    const id = (await store.getWallet(w1))!.personId!;
+    expect(await store.getPerson(id)).toMatchObject({ contact: "member@example.test" });
+    const until = Math.floor(now() / 1000) + 86_400;
+    expect(await svc.ban(id, until)).toEqual({ banned: true, until, permanent: false, revoked: [] });
+    expect(await svc.ban(id, until)).toEqual({ banned: true, until, permanent: false, revoked: [] }); // idempotent, one notice
+    expect(gk.revoked).toEqual([]);
+    expect(await store.getWallet(w1)).toMatchObject({ status: "issued" });
+    expect(await store.getPerson(id)).toMatchObject({ bannedUntil: until });
+    expect(notes.sent).toHaveLength(1);
+    expect(notes.sent[0]).toMatchObject({ kind: "barred", personId: id, contact: "member@example.test", data: { until } });
+    // the person may still verify a new wallet (to recover and to collect what they are owed)
+    expect(await approve(w2)).toBe("issued");
+    // the bar ends by itself...
+    clock += 2 * 86_400_000;
+    expect(await approve((await generateKeyPairSigner()).address)).toBe("issued");
+    // ...or is lifted (the authority's lift_bar, mirrored by the admin CLI)
+    expect(await svc.ban(id, 0)).toEqual({ banned: false, until: null, permanent: false, revoked: [] });
+    expect((await store.getPerson(id))!.bannedUntil).toBeUndefined();
+    expect(notes.sent.at(-1)).toMatchObject({ kind: "bar_lifted", contact: "member@example.test" });
   });
 });
 
@@ -301,7 +330,7 @@ describe("prepared transactions", () => {
     expect(t.signatures[w1]).toBeNull();
   });
 
-  it("join is refused once the person is on chain; recovery proposes, then finalises after the delay", async () => {
+  it("join is refused once the person is on chain; recovery is requested, proposed by the operator, then finalised", async () => {
     await approve(w1);
     const id = (await store.getWallet(w1))!.personId!;
     const [pda] = await findPersonPda(POOL, fromHex(id));
@@ -314,32 +343,55 @@ describe("prepared transactions", () => {
     expect((await store.getWallet(w2))!.personId).toBe(id);
     expect(await svc.status(w2)).toMatchObject({
       next: "recover",
-      person: { onChain: true, currentWallet: w1, isThisWallet: false, pendingWallet: null, reviewUntil: null },
+      person: { onChain: true, currentWallet: w1, isThisWallet: false, pendingWallet: null, requestedAt: null, barredUntil: 0 },
     });
-    const sponsor = address("78DWc8FZ3iVru1z1jDy9wdPsTHqhGYiQRhtyVU6u9RHU");
-    const svcSponsored = make({ feePayer: async () => sponsor });
-    const p = tx(await svcSponsored.prepareRebind(w2));
-    expect(p).toMatchObject({ sponsored: true, feePayer: sponsor, kind: "propose" });
-    const t = decode(p.transaction);
-    expect(Object.keys(t.signatures)).toEqual(expect.arrayContaining([sponsor, w2, issuer.address, recovery.address]));
-    expect(t.signatures[issuer.address]).not.toBeNull();
-    expect(t.signatures[recovery.address]).not.toBeNull();
-    expect(t.signatures[w2]).toBeNull();
+    expect(await svc.prepareRebind(w2)).toEqual({ kind: "review", requestedAt: Math.floor(now() / 1000) });
+    expect(notes.sent.map((e) => e.kind)).toEqual(["recovery_requested"]);
+    expect(notes.sent[0]).toMatchObject({ personId: id, wallet: w2, data: { currentWallet: w1 } });
+    expect(await svc.status(w2)).toMatchObject({ next: "review", person: { requestedAt: Math.floor(now() / 1000) } });
+    expect(await svc.prepareRebind(w2)).toEqual({ kind: "review", requestedAt: Math.floor(now() / 1000) }); // same request
     await expect(svc.prepareRebind(w1)).rejects.toThrow(/already linked/);
+    const w3 = (await generateKeyPairSigner()).address;
+    expect(await approve(w3)).toBe("issued");
+    expect(await svc.status(w3)).toMatchObject({ next: "blocked" });
+    await expect(svc.prepareRebind(w3)).rejects.toThrow(/already requested/);
+
+    // the operator's queue and the issuer-signed proposal built for the recovery key (the CLI signs and sends it)
+    expect(await svc.listRecoveries()).toEqual([
+      {
+        personId: id,
+        newWallet: w2,
+        requestedAt: Math.floor(now() / 1000),
+        hasContact: false,
+        onChain: true,
+        currentWallet: w1,
+        pendingWallet: null,
+        pendingWalletAt: 0,
+        barredUntil: 0,
+      },
+    ]);
+    await expect(svc.prepareProposal(id, w1)).rejects.toMatchObject({ status: 400 });
+    await expect(svc.prepareProposal("00".repeat(32), recovery.address)).rejects.toMatchObject({ status: 404 });
+    const p = await svc.prepareProposal(id, recovery.address);
+    expect(p).toMatchObject({ sponsored: false, feePayer: recovery.address, kind: "propose" });
+    const t = decode(p.transaction);
+    expect(Object.keys(t.signatures).sort()).toEqual([recovery.address, issuer.address].sort());
+    expect(t.signatures[issuer.address]).not.toBeNull();
+    expect(t.signatures[recovery.address]).toBeNull(); // the CLI adds it
+    expect(await svc.recoveryProposed(id, "sig111")).toEqual({ notified: true });
+    expect(notes.sent.at(-1)).toMatchObject({ kind: "recovery_proposed", wallet: w2, data: { signature: "sig111" } });
 
     // the chain records the proposal: the new wallet waits out the delay, a third wallet is blocked
     chain.persons.set(pda, { wallet: w1, pendingWallet: w2, pendingWalletAt: nowSec() + 3n * 86_400n });
     expect(await svc.status(w2)).toMatchObject({ next: "pending", person: { pendingWallet: w2 } });
     await expect(svc.prepareRebind(w2)).rejects.toThrow(/pending until/);
-    const w3 = (await generateKeyPairSigner()).address;
-    expect(await approve(w3)).toBe("issued");
-    expect(await svc.status(w3)).toMatchObject({ next: "blocked" });
     await expect(svc.prepareRebind(w3)).rejects.toThrow(/already pending/);
+    await expect(svc.prepareProposal(id, recovery.address)).rejects.toMatchObject({ status: 409 });
 
     // delay over: finalize, paid by the new wallet itself (no issuer signature needed)
     chain.persons.set(pda, { wallet: w1, pendingWallet: w2, pendingWalletAt: nowSec() - 1n });
     expect((await svc.status(w2)).next).toBe("finalize");
-    const f = tx(await svcSponsored.prepareRebind(w2));
+    const f = tx(await svc.prepareRebind(w2));
     expect(f).toMatchObject({ sponsored: false, feePayer: w2, kind: "finalize" });
     expect(Object.keys(decode(f.transaction).signatures)).toEqual([w2]);
     expect(await store.getRecovery(id)).toBeNull();
@@ -352,47 +404,47 @@ describe("prepared transactions", () => {
     expect((await svc.status(w2)).next).toBe("done");
   });
 
-  it("holds a recovery request for the review period, one request per person, and lets the wallet withdraw it", async () => {
-    svc = make({ recoveryReviewSec: 3_600 });
+  it("a request can be withdrawn by the wallet or rejected by the operator; a permanent ban drops it", async () => {
     await approve(w1);
     const id = (await store.getWallet(w1))!.personId!;
     const [pda] = await findPersonPda(POOL, fromHex(id));
     chain.persons.set(pda, { wallet: w1 });
     await approve(w2);
-    const r = await svc.prepareRebind(w2);
-    expect(r).toEqual({ kind: "review", readyAt: Math.floor(now() / 1000) + 3_600 });
-    expect(await svc.status(w2)).toMatchObject({ next: "review", person: { reviewUntil: Math.floor(now() / 1000) + 3_600 } });
-    const w3 = (await generateKeyPairSigner()).address;
-    await approve(w3);
-    expect((await svc.status(w3)).next).toBe("blocked");
-    await expect(svc.prepareRebind(w3)).rejects.toThrow(/already requested/);
-    clock += 1_800_000;
-    expect(await svc.prepareRebind(w2)).toEqual(r); // same request, same deadline
-    clock += 1_800_000;
-    expect((await svc.status(w2)).next).toBe("recover");
-    expect(tx(await svc.prepareRebind(w2)).kind).toBe("propose");
+    expect((await svc.prepareRebind(w2)).kind).toBe("review");
     expect(await svc.cancelRecovery(w2)).toBe(true);
     expect(await svc.cancelRecovery(w2)).toBe(false);
-    expect((await svc.status(w3)).next).toBe("recover");
-    // a ban drops the request too
-    await svc.prepareRebind(w3);
+    expect((await svc.status(w2)).next).toBe("recover");
+    const w3 = (await generateKeyPairSigner()).address;
+    await approve(w3);
+    expect((await svc.prepareRebind(w3)).kind).toBe("review");
+    expect((await svc.status(w2)).next).toBe("blocked");
+    expect(await svc.rejectRecovery(id)).toBe(true);
+    expect(await svc.rejectRecovery(id)).toBe(false);
+    expect(notes.sent.at(-1)).toMatchObject({ kind: "recovery_rejected", wallet: w3 });
+    expect((await svc.status(w2)).next).toBe("recover");
+    expect((await svc.prepareRebind(w3)).kind).toBe("review");
     await svc.ban(id);
     expect(await store.getRecovery(id)).toBeNull();
   });
 
-  it("refuses recovery for a barred person and without a recovery key", async () => {
+  it("a barred person may still recover (the bar follows them); a permanently banned one is refused", async () => {
     await approve(w1);
     const id = (await store.getWallet(w1))!.personId!;
     const [pda] = await findPersonPda(POOL, fromHex(id));
+    const until = nowSec() + 30n * 86_400n;
+    chain.persons.set(pda, { wallet: w1, ineligibleUntil: until });
+    await svc.ban(id, Number(until));
+    expect(await approve(w2)).toBe("issued");
+    expect(await svc.status(w2)).toMatchObject({ next: "recover", person: { ineligible: true, barredUntil: Number(until) } });
+    expect((await svc.prepareRebind(w2)).kind).toBe("review");
+    expect((await svc.listRecoveries())[0]).toMatchObject({ barredUntil: Number(until) });
+    expect((await svc.prepareProposal(id, recovery.address)).kind).toBe("propose");
     chain.persons.set(pda, { wallet: w1, ineligibleUntil: PERMANENT });
-    await approve(w2);
-    expect(await svc.status(w2)).toMatchObject({ next: "recover", person: { ineligible: true } });
-    await expect(svc.prepareRebind(w2)).rejects.toMatchObject({ status: 403 });
-    chain.persons.set(pda, { wallet: w1 });
-    const noRecovery = make({ recovery: undefined });
-    await expect(noRecovery.prepareRebind(w2)).rejects.toMatchObject({ status: 503 });
+    await svc.ban(id);
+    const w3 = (await generateKeyPairSigner()).address;
+    expect(await approve(w3)).toBe("ineligible");
     chain.pool = { ...chain.pool!, recoveryAuthority: w1 };
-    await expect(svc.prepareRebind(w2)).rejects.toMatchObject({ status: 500 });
+    await expect(svc.prepareProposal(id, recovery.address)).rejects.toMatchObject({ status: 404 }); // the ban dropped the request
   });
 
   it("refuses to sign when the pool names another issuer", async () => {
@@ -400,5 +452,8 @@ describe("prepared transactions", () => {
     chain.pool = { ...chain.pool!, issuer: w2 };
     await expect(svc.prepareJoin(w1)).rejects.toThrow(IdentityError);
     await expect(svc.prepareJoin(w1)).rejects.toMatchObject({ status: 500 });
+    await store.putRecovery({ personId: (await store.getWallet(w1))!.personId!, newWallet: w2, openedAt: now() });
+    await approve(w2);
+    await expect(svc.prepareProposal((await store.getWallet(w1))!.personId!, recovery.address)).rejects.toMatchObject({ status: 500 });
   });
 });

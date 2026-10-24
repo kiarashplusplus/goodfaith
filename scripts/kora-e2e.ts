@@ -30,7 +30,20 @@ const row = (step: string, ...cols: string[]) => { rows.push([step, ...cols]); c
 const fmt = (n: bigint) => (Number(n) / 1e6).toFixed(2);
 const txRpc = rpc as unknown as Parameters<typeof tx.sendInstructions>[0] & Parameters<typeof prog.fetchPool>[0];
 type Signer = Awaited<ReturnType<typeof wallet>>;
-const sponsored = (w: Signer, ixs: Instruction[] | ((feePayer: Address) => Promise<Instruction[]>)) => tx.sendInstructions(txRpc, w as never, ixs as never);
+/** Surfpool sometimes fails to fetch an account from the remote it forks (devnet); that is the fork, not the code: retry. */
+const withRetry = async <T>(f: () => Promise<T>, label: string): Promise<T> => {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await f();
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      if (attempt >= 4 || !/Failed to fetch accounts from remote/i.test(m)) throw e;
+      console.log(`[retry] ${label}: transient fork error (attempt ${attempt}): ${m.slice(0, 100)}`);
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+  }
+};
+const sponsored = (w: Signer, ixs: Instruction[] | ((feePayer: Address) => Promise<Instruction[]>)) => withRetry(() => tx.sendInstructions(txRpc, w as never, ixs as never), 'sponsored send');
 const ataCreate = (payer: Address, a: Address, owner: Address, mint: Address) =>
   getCreateAssociatedTokenIdempotentInstruction({ payer: createNoopSigner(payer), ata: a, owner, mint }) as Instruction;
 
@@ -148,10 +161,14 @@ const target = Number(l.dueAt) + l.graceDays * 86400 + 3600;
 await cheat('surfnet_timeTravel', [{ absoluteTimestamp: target * 1000 }]);
 await new Promise(r => setTimeout(r, 1500));
 assert.ok((await clockTs()) > Number(l.dueAt) + l.graceDays * 86400);
-await sp(third, [await prog.markDefaultIx({ caller: third.address, pool, loan: l })], 'mark_default');
+await sp(third, [await prog.settleIx({ caller: third.address, pool, loan: l })], 'settle');
 l = await loanOf(L2.id);
 assert.equal(l.status, 'Defaulted');
-assert.equal(l.refundPending, escrow2 - 20n * USDC, 'shortfall 20 came out of the escrow, the rest is owed to the co-signer');
+assert.equal(l.recoveryPending, 20n * USDC, 'shortfall 20 is set aside from the escrow');
+assert.equal(l.refundPending, escrow2 - 20n * USDC, 'the rest is owed to the co-signer');
+await sp(third, [await prog.collectRecoveryIx({ collector: third.address, pool, loan: l })], 'collect');
+l = await loanOf(L2.id);
+assert.equal(l.recoveryPending, 0n);
 // the claim (by anyone) re-creates the token account, the sponsor paying its rent
 await sp(third, async (feePayer) => {
   const cosignerWallet = await cw(l);
@@ -160,7 +177,7 @@ await sp(third, async (feePayer) => {
 }, 'claim 2');
 assert.equal(await tok(c2ata), escrow2 - 20n * USDC);
 assert.equal((await loanOf(L2.id)).refundPending, 0n);
-row('repay 80 + mark_default + claim after the co-signer closed their token account', `loan#${L2.id}`, 'Defaulted, shortfall 20 recovered', `claim re-created the account (sponsor paid), ${fmt(escrow2 - 20n * USDC)} returned`);
+row('repay 80 + settle + collect + claim after the co-signer closed their token account', `loan#${L2.id}`, 'Defaulted, shortfall 20 recovered', `claim re-created the account (sponsor paid), ${fmt(escrow2 - 20n * USDC)} returned`);
 
 // ---------- Checking-style send: no sponsor for creating a stranger's token account ----------
 const fresh = await wallet();
@@ -240,9 +257,9 @@ for (const w of [borrower, cosigner, donor, borrower2]) assert.equal(await sol(w
 // cosigner2 paid one unsponsored close (fee) and got the account rent back
 const koraSpent = koraBase - (await sol(payer!));
 const rent = async (n: number) => BigInt(await rpc.getMinimumBalanceForRentExemption(BigInt(n)).send());
-// 4 people (Person 174 + Member 74 bytes each), 2 loans (237 bytes, permanent), 3 token accounts (two borrowers, the
+// 4 people (Person 183 + Member 74 bytes each), 2 loans (317 bytes, permanent), 3 token accounts (two borrowers, the
 // second co-signer's re-created by the claim), two signatures per transaction (three for registrations).
-const expected = 4n * ((await rent(174)) + (await rent(74))) + 2n * (await rent(237)) + 3n * (await rent(165)) + 10_000n * BigInt(sponsoredTxs) + 5_000n * 4n;
+const expected = 4n * ((await rent(183)) + (await rent(74))) + 2n * (await rent(317)) + 3n * (await rent(165)) + 10_000n * BigInt(sponsoredTxs) + 5_000n * 4n;
 console.log('Kora spent', koraSpent, 'lamports; expected about', expected, `(${sponsoredTxs} sponsored txs; request + escrow rents came back)`);
 assert.ok(koraSpent >= expected - 100_000n && koraSpent <= expected + 200_000n, 'Kora spend within the expected range');
 row('accounting', `users paid 0`, `Kora spent ${koraSpent} lamports (${sponsoredTxs} sponsored txs)`);

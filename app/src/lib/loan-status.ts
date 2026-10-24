@@ -1,15 +1,15 @@
 import type { Loan } from "./program";
 
-/** Pure helpers for where a loan stands in time. Mirrors the program: a loan can be marked as defaulted only when now > due_at + grace. */
+/** Pure helpers for where a loan stands in time. Mirrors the program: repayment is possible while now <= due_at + grace; after that the loan is settled. */
 export const SECONDS_PER_DAY = 86_400n;
 
-export type LoanState = "open" | "overdue" | "defaultable" | "repaid" | "repaid_late" | "defaulted";
+export type LoanState = "open" | "overdue" | "defaultable" | "repaid" | "defaulted" | "restituted";
 
 export type LoanTiming = {
   state: LoanState;
   /** Short sentence for the UI; empty when `nowSec` is unknown (0). */
   label: string;
-  /** Last second before the loan can be marked as defaulted. */
+  /** Last second at which a repayment is accepted; after it the loan is settled. */
   deadline: bigint;
   /** Whole days until due (negative when past due). */
   daysUntilDue: number;
@@ -20,12 +20,19 @@ export type LoanTiming = {
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const ceilDiv = (a: bigint, b: bigint) => (a + b - 1n) / b;
 
-export function loanTiming(loan: Pick<Loan, "status" | "dueAt" | "graceDays">, nowSec: bigint): LoanTiming {
+export function loanTiming(
+  loan: Pick<Loan, "status" | "dueAt" | "graceDays"> & Partial<Pick<Loan, "shortfall" | "restituted">>,
+  nowSec: bigint,
+): LoanTiming {
   const deadline = loan.dueAt + BigInt(loan.graceDays) * SECONDS_PER_DAY;
   const base = { deadline, daysUntilDue: 0, graceDaysLeft: 0 };
   if (loan.status === "Repaid") return { ...base, state: "repaid", label: "Repaid in full." };
-  if (loan.status === "RepaidLate") return { ...base, state: "repaid_late", label: "Repaid in full, after the grace period." };
-  if (loan.status === "Defaulted") return { ...base, state: "defaulted", label: "Defaulted." };
+  if (loan.status === "Restituted") return { ...base, state: "restituted", label: "Settled after the deadline, then paid back in full." };
+  if (loan.status === "Defaulted") {
+    const owed = loan.shortfall !== undefined && loan.restituted !== undefined ? loan.shortfall - loan.restituted : null;
+    const partly = owed !== null && loan.restituted! > 0n ? " Partly paid back." : "";
+    return { ...base, state: "defaulted", label: `Settled as defaulted.${partly}` };
+  }
   if (nowSec <= 0n) return { ...base, state: "open", label: "" };
 
   const untilDue = loan.dueAt - nowSec;
@@ -39,7 +46,7 @@ export function loanTiming(loan: Pick<Loan, "status" | "dueAt" | "graceDays">, n
     return {
       ...base,
       state: "defaultable",
-      label: "Past the grace period. It can be marked as defaulted.",
+      label: "Past the grace period. Repayment is closed: the loan is settled, and what is owed can be paid back afterwards.",
       daysUntilDue: -overdue,
     };
   }

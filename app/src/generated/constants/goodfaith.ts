@@ -20,6 +20,8 @@ export const MAX_RECOVERY_DELAY_SECONDS: bigint = 2592000n;
 
 export const MAX_REQUEST_TTL_SECONDS: bigint = 7776000n;
 
+export const MAX_SEASONING_SECONDS: bigint = 31536000n;
+
 export const MAX_TERM_DAYS: number = 3650;
 
 export const MAX_TIMELOCK_SECONDS: bigint = 7776000n;

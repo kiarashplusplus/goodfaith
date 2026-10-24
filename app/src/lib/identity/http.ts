@@ -1,4 +1,5 @@
-/** Shared plumbing for the identity routes: JSON replies, error mapping, a per-client limiter. */
+/** Shared plumbing for the identity routes: JSON replies, error mapping, a per-client limiter, the operator's key. */
+import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { address, type Address } from "@solana/kit";
 import { TokenBucket, clientIp } from "../sponsor-proxy";
@@ -25,6 +26,19 @@ export async function readJson(request: NextRequest, maxBytes = 8 * 1024): Promi
   } catch {
     return null;
   }
+}
+
+/** The operator's shared secret (IDENTITY_ADMIN_KEY) in `x-identity-admin-key`. */
+export function adminAuthorised(request: NextRequest): boolean {
+  const key = process.env.IDENTITY_ADMIN_KEY?.trim() ?? "";
+  const given = request.headers.get("x-identity-admin-key") ?? "";
+  if (!key || given.length !== key.length) return false;
+  return timingSafeEqual(Buffer.from(given), Buffer.from(key));
+}
+
+/** A 64-hex-character person id, or null. */
+export function personIdOf(v: unknown): string | null {
+  return typeof v === "string" && /^[0-9a-f]{64}$/.test(v) ? v : null;
 }
 
 export function walletOf(v: unknown): Address | null {

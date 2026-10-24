@@ -1,8 +1,9 @@
 // The operator's scheduled job. Everything it does is permissionless on chain; it only makes outcomes timely and
-// deterministic: applies settings whose timelock has elapsed, marks loans past due + grace as defaulted, closes
-// expired requests, releases escrow owed to co-signers of closed loans, finalises wallet recoveries whose delay has
-// passed, sweeps the vault to the successor once a wind-down is in effect and no loan is open, and tells the identity
-// service which people lost their eligibility so their passes are revoked. Pays its own fees (CRANKER_KEYPAIR, default
+// deterministic: applies settings whose timelock has elapsed, settles loans past due + grace, collects the escrow the
+// fund is owed into the vault, releases what co-signers are owed (from escrows and the vault), closes expired
+// requests, finalises wallet recoveries whose delay has passed, sweeps the vault to the successor once a wind-down is
+// in effect and no loan is open, and tells the identity service which people are barred, and until when, so their
+// passes are revoked for that long. Pays its own fees (CRANKER_KEYPAIR, default
 // ~/.config/solana/id.json) or lets Kora pay when KORA_URL is set. `--once` for CI and cron; `--interval <sec>` loops;
 // `--dry-run` reports what is due without sending anything.
 import fs from 'node:fs';
@@ -27,6 +28,8 @@ export type Report = {
   dryRun: boolean;
   applied: boolean;
   defaults: { loanId: string; sig: string; borrowerBarred: boolean; cosignerBarred: boolean }[];
+  /** Recoveries moved from escrows into the vault (a frozen escrow shows up under `errors` until it thaws). */
+  collected: { loanId: string; amount: string; sig: string }[];
   expired: { borrower: string; sig: string }[];
   claims: { loanId: string; amount: string; to: string; sig: string; ataCreated: boolean }[];
   recoveries: { person: string; from: string; to: string; sig: string }[];
@@ -38,11 +41,11 @@ export type Report = {
 const keyPath = process.env.CRANKER_KEYPAIR ?? path.join(os.homedir(), '.config/solana/id.json');
 const signer = await createKeyPairSignerFromBytes(Uint8Array.from(JSON.parse(fs.readFileSync(keyPath, 'utf8'))));
 
-async function ban(personId: string): Promise<Report['bans'][number]> {
+async function ban(personId: string, until: bigint): Promise<Report['bans'][number]> {
   const url = process.env.IDENTITY_URL ?? process.env.APP_URL;
   const key = process.env.IDENTITY_ADMIN_KEY;
   if (!url || !key) return { personId, banned: false, revoked: [], note: 'IDENTITY_URL/APP_URL and IDENTITY_ADMIN_KEY not set; pass not revoked' };
-  const res = await fetch(`${url}/api/identity/ban`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-identity-admin-key': key }, body: JSON.stringify({ personId }) });
+  const res = await fetch(`${url}/api/identity/ban`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-identity-admin-key': key }, body: JSON.stringify({ personId, until: until.toString() }) });
   const body = (await res.json().catch(() => ({}))) as { banned?: boolean; revoked?: string[]; error?: string };
   if (!res.ok && res.status !== 404) return { personId, banned: false, revoked: [], note: `HTTP ${res.status} ${body.error ?? ''}` };
   return { personId, banned: !!body.banned, revoked: body.revoked ?? [], note: body.error };
@@ -52,7 +55,7 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export async function runOnce(opts: { dryRun?: boolean } = {}): Promise<Report> {
   const dryRun = !!opts.dryRun;
-  const report: Report = { now: 0, dryRun, applied: false, defaults: [], expired: [], claims: [], recoveries: [], bans: [], swept: null, errors: [] };
+  const report: Report = { now: 0, dryRun, applied: false, defaults: [], collected: [], expired: [], claims: [], recoveries: [], bans: [], swept: null, errors: [] };
   const now = await clockTs();
   report.now = now;
   const nowB = BigInt(now);
@@ -77,32 +80,43 @@ export async function runOnce(opts: { dryRun?: boolean } = {}): Promise<Report> 
     }
   }
 
-  // 2. loans past due + grace; then the people the chain barred are reported to the identity service
+  // 2. loans past due + grace are settled; then the people the chain barred are reported to the identity service,
+  //    with the end of their bar, so a pass comes back when the bar does
   const all = await prog.fetchRecentLoans(txRpc, pool, 10_000);
-  const barred = new Map<string, Address>(); // person id -> person account
+  const barred = new Map<string, bigint>(); // person id -> ineligible until
   for (const loan of all.filter((l) => loanTiming(l, nowB).state === 'defaultable')) {
     try {
-      const sig = await send([await prog.markDefaultIx({ caller: signer.address, pool, loan })]);
+      const sig = await send([await prog.settleIx({ caller: signer.address, pool, loan })]);
       const [b, c] = dryRun ? [null, null] : await Promise.all([prog.fetchPerson(txRpc, loan.borrowerPerson), prog.fetchPerson(txRpc, loan.cosignerPerson)]);
       const bBarred = !!b && !prog.eligibleAt(b, nowB), cBarred = !!c && !prog.eligibleAt(c, nowB);
-      if (b && bBarred) barred.set(b.personId, b.address);
-      if (c && cBarred) barred.set(c.personId, c.address);
+      if (b && bBarred) barred.set(b.personId, b.ineligibleUntil);
+      if (c && cBarred) barred.set(c.personId, c.ineligibleUntil);
       report.defaults.push({ loanId: loan.id.toString(), sig, borrowerBarred: bBarred, cosignerBarred: cBarred });
     } catch (e) {
-      report.errors.push(`mark_default #${loan.id}: ${msg(e)}`);
+      report.errors.push(`settle #${loan.id}: ${msg(e)}`);
     }
   }
-  for (const id of barred.keys()) {
+  for (const [id, until] of barred) {
     try {
-      report.bans.push(await ban(id));
+      report.bans.push(await ban(id, until));
     } catch (e) {
       report.errors.push(`ban ${id.slice(0, 8)}: ${msg(e)}`);
     }
   }
 
-  // 3. escrow owed to co-signers of closed loans (the ones just defaulted included): to the person's current wallet
-  const closed = (await prog.fetchRecentLoans(txRpc, pool, 10_000)).filter((l) => l.status !== 'Active' && l.refundPending > 0n);
-  for (const loan of closed) {
+  // 3. what settled loans owe the fund: escrow into the vault (a frozen escrow fails here and is retried next pass)
+  const settled = await prog.fetchRecentLoans(txRpc, pool, 10_000);
+  for (const loan of settled.filter((l) => l.recoveryPending > 0n)) {
+    try {
+      const sig = await send([await prog.collectRecoveryIx({ collector: signer.address, pool, loan })]);
+      report.collected.push({ loanId: loan.id.toString(), amount: loan.recoveryPending.toString(), sig });
+    } catch (e) {
+      report.errors.push(`collect_recovery #${loan.id}: ${msg(e)}`);
+    }
+  }
+
+  // 4. what closed loans owe co-signers (escrow refunds and vault reimbursements): to the person's current wallet
+  for (const loan of settled.filter((l) => l.status !== 'Active' && prog.owedToCosigner(l) > 0n)) {
     try {
       const to = await prog.cosignerWalletOf(txRpc, loan);
       const { ix, cosignerToken } = await prog.claimEscrowIx({ claimer: signer.address, pool, loan, cosignerWallet: to });
@@ -111,13 +125,13 @@ export async function runOnce(opts: { dryRun?: boolean } = {}): Promise<Report> 
       const sig = await send(async (feePayer) =>
         exists ? [ix] : [getCreateAssociatedTokenIdempotentInstruction({ payer: createNoopSigner(feePayer), ata: cosignerToken, owner: to, mint: pool.mint }), ix],
       );
-      report.claims.push({ loanId: loan.id.toString(), amount: loan.refundPending.toString(), to, sig, ataCreated: !exists });
+      report.claims.push({ loanId: loan.id.toString(), amount: prog.owedToCosigner(loan).toString(), to, sig, ataCreated: !exists });
     } catch (e) {
       report.errors.push(`claim_escrow #${loan.id}: ${msg(e)}`);
     }
   }
 
-  // 4. expired requests: rent back to whoever paid it
+  // 5. expired requests: rent back to whoever paid it
   for (const r of (await prog.fetchRequests(txRpc, pool.address)).filter((r) => nowB > r.expiresAt)) {
     try {
       const sig = await send([prog.closeExpiredRequestIx({ closer: signer.address, pool: pool.address, request: r })]);
@@ -127,7 +141,7 @@ export async function runOnce(opts: { dryRun?: boolean } = {}): Promise<Report> 
     }
   }
 
-  // 5. wallet recoveries whose delay has passed and that nobody vetoed
+  // 6. wallet recoveries whose delay has passed and that nobody vetoed
   for (const p of (await prog.fetchPendingRecoveries(txRpc, pool.address)).filter((p) => nowB >= p.pendingWalletAt)) {
     try {
       const sig = await send([await prog.finalizeRebindIx({ payer: signer.address, pool, person: p })]);
@@ -137,11 +151,11 @@ export async function runOnce(opts: { dryRun?: boolean } = {}): Promise<Report> 
     }
   }
 
-  // 6. wind-down sweep
+  // 7. wind-down sweep: everything in the vault except what co-signers are owed from it
   if (!dryRun) pool = await reload();
   if (prog.windingDown(pool, nowB) && pool.activeLoans === 0n && pool.successor) {
     try {
-      const balance = BigInt((await rpc.getTokenAccountBalance(pool.vault, { commitment: 'confirmed' }).send()).value.amount);
+      const balance = BigInt((await rpc.getTokenAccountBalance(pool.vault, { commitment: 'confirmed' }).send()).value.amount) - pool.vaultClaims;
       if (balance > 0n) {
         const sig = await send([prog.sweepToSuccessorIx(pool)]);
         report.swept = { amount: balance.toString(), sig };
@@ -158,7 +172,8 @@ function print(r: Report) {
   const rows = [
     ['clock', `${new Date(r.now * 1000).toISOString()}${r.dryRun ? ' (dry run: nothing sent)' : ''}`],
     ['apply_params', r.applied ? (r.dryRun ? 'due' : 'applied') : 'nothing due'],
-    ['defaults', r.defaults.length ? r.defaults.map((d) => `#${d.loanId} (${d.borrowerBarred ? 'borrower barred' : ''}${d.cosignerBarred ? ', co-signer barred' : ''}) ${s(d.sig)}`).join('; ') : 'none due'],
+    ['settled', r.defaults.length ? r.defaults.map((d) => `#${d.loanId} (${d.borrowerBarred ? 'borrower barred' : ''}${d.cosignerBarred ? ', co-signer barred' : ''}) ${s(d.sig)}`).join('; ') : 'none due'],
+    ['collected', r.collected.length ? r.collected.map((c) => `#${c.loanId} ${c.amount} -> vault ${s(c.sig)}`).join('; ') : 'none'],
     ['claims', r.claims.length ? r.claims.map((c) => `#${c.loanId} ${c.amount} -> ${c.to.slice(0, 6)}..${c.ataCreated ? ' (token account created)' : ''} ${s(c.sig)}`).join('; ') : 'none'],
     ['expired', r.expired.length ? r.expired.map((e) => `${e.borrower.slice(0, 6)}.. ${s(e.sig)}`).join('; ') : 'none'],
     ['recoveries', r.recoveries.length ? r.recoveries.map((x) => `${x.from.slice(0, 6)}.. -> ${x.to.slice(0, 6)}.. ${s(x.sig)}`).join('; ') : 'none due'],

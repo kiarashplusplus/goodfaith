@@ -1,7 +1,7 @@
 /**
- * Wallet recovery: records the request (202 with `readyAt` while the service-side review runs), then returns the
- * issuer- and recovery-signed proposal, and after the on-chain delay the finalize transaction. DELETE withdraws
- * a request that has not been proposed yet.
+ * Wallet recovery: records the request for the operator (202 with `requestedAt`; the operator's recovery CLI
+ * proposes it on chain), and after the on-chain delay returns the finalize transaction. DELETE withdraws a request
+ * that has not been proposed yet.
  */
 import type { NextRequest } from "next/server";
 import { identity } from "@/lib/identity/env";

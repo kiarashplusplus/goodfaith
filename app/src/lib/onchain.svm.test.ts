@@ -39,7 +39,9 @@ import {
   findRequestPda,
   finalizeRebindIx,
   friendlyError,
-  markDefaultIx,
+  settleIx,
+  collectRecoveryIx,
+  restituteIx,
   pauseLendingIx,
   PERMANENT,
   proposeRebindIx,
@@ -135,6 +137,9 @@ beforeAll(async () => {
     defaultBanSeconds: PERMANENT,
     lateBanSeconds: 0n,
     cosignerBanSeconds: PERMANENT,
+    seasoningSeconds: 0n,
+    capStepIntervalSeconds: 0n,
+    maxOutstandingPrincipal: 0n,
   };
   donor = await actor(svm, { usdc: 5000n * USDC, mint: POOL_MINT, gateway: false });
   await plantAta(svm, donor.address, MINT_B, 5000n * USDC);
@@ -169,6 +174,9 @@ describe("pool", () => {
       pauseAuthority: pauser.address,
       paused: false,
       pendingClaims: 0n,
+      outstandingPrincipal: 0n,
+      recoveriesPending: 0n,
+      vaultClaims: 0n,
       recoveryDelaySeconds: 3n * SECONDS_PER_DAY,
       defaultBanSeconds: PERMANENT,
     });
@@ -356,6 +364,10 @@ describe("request and co-sign", () => {
       status: "Active",
       closedAt: 0n,
       refundPending: 0n,
+      shortfall: 0n,
+      defaultBanSeconds: PERMANENT,
+      lateBanSeconds: 0n,
+      cosignerBanSeconds: PERMANENT,
     });
     expect(loanA0.dueAt).toBe(T0 + 7n * SECONDS_PER_DAY);
     expect(tokenAmount(svm, await findAta(borrower.address, POOL_MINT))).toBe(100n * USDC);
@@ -439,8 +451,8 @@ describe("repay", () => {
     loanA0 = (await fetchLoanById(rpc, poolA.address, 0n))!;
     expect(loanA0.refundPending).toBe(0n);
     expect((await fetchCanonicalPool(rpc))!.pendingClaims).toBe(0n);
-    // The escrow account is gone, which Anchor checks before anything else: AccountNotInitialized (3012).
-    await expectCode(claim(stranger), 3012);
+    // Nothing is pending any more, so the builder leaves the closed escrow out and the program says so.
+    expect(await expectCode(claim(stranger), 6036)).toBe("Nothing to claim on this loan.");
     // Same for a repayment on the closed loan; the UI never offers Pay on one, this pins the behaviour.
     await expectCode(sendInstructions(rpc, third, [await repayIx({ payer: third.address, pool: poolA, loan: loanA0, amount: 1n })]), 3012);
     // An open loan has nothing to claim.
@@ -490,23 +502,47 @@ describe("cancel request", () => {
   });
 });
 
-describe("default", () => {
-  const markDefault = async (caller: KeyPairSigner, pool: Pool, loan: Loan) =>
-    sendInstructions(rpc, caller, [await markDefaultIx({ caller: caller.address, pool, loan })]);
+describe("settlement", () => {
+  const settle = async (caller: KeyPairSigner, pool: Pool, loan: Loan) =>
+    sendInstructions(rpc, caller, [await settleIx({ caller: caller.address, pool, loan })]);
+  const collect = async (caller: KeyPairSigner, pool: Pool, loan: Loan) =>
+    sendInstructions(rpc, caller, [await collectRecoveryIx({ collector: caller.address, pool, loan })]);
 
-  it("refuses before the grace period ends, then anyone can mark it", async () => {
-    expect(await expectCode(markDefault(third, poolA, loanA1), 6011)).toBe("The grace period hasn't ended yet.");
+  it("refuses before the grace period ends, then anyone settles; the recovery is collected separately", async () => {
+    expect(await expectCode(settle(third, poolA, loanA1), 6011)).toBe("The grace period hasn't ended yet.");
     const deadline = loanA1.dueAt + BigInt(loanA1.graceDays) * SECONDS_PER_DAY;
     setTime(svm, deadline + 1n);
+    // Repaying after the deadline is refused, whole or in part.
+    expect(
+      await expectCode(
+        sendInstructions(rpc, third, [await repayIx({ payer: third.address, pool: poolA, loan: loanA1, amount: 1n * USDC })]),
+        6039,
+      ),
+    ).toBe("The deadline has passed. The loan is settled first, then what is owed can be paid back.");
     const vault = tokenAmount(svm, poolA.vault);
-    await markDefault(third, poolA, loanA1);
+    await settle(third, poolA, loanA1);
     loanA1 = (await fetchLoanById(rpc, poolA.address, 1n))!;
-    expect(loanA1).toMatchObject({ status: "Defaulted", refundPending: 0n });
-    expect(tokenAmount(svm, poolA.vault)).toBe(vault + 25n * USDC); // escrow fully absorbed
-    expect(svm.getAccount((await findEscrowPda(loanA1.address))[0]).exists).toBe(false); // nothing left to claim, so it closed
-    const p = (await fetchCanonicalPool(rpc))!;
-    expect(p.totalRecovered).toBe(25n * USDC);
-    expect(p.totalLost).toBe(75n * USDC);
+    expect(loanA1).toMatchObject({
+      status: "Defaulted",
+      shortfall: 100n * USDC,
+      recovered: 25n * USDC,
+      recoveryPending: 25n * USDC,
+      refundPending: 0n,
+      restituted: 0n,
+      borrowerBarUntil: PERMANENT,
+      cosignerBarUntil: PERMANENT,
+    });
+    expect(tokenAmount(svm, poolA.vault)).toBe(vault); // settlement moves nothing
+    const [escrow] = await findEscrowPda(loanA1.address);
+    expect(tokenAmount(svm, escrow)).toBe(25n * USDC);
+    let p = (await fetchCanonicalPool(rpc))!;
+    expect(p).toMatchObject({
+      totalRecovered: 0n,
+      recoveriesPending: 25n * USDC,
+      totalLost: 75n * USDC,
+      activeLoans: 0n,
+      outstandingPrincipal: 0n,
+    });
     expect(await fetchMember(rpc, poolA.address, borrower2.address)).toMatchObject({ ineligible: true, ineligibleUntil: PERMANENT });
     // 75 was lost, so the co-signer is barred too (a fully covered default would leave them in good standing).
     expect(await fetchMember(rpc, poolA.address, cosigner.address)).toMatchObject({
@@ -514,18 +550,59 @@ describe("default", () => {
       ineligibleUntil: PERMANENT,
       activeGuarantees: 0,
     });
-    expect((await fetchCanonicalPool(rpc))!.activeLoans).toBe(0n);
-    await expectCode(markDefault(third, poolA, loanA1), 3012); // escrow already closed; see the repay test
+    expect(await expectCode(settle(third, poolA, loanA1), 6010)).toBe("This loan is no longer active.");
+    // Anyone moves the recovery into the vault; the escrow closes because nothing else waits in it.
+    await collect(stranger, poolA, loanA1);
+    expect(tokenAmount(svm, poolA.vault)).toBe(vault + 25n * USDC);
+    expect(svm.getAccount(escrow).exists).toBe(false);
+    p = (await fetchCanonicalPool(rpc))!;
+    expect(p).toMatchObject({ totalRecovered: 25n * USDC, recoveriesPending: 0n });
+    loanA1 = (await fetchLoanById(rpc, poolA.address, 1n))!;
+    expect(loanA1.recoveryPending).toBe(0n);
+    await expectCode(collect(stranger, poolA, loanA1), 3012); // the escrow account is gone
+  });
+
+  it("restitution pays the fund back first, then the co-signer, and relaxes the bars", async () => {
+    const restitute = async (payer: KeyPairSigner, amount: bigint) =>
+      sendInstructions(rpc, payer, [await restituteIx({ payer: payer.address, pool: poolA, loan: loanA1, amount })]);
+    expect(await expectCode(restitute(third, 101n * USDC), 6009)).toBe("That is more than what is still owed.");
+    const vault = tokenAmount(svm, poolA.vault);
+    // 75 is the fund's loss: the first 75 go there.
+    await restitute(third, 75n * USDC);
+    loanA1 = (await fetchLoanById(rpc, poolA.address, 1n))!;
+    expect(loanA1).toMatchObject({ status: "Defaulted", restituted: 75n * USDC, reimbursementPending: 0n });
+    let p = (await fetchCanonicalPool(rpc))!;
+    expect(p).toMatchObject({ totalLost: 0n, totalRestituted: 75n * USDC, vaultClaims: 0n });
+    expect(tokenAmount(svm, poolA.vault)).toBe(vault + 75n * USDC);
+    // The last 25 reimburse the co-signer, claimable from the vault; the loan is Restituted and the bars relax.
+    await restitute(third, 25n * USDC);
+    loanA1 = (await fetchLoanById(rpc, poolA.address, 1n))!;
+    expect(loanA1).toMatchObject({ status: "Restituted", restituted: 100n * USDC, reimbursementPending: 25n * USDC, cosignerBarUntil: 0n });
+    expect(loanTiming(loanA1, svm.getClock().unixTimestamp).state).toBe("restituted");
+    p = (await fetchCanonicalPool(rpc))!;
+    expect(p).toMatchObject({ totalRestituted: 100n * USDC, vaultClaims: 25n * USDC });
+    // Zero late ban in PARAMS: the borrower is eligible again; the co-signer's bar is lifted.
+    expect(await fetchMember(rpc, poolA.address, borrower2.address)).toMatchObject({ ineligible: false });
+    expect(await fetchMember(rpc, poolA.address, cosigner.address)).toMatchObject({ ineligible: false, ineligibleUntil: 0n });
+    const cosignerUsdc = tokenAmount(svm, await findAta(cosigner.address, POOL_MINT));
+    // The claim pays from the vault; no escrow account is involved any more.
+    await sendInstructions(rpc, stranger, async () => {
+      const { ix } = await claimEscrowIx({ claimer: stranger.address, pool: poolA, loan: loanA1, cosignerWallet: cosigner.address });
+      return [ix];
+    });
+    expect(tokenAmount(svm, await findAta(cosigner.address, POOL_MINT))).toBe(cosignerUsdc + 25n * USDC);
+    expect((await fetchCanonicalPool(rpc))!).toMatchObject({ vaultClaims: 0n, totalReimbursed: 25n * USDC });
+    expect(await expectCode(restitute(third, 1n * USDC), 6043)).toBe("This loan hasn't been settled yet.");
   });
 
   it("agrees with loanTiming at the exact boundary", async () => {
     const deadline = loanB0.dueAt + BigInt(loanB0.graceDays) * SECONDS_PER_DAY;
     setTime(svm, deadline);
     expect(loanTiming(loanB0, deadline).state).toBe("overdue");
-    await expectCode(markDefault(stranger, poolB, loanB0), 6011);
+    await expectCode(settle(stranger, poolB, loanB0), 6011);
     setTime(svm, deadline + 1n);
     expect(loanTiming(loanB0, deadline + 1n).state).toBe("defaultable");
-    await markDefault(stranger, poolB, loanB0);
+    await settle(stranger, poolB, loanB0);
     expect((await fetchLoanById(rpc, poolB.address, 0n))!.status).toBe("Defaulted");
     expect(loanTiming((await fetchLoanById(rpc, poolB.address, 0n))!, deadline + 1n).state).toBe("defaulted");
   });
@@ -628,7 +705,8 @@ describe("wallet replacement", () => {
     const person = (await fetchPerson(rpc, loan.cosignerPerson))!;
     expect(person.wallet).toBe(c3.address);
 
-    // Step one: the issuer, the recovery authority and the new wallet sign; the old wallet does not take part (lost keys).
+    // Step one: the issuer and the recovery authority sign; neither the old wallet (lost keys) nor the new one takes
+    // part, so the recovery key can live with an operator rather than in the web service.
     const propose = async () =>
       proposeRebindIx({
         newWallet: newWallet.address,
@@ -638,7 +716,7 @@ describe("wallet replacement", () => {
         person,
         gatewayToken: await gw(newWallet.address),
       });
-    await sendSigned(adm, [newWallet, iss, rec], [await propose()]);
+    await sendSigned(adm, [iss, rec], [await propose()]);
     let p = (await fetchPerson(rpc, person.address))!;
     expect(p).toMatchObject({ wallet: c3.address, pendingWallet: newWallet.address });
     expect(p.pendingWalletAt).toBe(svm.getClock().unixTimestamp + 3n * SECONDS_PER_DAY);
@@ -652,11 +730,9 @@ describe("wallet replacement", () => {
       "No wallet recovery is in progress.",
     );
     // Proposed again; nothing moves until the delay has passed, then anyone finalises.
-    await sendSigned(adm, [newWallet, iss, rec], [await propose()]);
+    await sendSigned(adm, [iss, rec], [await propose()]);
     p = (await fetchPerson(rpc, person.address))!;
-    expect(await expectCode(sendSigned(adm, [newWallet, iss, rec], [await propose()]), 6033)).toBe(
-      "A wallet recovery is already in progress.",
-    );
+    expect(await expectCode(sendSigned(adm, [iss, rec], [await propose()]), 6033)).toBe("A wallet recovery is already in progress.");
     expect(
       await expectCode(
         sendInstructions(rpc, stranger, [await finalizeRebindIx({ payer: stranger.address, pool: poolB, person: p })]),

@@ -13,6 +13,7 @@
     "kora-e2e": "tsx kora-e2e.ts",
     "smoke": "tsx smoke.ts",
     "member": "tsx member.ts",
+    "recovery": "tsx recovery.ts",
     "launch": "tsx launch.ts",
     "admin": "tsx admin.ts"
   },

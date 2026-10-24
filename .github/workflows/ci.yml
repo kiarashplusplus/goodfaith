@@ -216,8 +216,8 @@ jobs:
           npm run build
           # Identity issuer in mock mode: the admin key is the pool's issuer and the network's gatekeeper on the fork.
           export IDENTITY_PROVIDER=mock IDENTITY_DB_PATH=memory
-          # The admin key is also the pool's recovery authority on the fork (launch separates the keys).
-          export ISSUER_SECRET="$(cat ~/.config/solana/id.json)" GATEKEEPER_SECRET="$(cat ~/.config/solana/id.json)" RECOVERY_SECRET="$(cat ~/.config/solana/id.json)"
+          # The admin key is also the pool's recovery authority on the fork; the recovery CLI (not the app) signs with it.
+          export ISSUER_SECRET="$(cat ~/.config/solana/id.json)" GATEKEEPER_SECRET="$(cat ~/.config/solana/id.json)"
           export PERSON_HASH_SECRET="$(openssl rand -hex 32)" IDENTITY_ADMIN_KEY="$(openssl rand -hex 16)"
           echo "::add-mask::$PERSON_HASH_SECRET"; echo "::add-mask::$IDENTITY_ADMIN_KEY"
           echo "IDENTITY_ADMIN_KEY=$IDENTITY_ADMIN_KEY" >> "$GITHUB_ENV"

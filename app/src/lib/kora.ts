@@ -29,6 +29,7 @@ export const KORA_CODES = {
   AUTH: -32006,
   REFUSED: -32008,
   WALLET_CAP: -32009,
+  BUDGET: -32010,
 } as const;
 
 // Longer than the proxy's own limits so a proxy-side timeout arrives as a typed JSON-RPC error.

@@ -44,7 +44,10 @@ export async function GET(): Promise<Response> {
             windingDown: windingDown(pool, now),
             frozen: pool.authority === null,
             activeLoans: Number(pool.activeLoans),
+            outstandingPrincipal: pool.outstandingPrincipal.toString(),
             pendingClaims: pool.pendingClaims.toString(),
+            recoveriesPending: pool.recoveriesPending.toString(),
+            vaultClaims: pool.vaultClaims.toString(),
             scheduledChange: pool.pendingParams ? Number(pool.paramsEffectiveAt) : null,
           }
         : { ok: false, address: expected, error: "pool account not found" };

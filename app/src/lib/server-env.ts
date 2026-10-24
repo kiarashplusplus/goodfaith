@@ -7,7 +7,8 @@ export type ServerEnv = {
   identity: {
     configured: boolean;
     provider: "persona" | "mock" | "unknown" | "none";
-    recovery: boolean;
+    /** Where member notices go. */
+    notifier: "console" | "webhook";
     store: "memory" | "sqlite" | "postgres";
   };
   problems: string[];
@@ -60,6 +61,10 @@ export function readServerEnv(env: Record<string, string | undefined> = process.
   if (provider === "mock" && env.NEXT_PUBLIC_CLUSTER?.trim() === "mainnet-beta")
     problems.push("The mock identity provider must not run against mainnet.");
   if (identityConfigured && !has(env.IDENTITY_ADMIN_KEY)) problems.push("IDENTITY_ADMIN_KEY is not set: the cranker cannot revoke passes.");
+  if (has(env.RECOVERY_SECRET))
+    problems.push(
+      "RECOVERY_SECRET is set on the web service: the recovery key belongs to the operator's recovery CLI (scripts/recovery.ts), not the app.",
+    );
   const dbPath = env.IDENTITY_DB_PATH?.trim() || "./identity.sqlite";
   const store: ServerEnv["identity"]["store"] = has(env.IDENTITY_DB_URL) ? "postgres" : dbPath === "memory" ? "memory" : "sqlite";
   if (store === "memory" && env.NEXT_PUBLIC_CLUSTER?.trim() === "mainnet-beta")
@@ -67,7 +72,7 @@ export function readServerEnv(env: Record<string, string | undefined> = process.
 
   return {
     sponsor: { enabled: publicKora !== "", proxied, upstream, auth },
-    identity: { configured: identityConfigured, provider, recovery: has(env.RECOVERY_SECRET), store },
+    identity: { configured: identityConfigured, provider, notifier: has(env.NOTIFY_WEBHOOK_URL) ? "webhook" : "console", store },
     problems,
   };
 }

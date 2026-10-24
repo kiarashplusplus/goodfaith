@@ -12,18 +12,26 @@ export const ESCROW_CLAIMED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8A
 
 export function getEscrowClaimedEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(ESCROW_CLAIMED_EVENT_DISCRIMINATOR); }
 
-export type EscrowClaimedEvent = { pool: Address; loan: Address; loanId: bigint; toWallet: Address; amount: bigint;  };
+export type EscrowClaimedEvent = { pool: Address; loan: Address; loanId: bigint; toWallet: Address; amount: bigint; 
+/** Escrow refund paid from the escrow account. */
+fromEscrow: bigint; 
+/** Reimbursement paid from the vault. */
+fromVault: bigint;  };
 
-export type EscrowClaimedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; toWallet: Address | HasAddress; amount: number | bigint;  };
+export type EscrowClaimedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; toWallet: Address | HasAddress; amount: number | bigint; 
+/** Escrow refund paid from the escrow account. */
+fromEscrow: number | bigint; 
+/** Reimbursement paid from the vault. */
+fromVault: number | bigint;  };
 
 /** Gets the encoder for {@link EscrowClaimedEventArgs} event data. */
 export function getEscrowClaimedEventEncoder(): FixedSizeEncoder<EscrowClaimedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['toWallet', getAddressEncoder()], ['amount', getU64Encoder()]]), [getConstantEncoder(ESCROW_CLAIMED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['toWallet', getAddressEncoder()], ['amount', getU64Encoder()], ['fromEscrow', getU64Encoder()], ['fromVault', getU64Encoder()]]), [getConstantEncoder(ESCROW_CLAIMED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link EscrowClaimedEvent} event data. */
 export function getEscrowClaimedEventDecoder(): FixedSizeDecoder<EscrowClaimedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['toWallet', getAddressDecoder()], ['amount', getU64Decoder()]]), [getConstantDecoder(ESCROW_CLAIMED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['toWallet', getAddressDecoder()], ['amount', getU64Decoder()], ['fromEscrow', getU64Decoder()], ['fromVault', getU64Decoder()]]), [getConstantDecoder(ESCROW_CLAIMED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link EscrowClaimedEvent} event data. */

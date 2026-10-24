@@ -18,5 +18,8 @@
   "disbursementCapPerWindow": 5000,
   "defaultBanDays": 730,
   "lateBanDays": 90,
-  "cosignerBanDays": 365
+  "cosignerBanDays": 365,
+  "seasoningDays": 30,
+  "capStepIntervalDays": 30,
+  "maxOutstandingPrincipal": 25000
 }

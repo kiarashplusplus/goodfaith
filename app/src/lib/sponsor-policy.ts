@@ -10,7 +10,8 @@
  * issuer and the recovery authority co-sign registrations and recovery proposals) are allowed only when a Good Faith
  * instruction is present. Anything else (a system transfer, a memo, an account for a stranger, a lookup table) is
  * refused before it reaches Kora.
- * Per-wallet caps (sponsored transactions per day, token accounts created in total) bound what one person can cost.
+ * Per-wallet caps (sponsored transactions per day, token accounts created in total) bound what one person can cost;
+ * a global daily budget (transactions, and wallets sponsored for the first time) bounds what a crowd can.
  * No Next.js imports, so everything here is unit-testable.
  */
 import {
@@ -126,6 +127,41 @@ export function limitsFromEnv(env: Record<string, string | undefined>): SponsorL
   return {
     dailyTxs: Number(env.SPONSOR_DAILY_TX_PER_WALLET) || 40,
     totalAtas: Number(env.SPONSOR_ATA_PER_WALLET) || 12,
+  };
+}
+
+/** The fund-wide daily budget: sponsored transactions, and wallets sponsored for the first time. */
+export type BudgetLimits = { dailyTxs: number; dailyNewWallets: number };
+
+/**
+ * The global counters live in two usage rows (`GLOBAL_TX_ROW`, `GLOBAL_WALLETS_ROW`); `dayTxs` carries today's count
+ * in both. A new wallet is one the store has no usage row for yet.
+ */
+export function checkBudget(
+  txs: Usage | null,
+  wallets: Usage | null,
+  newWallet: boolean,
+  limits: BudgetLimits,
+  nowMs: number,
+): { ok: true; nextTxs: Usage; nextWallets: Usage } | { ok: false; reason: string } {
+  const day = utcDay(nowMs);
+  const t: Usage = txs && txs.day === day ? txs : { day, dayTxs: 0, atasTotal: 0 };
+  const w: Usage = wallets && wallets.day === day ? wallets : { day, dayTxs: 0, atasTotal: 0 };
+  if (t.dayTxs >= limits.dailyTxs) return { ok: false, reason: "The fee sponsor has used today's budget." };
+  if (newWallet && w.dayTxs >= limits.dailyNewWallets)
+    return { ok: false, reason: "The fee sponsor has welcomed today's share of new wallets." };
+  return {
+    ok: true,
+    nextTxs: { ...t, dayTxs: t.dayTxs + 1 },
+    nextWallets: { ...w, dayTxs: w.dayTxs + (newWallet ? 1 : 0) },
+  };
+}
+
+/** SPONSOR_DAILY_BUDGET_TX (default 2000) and SPONSOR_DAILY_NEW_WALLETS (default 200). */
+export function budgetFromEnv(env: Record<string, string | undefined>): BudgetLimits {
+  return {
+    dailyTxs: Number(env.SPONSOR_DAILY_BUDGET_TX) || 2000,
+    dailyNewWallets: Number(env.SPONSOR_DAILY_NEW_WALLETS) || 200,
   };
 }
 

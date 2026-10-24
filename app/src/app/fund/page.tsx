@@ -31,7 +31,6 @@ export default function FundPage() {
   const recent = useRecentLoans(pool.data);
   const now = useNow();
   const p = pool.data;
-  const outstanding = p ? p.totalLent - p.totalRepaid - p.totalRecovered - p.totalLost : 0n;
 
   return (
     <>
@@ -43,13 +42,19 @@ export default function FundPage() {
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
             <Stat label="Available to lend" value={vault.data !== undefined ? formatUsdc(vault.data) : "..."} />
-            <Stat label="Out on loan" value={formatUsdc(outstanding < 0n ? 0n : outstanding)} />
+            <Stat
+              label="Out on loan"
+              value={formatUsdc(p.outstandingPrincipal)}
+              sub={p.maxOutstandingPrincipal > 0n ? `Limit ${formatUsdc(p.maxOutstandingPrincipal)}` : undefined}
+            />
             <Stat label="Loans made" value={p.loanCount.toString()} />
             <Stat label="Donated" value={formatUsdc(p.totalDonated)} sub="Gifts, never withdrawn" />
             <Stat label="Lent in total" value={formatUsdc(p.totalLent)} />
             <Stat label="Paid back" value={formatUsdc(p.totalRepaid)} />
             <Stat label="Recovered from escrow" value={formatUsdc(p.totalRecovered)} />
-            <Stat label="Not repaid" value={formatUsdc(p.totalLost)} />
+            <Stat label="Not repaid" value={formatUsdc(p.totalLost)} sub="Lost on settled loans, not yet paid back" />
+            <Stat label="Paid back after settlement" value={formatUsdc(p.totalRestituted)} />
+            <Stat label="Owed to co-signers" value={formatUsdc(p.pendingClaims + p.vaultClaims)} sub="Waiting to be collected" />
           </div>
           <Card title="Rules">
             <ul className="list-disc space-y-1 pl-5 text-sm text-stone-700">
@@ -57,6 +62,17 @@ export default function FundPage() {
                 Up to {formatUsdc(p.maxLoan)} per loan, up to {p.maxTermDays} days, plus {p.graceDays} days of grace.
               </li>
               <li>Borrowers pay back exactly what they borrow. No interest. No fees.</li>
+              <li>
+                Repayment is open until {p.graceDays} days after the due date. After that the loan is settled: the escrow covers what is
+                owed, the borrower is barred for {days(p.defaultBanSeconds)}, and paying everything back later shortens that to{" "}
+                {p.lateBanSeconds > 0n ? days(p.lateBanSeconds) : "nothing"}.
+              </li>
+              {(p.seasoningSeconds > 0n || p.capStepIntervalSeconds > 0n) && (
+                <li>
+                  A repaid loan raises your limit by {formatUsdc(p.loanCapStep)} only if it ran at least {days(p.seasoningSeconds)}, and at
+                  most once every {days(p.capStepIntervalSeconds)}.
+                </li>
+              )}
               <li>A co-signer escrows {(p.cosignerEscrowBps / 100).toString()}% of the loan and gets it back when it&apos;s repaid.</li>
               <li>
                 A member can back up to {p.maxGuaranteesPerMember} {p.maxGuaranteesPerMember === 1 ? "loan" : "loans"} at a time as a

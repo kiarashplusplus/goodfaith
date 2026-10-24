@@ -6,7 +6,7 @@ import { LoanList } from "@/components/loan-list";
 import type { Address } from "@solana/kit";
 import { Button, Card, Field, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
 import { useApp, useBalances, useLoans, useNow, usePool } from "@/lib/hooks";
-import { fetchLoanById, repayIx, type Loan, type Pool } from "@/lib/program";
+import { fetchLoanById, lossOutstanding, owedAfterSettlement, repayIx, restituteIx, settleIx, type Loan, type Pool } from "@/lib/program";
 import { loanTiming } from "@/lib/loan-status";
 import { sendInstructions } from "@/lib/tx";
 import { formatAmount, formatUsdc, parseAmount, shortAddress } from "@/lib/format";
@@ -19,7 +19,7 @@ export default function RepayPage() {
     <>
       <PageTitle
         title="Repay"
-        sub="You pay back exactly what you borrowed. No interest. No fees. Anyone can chip in toward a loan, including friends and family."
+        sub="You pay back exactly what you borrowed. No interest. No fees. Anyone can chip in toward a loan, including friends and family. After the deadline the loan is settled first; paying back what is owed then restores your standing."
       />
       <RequireWallet>{(w) => <Repay wallet={w} />}</RequireWallet>
     </>
@@ -73,15 +73,22 @@ function Repay({ wallet }: { wallet: Address }) {
   );
 }
 
+const bar = (seconds: bigint) => (seconds === 9223372036854775807n ? "for good" : `for ${Number(seconds / 86_400n)} days`);
+
 function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; loan: Loan; onPaid: () => void }) {
   const { rpc, signer } = useApp();
   const balances = useBalances(wallet);
   const now = useNow();
   const [amt, setAmt] = useState("");
   const { run, busy, error, result, reset } = useRun();
-  const owed = loan.principal - loan.repaid;
-  const amount = parseAmount(amt, TOKEN_DECIMALS);
   const timing = loanTiming(loan, now);
+  // Three ways to pay: a repayment while the loan is open and on time; "settle and pay back" once the deadline has
+  // passed (the same settlement the cranker would do, plus the restitution, in one transaction); a restitution on a
+  // loan somebody already settled.
+  const mode: "repay" | "settle" | "restitute" | "closed" =
+    loan.status === "Active" ? (timing.state === "defaultable" ? "settle" : "repay") : loan.status === "Defaulted" ? "restitute" : "closed";
+  const owed = mode === "restitute" ? owedAfterSettlement(loan) : loan.principal - loan.repaid;
+  const amount = parseAmount(amt, TOKEN_DECIMALS);
   const enough = !amount || !balances.data || balances.data.usdc >= amount;
   const amountError =
     amt && (!amount || amount <= 0n)
@@ -91,7 +98,8 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
         : !enough
           ? "Your wallet doesn't have enough for that."
           : null;
-  const ok = loan.status === "Active" && !!amount && amount > 0n && amount <= owed && enough && !!signer;
+  const ok = mode !== "closed" && !!amount && amount > 0n && amount <= owed && enough && !!signer;
+  const toFund = mode === "restitute" ? lossOutstanding(loan) : owed > loan.escrowed ? owed - loan.escrowed : 0n;
 
   return (
     <div className="space-y-3">
@@ -105,24 +113,31 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
         {new Date(Number(loan.dueAt) * 1000).toLocaleDateString()} ({loan.graceDays} days of grace after that)
         {timing.label && ` · ${timing.label}`}
       </p>
-      {loan.status !== "Active" ? (
+      {mode === "closed" ? (
         <Notice tone="info">
-          This loan is{" "}
-          {loan.status === "Defaulted"
-            ? "defaulted"
-            : loan.status === "RepaidLate"
-              ? "repaid in full, after the grace period"
-              : "repaid in full"}
-          . Nothing more can be paid on it.
+          This loan is {loan.status === "Restituted" ? "settled and paid back in full" : "repaid in full"}. Nothing more can be paid on it.
         </Notice>
       ) : (
         <>
           {timing.state === "overdue" && (
             <Notice tone="warn">{timing.label} Repay before then to protect the co-signer&apos;s escrow.</Notice>
           )}
-          {timing.state === "defaultable" && (
+          {mode === "settle" && (
             <Notice tone="error">
-              The grace period has passed. Repaying in full right now still closes the loan, unless someone marks it as defaulted first.
+              The grace period has passed, so a repayment is no longer accepted. Paying now settles the loan and pays back what is owed in
+              one step: the escrow covers {formatUsdc(owed < loan.escrowed ? owed : loan.escrowed)} and is reimbursed to the co-signer from
+              your payment{toFund > 0n ? `, after the fund's ${formatUsdc(toFund)} shortfall` : ""}. The outcome is the same whoever settles
+              first. You are barred {bar(loan.defaultBanSeconds)} by the settlement; paying everything back{" "}
+              {loan.lateBanSeconds > 0n ? `shortens that to ${Number(loan.lateBanSeconds / 86_400n)} days from today` : "lifts it"}.
+            </Notice>
+          )}
+          {mode === "restitute" && (
+            <Notice tone="warn">
+              This loan was settled on {new Date(Number(loan.closedAt) * 1000).toLocaleDateString()}. {formatUsdc(owed)} is still owed:{" "}
+              {toFund > 0n ? `${formatUsdc(toFund)} to the fund first, then ` : ""}
+              {formatUsdc(owed - toFund)} back to the co-signer whose escrow was used. Once everything is paid back the borrower&apos;s bar{" "}
+              {loan.lateBanSeconds > 0n ? `shortens to ${Number(loan.lateBanSeconds / 86_400n)} days from the settlement` : "is lifted"} and
+              the co-signer&apos;s is lifted.
             </Notice>
           )}
           <div className="flex items-end gap-2">
@@ -153,7 +168,13 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
             onClick={() =>
               run(async () => {
                 // Repayment touches nobody else's accounts; the co-signer's deposit is released separately.
-                const sig = await sendInstructions(rpc, signer!, [await repayIx({ payer: wallet, pool, loan, amount: amount! })]);
+                const ixs =
+                  mode === "repay"
+                    ? [await repayIx({ payer: wallet, pool, loan, amount: amount! })]
+                    : mode === "settle"
+                      ? [await settleIx({ caller: wallet, pool, loan }), await restituteIx({ payer: wallet, pool, loan, amount: amount! })]
+                      : [await restituteIx({ payer: wallet, pool, loan, amount: amount! })];
+                const sig = await sendInstructions(rpc, signer!, ixs);
                 setAmt("");
                 balances.mutate();
                 onPaid();
@@ -161,7 +182,7 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
               })
             }
           >
-            {busy ? "Paying..." : "Pay"}
+            {busy ? "Paying..." : mode === "settle" ? "Settle and pay back" : mode === "restitute" ? "Pay back" : "Pay"}
           </Button>
           <TxStatus error={error} sig={result} label={amount && amount === owed ? "Paid in full." : "Payment made."} />
         </>

@@ -7,12 +7,15 @@
 //   npm run admin -- propose-authority <pubkey> | cancel-proposal | accept-authority   (accept signs as the new key)
 //   npm run admin -- suspend-issuer | pause | resume
 //   npm run admin -- announce-wind-down <successorTokenAccount> | cancel-wind-down | sweep
+//   npm run admin -- lift-bar <personAccount> <reason words...>   (public: the event carries the hash of the reason)
 //   npm run admin -- freeze --yes
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { address, createKeyPairSignerFromBytes, type Address } from '@solana/kit';
 import { fetchPool, gf, rpc, RPC_URL, send } from './lib.ts';
+
 
 process.env.NEXT_PUBLIC_RPC_URL = RPC_URL;
 const cfg = await import('../app/src/lib/config.ts');
@@ -22,7 +25,7 @@ const FIELDS: Record<keyof Params, 'address' | 'u64' | 'i64' | 'u16' | 'u8'> = {
   gatekeeperNetwork: 'address', maxLoan: 'u64', maxTermDays: 'u16', graceDays: 'u16', maxGuaranteesPerMember: 'u8', cosignerEscrowBps: 'u16',
   issuer: 'address', timelockSeconds: 'i64', recoveryAuthority: 'address', pauseAuthority: 'address', recoveryDelaySeconds: 'i64', requestTtlSeconds: 'i64',
   firstLoanCap: 'u64', loanCapStep: 'u64', cooldownSeconds: 'i64', maxExposurePerPerson: 'u64', disbursementWindowSeconds: 'i64', disbursementCapPerWindow: 'u64',
-  defaultBanSeconds: 'i64', lateBanSeconds: 'i64', cosignerBanSeconds: 'i64',
+  defaultBanSeconds: 'i64', lateBanSeconds: 'i64', cosignerBanSeconds: 'i64', seasoningSeconds: 'i64', capStepIntervalSeconds: 'i64', maxOutstandingPrincipal: 'u64',
 };
 const PERMANENT = 9223372036854775807n;
 const paramsOf = (p: Awaited<ReturnType<typeof fetchPool>>): Params =>
@@ -49,9 +52,10 @@ export async function run(argv: string[], out: (line: string) => void = console.
       out(`issuer        ${p.issuer}${p.issuer === '11111111111111111111111111111111' ? ' (SUSPENDED)' : ''}`);
       out(`recovery      ${p.recoveryAuthority}    pause ${p.pauseAuthority}`);
       out(`network       ${p.gatekeeperNetwork}`);
-      out(`lending       ${p.paused ? 'PAUSED' : 'open'}; active loans ${p.activeLoans}; pending claims ${fmt(p.pendingClaims)}; window ${fmt(p.windowDisbursed)} of ${p.disbursementCapPerWindow === 0n ? 'no cap' : fmt(p.disbursementCapPerWindow)} since ${when(p.windowStart)}`);
-      out(`totals        donated ${fmt(p.totalDonated)}, lent ${fmt(p.totalLent)}, repaid ${fmt(p.totalRepaid)}, recovered ${fmt(p.totalRecovered)}, lost ${fmt(p.totalLost)}, swept ${fmt(p.totalSwept)}, loans ${p.loanCount}`);
-      out(`settings      max loan ${fmt(p.maxLoan)}, first ${fmt(p.firstLoanCap)} +${fmt(p.loanCapStep)}/loan, cooldown ${dur(p.cooldownSeconds)}, term ${p.maxTermDays}d, grace ${p.graceDays}d, escrow ${p.cosignerEscrowBps} bps, ${p.maxGuaranteesPerMember} guarantees, exposure ${fmt(p.maxExposurePerPerson)}`);
+      out(`lending       ${p.paused ? 'PAUSED' : 'open'}; active loans ${p.activeLoans}; outstanding ${fmt(p.outstandingPrincipal)} of ${p.maxOutstandingPrincipal === 0n ? 'no ceiling' : fmt(p.maxOutstandingPrincipal)}; window ${fmt(p.windowDisbursed)} of ${p.disbursementCapPerWindow === 0n ? 'no cap' : fmt(p.disbursementCapPerWindow)} since ${when(p.windowStart)}`);
+      out(`owed          to co-signers: ${fmt(p.pendingClaims)} in escrows + ${fmt(p.vaultClaims)} in the vault; to the fund: ${fmt(p.recoveriesPending)} in escrows`);
+      out(`totals        donated ${fmt(p.totalDonated)}, lent ${fmt(p.totalLent)}, repaid ${fmt(p.totalRepaid)}, recovered ${fmt(p.totalRecovered)}, lost ${fmt(p.totalLost)}, restituted ${fmt(p.totalRestituted)}, reimbursed ${fmt(p.totalReimbursed)}, swept ${fmt(p.totalSwept)}, loans ${p.loanCount}`);
+      out(`settings      max loan ${fmt(p.maxLoan)}, first ${fmt(p.firstLoanCap)} +${fmt(p.loanCapStep)}/loan (held ${dur(p.seasoningSeconds)}, one step per ${dur(p.capStepIntervalSeconds)}), cooldown ${dur(p.cooldownSeconds)}, term ${p.maxTermDays}d, grace ${p.graceDays}d, escrow ${p.cosignerEscrowBps} bps, ${p.maxGuaranteesPerMember} guarantees, exposure ${fmt(p.maxExposurePerPerson)}`);
       out(`timing        notice ${dur(p.timelockSeconds)}, recovery delay ${dur(p.recoveryDelaySeconds)}, request ttl ${dur(p.requestTtlSeconds)}, bars default ${dur(p.defaultBanSeconds)} / late ${dur(p.lateBanSeconds)} / co-signer ${dur(p.cosignerBanSeconds)}`);
       const pending = opt(p.pendingParams);
       if (pending) {
@@ -115,6 +119,23 @@ export async function run(argv: string[], out: (line: string) => void = console.
       const successor = opt(p.successor);
       if (!successor) throw new Error('no successor announced');
       out(`swept to ${successor}: ${await send([await gf.getSweepToSuccessorInstructionAsync({ mint, vault, successorVault: successor })], signer, 'sweep_to_successor')}`);
+      return;
+    }
+    case 'lift-bar': {
+      const person = address(positional[0] ?? '');
+      const reason = positional.slice(1).join(' ').trim();
+      if (!reason) throw new Error('usage: lift-bar <personAccount> <reason words...>  (publish the reason; its hash goes on chain)');
+      const hash = createHash('sha256').update(reason).digest();
+      const sig = await send([gf.getLiftBarInstruction({ authority: signer, pool, person, reason: hash })], signer, 'lift_bar');
+      out(`bar lifted for ${person}: ${sig}`);
+      out(`reason hash   ${hash.toString('hex')}  (sha256 of: ${JSON.stringify(reason)}; publish both)`);
+      // The identity service mirrors the chain's bar; tell it the bar is gone so the person's record follows.
+      const url = process.env.IDENTITY_URL ?? process.env.APP_URL, key = process.env.IDENTITY_ADMIN_KEY;
+      if (url && key) {
+        const personId = Buffer.from((await gf.fetchPerson(rpc as any, person, { commitment: 'confirmed' })).data.personId).toString('hex');
+        const res = await fetch(`${url}/api/identity/ban`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-identity-admin-key': key }, body: JSON.stringify({ personId, until: '0' }) });
+        out(`identity      ${res.ok ? 'bar lifted in the identity service' : `identity service answered HTTP ${res.status}`}`);
+      } else out('identity      IDENTITY_URL/APP_URL and IDENTITY_ADMIN_KEY not set; lift the bar in the identity service too (POST /api/identity/ban with until=0)');
       return;
     }
     case 'freeze':

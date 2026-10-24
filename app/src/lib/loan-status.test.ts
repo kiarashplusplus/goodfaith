@@ -30,7 +30,18 @@ describe("loanTiming", () => {
     expect(loanTiming(active, DUE + 6n * SECONDS_PER_DAY + 1n)).toMatchObject({ label: "Overdue by 6 days. 1 day of grace left." });
   });
 
-  it("becomes defaultable strictly after due + grace, like mark_default", () => {
+  it("names the settled states", () => {
+    const settled = { status: "Defaulted" as const, dueAt: DUE, graceDays: 7, shortfall: 100n, restituted: 0n };
+    expect(loanTiming(settled, DUE + 30n * SECONDS_PER_DAY)).toMatchObject({ state: "defaulted", label: "Settled as defaulted." });
+    expect(loanTiming({ ...settled, restituted: 40n }, DUE)).toMatchObject({ label: "Settled as defaulted. Partly paid back." });
+    expect(loanTiming({ ...settled, status: "Restituted" as const, restituted: 100n }, DUE)).toMatchObject({
+      state: "restituted",
+      label: "Settled after the deadline, then paid back in full.",
+    });
+    expect(loanTiming({ ...active, status: "Repaid" as const }, DUE)).toMatchObject({ state: "repaid" });
+  });
+
+  it("becomes defaultable strictly after due + grace, like settle", () => {
     const deadline = DUE + 7n * SECONDS_PER_DAY;
     expect(loanTiming(active, deadline)).toMatchObject({ state: "overdue", label: "Overdue by 7 days. The grace period ends today." });
     expect(loanTiming(active, deadline + 1n)).toMatchObject({ state: "defaultable", graceDaysLeft: 0 });

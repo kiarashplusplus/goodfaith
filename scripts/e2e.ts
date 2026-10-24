@@ -83,6 +83,7 @@ const params = (timelockSeconds: bigint) => ({
   recoveryDelaySeconds: 3600n, requestTtlSeconds: 7n * DAY, firstLoanCap: 1000n * USDC, loanCapStep: 100n * USDC, cooldownSeconds: 0n,
   maxExposurePerPerson: 10_000n * USDC, disbursementWindowSeconds: DAY, disbursementCapPerWindow: 0n,
   defaultBanSeconds: PERMANENT, lateBanSeconds: 0n, cosignerBanSeconds: PERMANENT,
+  seasoningSeconds: 0n, capStepIntervalSeconds: 0n, maxOutstandingPrincipal: 0n,
 });
 
 const [pool] = await gf.findPoolPda({ mint: MINT });
@@ -163,10 +164,26 @@ async function openLoan(amount: bigint, termDays: number, b: Party = B, c: Party
   assert.equal(pa.activeLoans, pBefore.activeLoans + 1n);
   return { loan, escrow: escrowAddr, escrowAmt: escrow, id, request };
 }
+/** Claims what a closed loan owes its co-signer; the escrow account is passed only while a refund waits in it. */
 const claimIx = async (claimer: any, loan: Address) => {
   const l = await loanOf(loan);
   const cosignerWallet = (await getPerson(l.cosignerPerson)).wallet;
-  return gf.getClaimEscrowInstructionAsync({ claimer, mint: MINT, loan, cosignerPerson: l.cosignerPerson, cosignerToken: await ata(cosignerWallet), rentPayer: l.rentPayer });
+  const [escrowAddr] = await gf.findEscrowPda({ loan });
+  return gf.getClaimEscrowInstructionAsync({ claimer, mint: MINT, vault, loan, escrow: l.refundPending > 0n ? escrowAddr : undefined, cosignerPerson: l.cosignerPerson, cosignerToken: await ata(cosignerWallet), rentPayer: l.rentPayer });
+};
+const settleIx = async (caller: any, loan: Address) => {
+  const l = await loanOf(loan);
+  const [escrow] = await gf.findEscrowPda({ loan });
+  return gf.getSettleInstructionAsync({ caller, mint: MINT, loan, escrow, borrowerPerson: l.borrowerPerson, cosignerPerson: l.cosignerPerson, rentPayer: l.rentPayer });
+};
+const collectIx = async (collector: any, loan: Address) => {
+  const l = await loanOf(loan);
+  const [escrow] = await gf.findEscrowPda({ loan });
+  return gf.getCollectRecoveryInstructionAsync({ collector, mint: MINT, vault, loan, escrow, rentPayer: l.rentPayer });
+};
+const restituteIx = async (payer: any, payerToken: Address, loan: Address, amount: bigint) => {
+  const l = await loanOf(loan);
+  return gf.getRestituteInstructionAsync({ payer, mint: MINT, vault, loan, borrowerPerson: l.borrowerPerson, cosignerPerson: l.cosignerPerson, payerToken, amount });
 };
 const L1 = await openLoan(100n * USDC, 7);
 row('request+cosign loan#1 100', `escrow ${fmt(L1.escrowAmt)}`, `borrower ${fmt(await tok(ataOf.borrower))}`, `cosigner ${fmt(await tok(ataOf.cosigner))}`, `vault ${fmt(await tok(vault))}`);
@@ -213,7 +230,7 @@ assert.equal((await rpc.getAccountInfo(L1.escrow, { encoding: 'base64' }).send()
 assert.equal((await loanOf(L1.loan)).refundPending, 0n);
 assert.equal((await fetchPool(pool)).pendingClaims, p0.pendingClaims);
 assert.ok((await sol(l.rentPayer)) > rentBefore - 1n);
-const twice = await expectFail(send([await gf.getClaimEscrowInstructionAsync({ claimer: third, mint: MINT, loan: L1.loan, cosignerPerson: pC, cosignerToken: ataOf.cosigner, rentPayer: l.rentPayer })], third, 'claim twice'), 'second claim');
+const twice = await expectFail(send([await claimIx(third, L1.loan)], third, 'claim twice'), 'second claim');
 row('claim_escrow (third party)', `escrow ${fmt(L1.escrowAmt)} to the co-signer`, 'escrow acct closed, rent back', `second claim: ${errName(twice)}`);
 
 // ---------- cancel_request ----------
@@ -239,11 +256,12 @@ row('claim_escrow (third party)', `escrow ${fmt(L1.escrowAmt)} to the co-signer`
 
 // ---------- wallet recovery: the co-signer loses their keys and moves to cosigner2 (propose, veto, propose, finalize) ----------
 {
+  // The new wallet does not sign: the issuer and the recovery authority do (the operator's recovery CLI in production).
   const propose = (issuer: typeof admin | typeof third, recoveryAuthority: typeof admin | typeof third = admin) =>
-    gf.getProposeRebindInstruction({ newWallet: cosigner2, issuer, recoveryAuthority, pool, person: pC, gatewayToken: gwC2 });
-  const impostor = await expectFail(send([propose(third)], cosigner2, 'propose without issuer'), 'propose without the issuer');
-  const noRecovery = await expectFail(send([propose(admin, third)], cosigner2, 'propose without recovery'), 'propose without the recovery authority');
-  await send([propose(admin)], cosigner2, 'propose_rebind');
+    gf.getProposeRebindInstruction({ newWallet: cosigner2.address, issuer, recoveryAuthority, pool, person: pC, gatewayToken: gwC2 });
+  const impostor = await expectFail(send([propose(third)], third, 'propose without issuer'), 'propose without the issuer');
+  const noRecovery = await expectFail(send([propose(admin, third)], third, 'propose without recovery'), 'propose without the recovery authority');
+  await send([propose(admin)], admin, 'propose_rebind');
   let pc = await getPerson(pC);
   assert.equal(pc.pendingWallet.__option === 'Some' ? pc.pendingWallet.value : null, cosigner2.address, 'proposal recorded');
   assert.equal(pc.wallet, cosigner.address, 'nothing moves yet');
@@ -255,7 +273,7 @@ row('claim_escrow (third party)', `escrow ${fmt(L1.escrowAmt)} to the co-signer`
   assert.equal((await getPerson(pC)).pendingWallet.__option, 'None', 'proposal dropped');
   row('propose_rebind + veto', `impostor issuer ${errName(impostor)}`, `no recovery authority ${errName(noRecovery)}`, `finalize early ${errName(early)}`, `stranger veto ${errName(strangerVeto)}`, 'old wallet vetoed');
   // proposed again; after the delay anyone finalises
-  await send([propose(admin)], cosigner2, 'propose_rebind again');
+  await send([propose(admin)], admin, 'propose_rebind again');
   pc = await getPerson(pC);
   await cheat('surfnet_timeTravel', [{ absoluteTimestamp: (Number(pc.pendingWalletAt) + 60) * 1000 }]);
   await new Promise(r => setTimeout(r, 1500));
@@ -280,6 +298,7 @@ const paramsOf = (x: Awaited<ReturnType<typeof fetchPool>>) => ({
   issuer: x.issuer, timelockSeconds: x.timelockSeconds, recoveryAuthority: x.recoveryAuthority, pauseAuthority: x.pauseAuthority, recoveryDelaySeconds: x.recoveryDelaySeconds, requestTtlSeconds: x.requestTtlSeconds,
   firstLoanCap: x.firstLoanCap, loanCapStep: x.loanCapStep, cooldownSeconds: x.cooldownSeconds, maxExposurePerPerson: x.maxExposurePerPerson, disbursementWindowSeconds: x.disbursementWindowSeconds,
   disbursementCapPerWindow: x.disbursementCapPerWindow, defaultBanSeconds: x.defaultBanSeconds, lateBanSeconds: x.lateBanSeconds, cosignerBanSeconds: x.cosignerBanSeconds,
+  seasoningSeconds: x.seasoningSeconds, capStepIntervalSeconds: x.capStepIntervalSeconds, maxOutstandingPrincipal: x.maxOutstandingPrincipal,
 });
 let newGrace = p.graceDays;
 if (frozenAtStart) {
@@ -298,8 +317,8 @@ if (frozenAtStart) {
   const tooShort = await expectFail(send([gf.getScheduleParamsInstruction({ authority: admin, pool, params: { ...paramsOf(pBefore), timelockSeconds: 0n } })], admin, 'schedule timelock 0'), 'notice period below the minimum');
   row('schedule_params grace +7 (admin CLI)', `stranger ${errName(strangerErr)}`, `pending, effective in ${ps.paramsEffectiveAt - BigInt(await clockTs())}s`, `apply now: ${errName(early)}`, `timelock -> 0: ${errName(tooShort)}`);
 }
-const earlyDefault = await expectFail(send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, borrowerPerson: pB, cosignerPerson: pC, rentPayer: l.rentPayer })], third, 'early default'), 'early default');
-row('mark_default too early', 'rejected', errName(earlyDefault));
+const earlyDefault = await expectFail(send([await settleIx(third, L2.loan)], third, 'early settle'), 'early settle');
+row('settle too early', 'rejected', errName(earlyDefault));
 // partial repay 30 so shortfall is 70 > escrow 25 -> recovered 25, lost 45, co-signer barred
 await send([await repayIx(third, ataOf.third, L2.loan, L2.escrow, l.rentPayer, 30n * USDC)], third, 'repay partial 2');
 const now0 = await clockTs();
@@ -318,29 +337,83 @@ if (!frozenAtStart) {
   assert.equal((await loanOf(L2.loan)).graceDays, l.graceDays, 'open loan keeps the grace it was opened with');
   row('apply_params (by a third party, after the timelock)', `pool grace ${newGrace}d`, `loan#2 keeps ${l.graceDays}d`);
 }
+// past the deadline a repayment is refused, whole or in part: the loan is settled and paid back instead
+const lateRepay = await expectFail(send([await repayIx(third, ataOf.third, L2.loan, L2.escrow, l.rentPayer, 70n * USDC)], third, 'late repay'), 'late repay');
+row('repay after the deadline', 'rejected', errName(lateRepay));
 const pre = { vault: await tok(vault), c: await tok(ataOf.cosigner2), p: await fetchPool(pool) };
-await send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, borrowerPerson: pB, cosignerPerson: pC, rentPayer: l.rentPayer })], third, 'mark_default');
-const shortfall = 70n * USDC, recovered = L2.escrowAmt < shortfall ? L2.escrowAmt : shortfall;
-assert.equal(await tok(vault), pre.vault + recovered);
+await send([await settleIx(third, L2.loan)], third, 'settle');
+const shortfall = 70n * USDC, recovered = L2.escrowAmt < shortfall ? L2.escrowAmt : shortfall, lost = shortfall - recovered;
+assert.equal(await tok(vault), pre.vault, 'settlement moves nothing');
 assert.equal(await tok(ataOf.cosigner2), pre.c, 'nothing pushed to the co-signer');
-assert.equal((await rpc.getAccountInfo(L2.escrow, { encoding: 'base64' }).send()).value, null, 'fully absorbed escrow closes at once');
-l = await loanOf(L2.loan); assert.equal(l.status, gf.LoanStatus.Defaulted); assert.equal(l.refundPending, L2.escrowAmt - recovered);
-const personB = await getPerson(pB), personC = await getPerson(pC);
-const defaultedAt = (await loanOf(L2.loan)).closedAt;
+assert.equal(await tok(L2.escrow), L2.escrowAmt, 'the escrow waits for collection');
+l = await loanOf(L2.loan);
+assert.equal(l.status, gf.LoanStatus.Defaulted); assert.equal(l.shortfall, shortfall); assert.equal(l.recovered, recovered); assert.equal(l.recoveryPending, recovered); assert.equal(l.refundPending, L2.escrowAmt - recovered);
+// the loan carries the bans it opened with
+assert.equal(l.defaultBanSeconds, pre.p.defaultBanSeconds); assert.equal(l.cosignerBanSeconds, pre.p.cosignerBanSeconds); assert.equal(l.lateBanSeconds, pre.p.lateBanSeconds);
+let personB = await getPerson(pB), personC = await getPerson(pC);
+const defaultedAt = l.closedAt;
 const poolNow = await fetchPool(pool);
-assert.equal(personB.ineligibleUntil, barAfter(defaultedAt, poolNow.defaultBanSeconds));
-assert.equal(personC.ineligibleUntil, barAfter(defaultedAt, poolNow.cosignerBanSeconds), 'the fund lost money, so the co-signer is barred too');
+assert.equal(personB.ineligibleUntil, barAfter(defaultedAt, l.defaultBanSeconds));
+assert.equal(l.borrowerBarUntil, personB.ineligibleUntil);
+assert.equal(personC.ineligibleUntil, barAfter(defaultedAt, l.cosignerBanSeconds), 'the fund lost money, so the co-signer is barred too');
+assert.equal(personC.unrestitutedLosses, 1);
 assert.equal(personB.activeLoan.__option, 'None'); assert.equal(personC.activeGuarantees, 0);
 p = await fetchPool(pool);
-assert.equal(p.totalRecovered, pre.p.totalRecovered + recovered);
-assert.equal(p.totalLost, pre.p.totalLost + (shortfall - recovered));
+assert.equal(p.totalRecovered, pre.p.totalRecovered, 'nothing recovered until collected');
+assert.equal(p.recoveriesPending, pre.p.recoveriesPending + recovered);
+assert.equal(p.totalLost, pre.p.totalLost + lost);
 assert.equal(p.activeLoans, 0n);
-row('mark_default', `recovered ${fmt(recovered)}`, `lost ${fmt(shortfall - recovered)}`, `vault ${fmt(await tok(vault))}`, `both people barred (loss > 0): borrower ${poolNow.defaultBanSeconds === PERMANENT ? 'for good' : `${poolNow.defaultBanSeconds / DAY} days`}, co-signer ${poolNow.cosignerBanSeconds === PERMANENT ? 'for good' : `${poolNow.cosignerBanSeconds / DAY} days`}`);
+assert.equal(p.outstandingPrincipal, pre.p.outstandingPrincipal - shortfall);
+row('settle', `shortfall ${fmt(shortfall)}: ${fmt(recovered)} set aside from the escrow, ${fmt(lost)} lost`, 'no tokens moved', `both people barred (loss > 0): borrower ${l.defaultBanSeconds === PERMANENT ? 'for good' : `${l.defaultBanSeconds / DAY} days`}, co-signer ${l.cosignerBanSeconds === PERMANENT ? 'for good' : `${l.cosignerBanSeconds / DAY} days`}`);
+// anyone collects the recovery into the vault (the cranker's job); the escrow closes once nothing else waits in it
+await send([await collectIx(third, L2.loan)], third, 'collect_recovery');
+assert.equal(await tok(vault), pre.vault + recovered);
+assert.equal((await rpc.getAccountInfo(L2.escrow, { encoding: 'base64' }).send()).value, null, 'fully absorbed escrow closes on collection');
+p = await fetchPool(pool);
+assert.equal(p.totalRecovered, pre.p.totalRecovered + recovered);
+assert.equal(p.recoveriesPending, pre.p.recoveriesPending);
+row('collect_recovery (third party)', `vault +${fmt(recovered)}`, 'escrow closed, rent back');
 // ineligible cannot request again, from any wallet of that person
 {
   const [cosignerMember] = await gf.findMemberPda({ pool, wallet: cosigner2.address });
   await expectFail(send([await gf.getRequestLoanInstructionAsync({ payer: borrower, borrower, mint: MINT, borrowerPerson: pB, cosignerMember, borrowerGatewayToken: gwB, amount: 10n * USDC, termDays: 7, cosigner: cosigner2.address })], borrower, 'request after default'), 'ineligible request');
   row('request after default', 'rejected (ineligible)');
+}
+// restitution: the fund's loss first, then the co-signer's used escrow; at the full shortfall the loan is Restituted
+// and the bars relax (borrower to the late bar from the settlement, co-signer lifted)
+{
+  const over = await expectFail(send([await restituteIx(third, ataOf.third, L2.loan, shortfall + 1n)], third, 'over-restitute'), 'over-restitute');
+  await send([await restituteIx(third, ataOf.third, L2.loan, lost)], third, 'restitute (loss)');
+  p = await fetchPool(pool); l = await loanOf(L2.loan);
+  assert.equal(p.totalLost, pre.p.totalLost, 'the loss is made good');
+  assert.equal(l.reimbursementPending, 0n, 'nothing for the co-signer yet');
+  assert.ok((await getPerson(pB)).ineligibleUntil === barAfter(defaultedAt, l.defaultBanSeconds), 'still barred until the whole shortfall is back');
+  const c2Before = await tok(ataOf.cosigner2);
+  await send([await restituteIx(borrower, ataOf.borrower, L2.loan, recovered)], borrower, 'restitute (rest)');
+  p = await fetchPool(pool); l = await loanOf(L2.loan);
+  assert.equal(l.status, gf.LoanStatus.Restituted);
+  assert.equal(l.restituted, shortfall);
+  assert.equal(l.reimbursementPending, recovered, 'the used escrow is owed back, from the vault');
+  assert.equal(p.vaultClaims, recovered);
+  assert.equal(p.totalRestituted, pre.p.totalRestituted + shortfall);
+  personB = await getPerson(pB); personC = await getPerson(pC);
+  assert.equal(personB.ineligibleUntil, l.lateBanSeconds === 0n ? 0n : defaultedAt + l.lateBanSeconds, 'borrower bar relaxed to the late bar');
+  assert.equal(personC.ineligibleUntil, 0n, 'co-signer bar lifted');
+  assert.equal(personC.unrestitutedLosses, 0);
+  await send([await claimIx(third, L2.loan)], third, 'claim reimbursement');
+  assert.equal(await tok(ataOf.cosigner2), c2Before + recovered, 'co-signer whole again');
+  assert.equal((await fetchPool(pool)).vaultClaims, 0n);
+  assert.equal((await fetchPool(pool)).totalReimbursed, pre.p.totalReimbursed + recovered);
+  const nothing = await expectFail(send([await restituteIx(third, ataOf.third, L2.loan, 1n)], third, 'restitute again'), 'restitute a Restituted loan');
+  row('restitute 70 (third 45, borrower 25) + claim', `over-restitute: ${errName(over)}`, `fund whole first, then ${fmt(recovered)} to the co-signer from the vault`, `Restituted: borrower bar -> ${l.lateBanSeconds === 0n ? 'lifted' : `${l.lateBanSeconds / DAY} days from settlement`}, co-signer bar lifted`, `again: ${errName(nothing)}`);
+}
+// lift_bar: the authority ends a bar early, publicly (the reason's hash is in the event)
+if (!frozenAtStart && (await getPerson(pB)).ineligibleUntil > BigInt(await clockTs())) {
+  const strangerLift = await expectFail(send([gf.getLiftBarInstruction({ authority: third, pool, person: pB, reason: new Uint8Array(32) })], third, 'lift by stranger'), 'stranger lift');
+  const outLift = await adminRun(['lift-bar', pB, 'e2e: outage across the deadline, appeal upheld']);
+  assert.match(outLift, /reason hash/);
+  assert.ok((await getPerson(pB)).ineligibleUntil <= BigInt(await clockTs()), 'eligible again');
+  row('lift_bar (admin CLI)', `stranger ${errName(strangerLift)}`, 'borrower eligible again, reason hash published');
 }
 
 // ---------- pause_lending (instant brake) and request expiry ----------
@@ -460,7 +533,7 @@ if (!frozenAtStart) {
 
 // final totals
 p = await fetchPool(pool);
-console.log('\nPool', pool, { donated: fmt(p.totalDonated), lent: fmt(p.totalLent), repaid: fmt(p.totalRepaid), recovered: fmt(p.totalRecovered), lost: fmt(p.totalLost), loanCount: String(p.loanCount), activeLoans: String(p.activeLoans) });
+console.log('\nPool', pool, { donated: fmt(p.totalDonated), lent: fmt(p.totalLent), repaid: fmt(p.totalRepaid), recovered: fmt(p.totalRecovered), lost: fmt(p.totalLost), restituted: fmt(p.totalRestituted), reimbursed: fmt(p.totalReimbursed), outstanding: fmt(p.outstandingPrincipal), loanCount: String(p.loanCount), activeLoans: String(p.activeLoans) });
 console.log('\n' + ['step', 'detail...'].join(' | ')); for (const r of rows) console.log(r.join(' | '));
 console.log('\nE2E PASS');
 fs.writeFileSync(path.join(here, 'e2e-result.json'), JSON.stringify({ pool, vault, authority: (await fetchPool(pool)).authority.__option === 'None' ? 'none' : admin.address, issuer: admin.address, recoveryAuthority: admin.address, pauseAuthority: admin.address, network: NETWORK, mint: MINT }, null, 1));
