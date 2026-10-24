@@ -26,7 +26,8 @@ ENV NEXT_PUBLIC_CLUSTER=$NEXT_PUBLIC_CLUSTER NEXT_PUBLIC_RPC_URL=$NEXT_PUBLIC_RP
     NEXT_TELEMETRY_DISABLED=1 GOODFAITH_VERSION=$GOODFAITH_VERSION
 COPY --from=deps /src/app/node_modules ./node_modules
 COPY app/ ./
-RUN npm run build
+# `public/` may not exist in the repository; the runner stage copies it unconditionally.
+RUN mkdir -p public && npm run build
 
 FROM node:22-alpine AS run
 WORKDIR /srv
