@@ -13,3 +13,19 @@ Unlock into the Solana CLI's default location:
 ```sh
 GF_KEY_PASSPHRASE='...' bash scripts/unlock-key.sh
 ```
+
+The other keypairs here use the same passphrase and the same scheme, under the same devnet-only rule:
+
+| file | public key | what it is |
+|---|---|---|
+| `devnet-program.json.enc` | `BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq` | the program keypair (`target/deploy/goodfaith-keypair.json`), the devnet program id |
+| `devnet-gatekeeper-network.json.enc` | `B9p1QCuQDzj6dnds8sppuSzCjxTxyqFzCRnekEVmhnJj` | the fund's gatekeeper network (`scripts/gatekeeper-network.json`, reused by `gatekeeper-setup`) |
+| `fork-kora-signer.json.enc` | `8fijqKWSgEF1puay8N6YwwzmiGFhEoUaQreovzdEfavy` | a throwaway Kora signer used on a local fork; holds nothing |
+
+Unlock one with its name as the second argument, encrypt a new one with `lock-key.sh` (it refuses to overwrite and
+checks the round trip):
+
+```sh
+GF_KEY_PASSPHRASE='...' bash scripts/unlock-key.sh target/deploy/goodfaith-keypair.json devnet-program
+GF_KEY_PASSPHRASE='...' bash scripts/lock-key.sh <keypair.json> <name>
+```
