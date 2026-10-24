@@ -1,6 +1,6 @@
 # Good Faith
 
-Interest-free, fee-free community loans on Solana, funded by gifts. Texas residents only. Version 5 of the design,
+Interest-free, fee-free community loans on Solana, funded by gifts. Texas residents only. Version 6 of the design,
 running on a test network.
 
 Source is published under the [Apache License 2.0](LICENSE) so that anyone can inspect what the program and the

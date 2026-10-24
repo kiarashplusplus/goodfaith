@@ -79,7 +79,10 @@ and whether the notice was delivered (`notice sent`, `NOTICE FAILED`, `no contac
 sure the notice reached the member (or reach them another way), that nothing about the request looks off (a wallet
 that just verified, a person with a loan due, a burst of requests), and let it age: the service refuses to prepare a
 proposal younger than `RECOVERY_MIN_AGE_SECONDS` (one day by default) or whose notice failed, unless you pass `--force`
-and own that decision. `approve <personId> <newWallet>` names the wallet you checked; the CLI fetches the proposal
+and own that decision. Then check what the service cannot vouch for (`docs/identity.md`, "Whom to approve"): the CLI
+reads the verification straight from the provider with your own `PERSONA_API_KEY`; you compare the contact with your
+own export from before the request and read the notice's delivery in the relay's own log.
+`approve <personId> <newWallet> --checked` names the wallet you checked; without `--checked` nothing is signed. The CLI fetches the proposal
 the service prepared with the issuer's signature, decodes it, refuses anything but the one `propose_rebind` for that
 person and wallet signed by nobody but the issuer and this key, prints what it saw, adds the recovery key's signature,
 sends it and tells the member. A request is never proposed twice. `reject <personId>` turns it down and tells them.
@@ -87,7 +90,9 @@ On chain the old wallet (or the authority) can veto for `recovery_delay_seconds`
 move is pending, and what that person is owed as a co-signer waits until the move is settled either way. Then the
 cranker, or the member, finalises, and the cranker's next pass closes the request. Watch `RebindProposed` events: a
 proposal you did not approve means the recovery key file is compromised; veto it and rotate the recovery authority
-(after which the program refuses every move for seven days).
+(after which the program refuses every move for seven days). A member whose **old wallet was stolen** cannot be
+recovered while the thief vetoes: freeze that wallet's pass and take the case to the administrator as an appeal
+(`docs/identity.md`).
 
 ## Settings changes
 
@@ -100,12 +105,13 @@ the pool runs with at least that much.
 ## Settlements, pay-backs and fairness
 
 The program settles money without anyone's discretion, and there is one path after the cutoff: settle, then pay
-back. Settlement also puts the borrower back on the first-loan cap. The co-signer's bar lifts, by the program, as
-soon as the fund's loss on every loan they guaranteed is covered, whoever pays; the borrower's bar shortens to the
-late bar counted from the day the borrower themselves pays the last of the shortfall (a friend's payment helps the
-fund and the co-signer, not the borrower's standing). A co-signer may forgive the unpaid rest (`npm run member --
-forgive <loanId>`, or the button in the app): that ends the borrower's debt and nothing else. What is left to the
-administrator is the bar that should not have been set at all, or should end sooner:
+back. Settlement also puts the borrower back on the first-loan cap. A settled loan carries two claims: the fund's
+(its loss) and the co-signer's (their used deposit); pay-backs reach the fund's first. The co-signer's bar ends at its
+expiry or, earlier, as soon as the fund's loss on every loan they guaranteed is paid back, whoever pays. The
+borrower's bar shortens to the late bar once both claims are settled, whoever pays. A co-signer may waive their own
+claim (`npm run member -- waive <loanId>`, or the button in the app); the fund's claim stays owed. What is left to
+the administrator is the bar that should not have been set at all, or should end sooner, and a fund claim that
+should not be pursued:
 
 - **An outage across cutoffs.** Publish which cutoffs it covered. For each affected borrower who pays back promptly,
   `npm run admin -- lift-bar <personAccount> <reason words>`: the hash of the reason goes on chain in `BarLifted`, the
@@ -121,6 +127,10 @@ administrator is the bar that should not have been set at all, or should end soo
   the bar (as above), or schedule different durations for future loans where a pattern shows they are wrong. While
   barred, a member keeps every right but new loans and guarantees: repaying, paying back, collecting what they are
   owed, recovering a lost wallet and donating all work.
+- **Forgiving the fund's claim** (`npm run admin -- forgive-fund-claim <loanId> <reason words>`): for hardship or an
+  error, in public with the reason's hash, like a lift. It moves no money and is not a recovery: the loss stays in
+  the books (`total_lost`, with `total_forgiven` beside it), the co-signer's claim stays the borrower's to pay, no bar
+  changes, and the borrower does not get the late bar. Lift bars separately if that is the right outcome.
 - **Reinstatement** after a bar ends needs nothing from the operator: eligibility returns on the chain's clock, and
   the identity service's record lapses with it on the cranker's next pass. A permanent bar freezes the person's passes;
   a lift or a pay-back thaws them on the wallets they had, so nobody has to verify again to come back.
@@ -136,7 +146,9 @@ next version's vault, or a charity's account), signed by the administrator and b
 loans run their course; loans past their cutoff still settle and are paid back; everything owed is still collected;
 members can still recover a wallet. When `active loans` reaches zero the cranker (or `admin sweep`) moves the
 balance, less what co-signers are owed from the vault, to the successor; what sits in escrow accounts is collected
-before or after, and a recovery collected later is swept by a later sweep. Nobody's entitlement is written off by a
+before or after. Collections and pay-backs that arrive after the first sweep land in the old vault, and the cranker
+sweeps again on every pass, so they follow to the successor; a pay-back's share for the co-signer is booked as owed
+from the vault in the same instruction, so no sweep can take it, and escrow refunds never leave their escrow. Nobody's entitlement is written off by a
 wind-down. `cancel-wind-down` works only before the announcement takes effect. Freezing the pool (`freeze --yes`) is
 irreversible and leaves the fund without an administrator: do not freeze a fund that may need a pause, a lifted bar
 or a wind-down it has not announced.
@@ -160,18 +172,28 @@ every other guarantee, so it is run as the most constrained key of all:
 ## Monitoring
 
 - `/api/health`: config problems (including a recovery key found on the web service), RPC, pool (paused, winding
-  down, active loans, outstanding principal, the three entitlement totals, scheduled change), sponsor liveness,
-  identity configuration and where notices go.
+  down, active loans, outstanding principal, lifetime lending against its budget, recognised and forgiven losses,
+  the three entitlement totals, scheduled change), sponsor liveness and each sponsor lane's use today (`alert` from
+  80%), identity configuration and where notices go.
+- The sponsor's three lanes (`SPONSOR_PROTECTED_DAILY_TX`, `SPONSOR_ONBOARDING_DAILY_TX` with
+  `SPONSOR_DAILY_NEW_WALLETS`, `SPONSOR_DAILY_BUDGET_TX` for members): set them from the pilot's real demand, not for
+  growth. The route logs a warning when a lane reaches 80% and when it runs out. Strangers exhausting onboarding do not
+  touch the protected lane (settling, repaying, paying back, releasing, collecting, waiving, vetoing, finalising). The
+  sponsor never pays a close, and pays rent only for members' token accounts, so its money cannot be collected back
+  by closing accounts.
+- The lifetime lending budget (`max_total_lent`): review before raising it. Track realised losses (`total_lost`) apart
+  from open exposure (`outstanding_principal`): the ceiling on the second says nothing about the first.
 - The cranker's `identity` line (how many people the chain bars, what the service set, lifted, closed and retried)
   and its `waiting` line (frozen escrows, claims held by a pending move); `recovery list` for requests whose notice
   failed.
 - Kora's metrics (port 8081): the sponsor's balance; alert well above the rent of a first co-sign (about 0.007 SOL)
   times the daily volume.
 - Events: `LoanSettled` (how often, how much lost), `Restituted` (how much comes back, how fast, and by whom:
-  `borrower_relaxed` says the borrower paid themselves), `Forgiven`, `BarLifted` (every one should have a published
+  `fund_owed` and `cosigner_owed` say what is left), `ReimbursementWaived`, `FundClaimForgiven` (every one should have a
+  published reason), `BarLifted` (every one should have a published
   reason), `RebindProposed` (every one should match an approval in the recovery CLI), `LendingPaused`,
   `ParamsScheduled` (a change to the identity keys starts the seven-day quarantine), `WindDownAnnounced`.
-- The economics inputs to measure: default rate per cohort, share repaid before a settlement and paid back after
-  one, cycle length, loans per borrower, identity approval rate and cost, sponsor spend per loan, support hours
+- The economics inputs to measure: settlement rate per cohort, share repaid before a settlement and paid back after
+  one, waivers and forgiveness, cycle length, loans per borrower, identity approval rate and cost, sponsor spend per loan, support hours
   per loan and per settlement reviewed, time from incident to pause. Feed them back into `scripts/launch.json` and
   `app/src/lib/economics.ts`.

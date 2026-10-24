@@ -85,7 +85,8 @@ Losing a wallet must not mean losing a membership, and recovering one must not b
 3. The operator reviews it with the recovery CLI (`cd scripts && npm run recovery -- list`), which reads
    `GET /api/identity/recoveries` (admin key): the request beside the chain's view of the person (current wallet, any
    pending move, any bar, whether the notice went out). `approve <personId> <newWallet>` names the wallet the operator
-   checked and asks the service for the `propose_rebind` transaction built for the recovery key as fee payer and signed
+   checked. Before anything is prepared, the CLI gathers evidence the service does not control (see "Whom to
+   approve" below) and refuses to sign without `--checked`. It then asks the service for the `propose_rebind` transaction built for the recovery key as fee payer and signed
    by the issuer (`POST /api/identity/recoveries/:personId {feePayer, newWallet, force?}`). The service refuses a
    wallet that is not the recorded one, a request already proposed, a request younger than `RECOVERY_MIN_AGE_SECONDS`
    (one day by default: the member gets time to see the notice) or one whose notice failed, the last two unless the
@@ -109,15 +110,43 @@ The program adds a floor the service cannot move: after the pool's issuer, recov
 (a timelocked settings change), no recovery can be proposed for seven days (`KeysRecentlyChanged`), and the recovery
 delay can never be scheduled below one day.
 
+**Whom to approve.** The CLI's decoding settles *what* the recovery key signs. *Whom* it is right to approve cannot
+rest on the web service alone, because a compromised service controls its store, its contact records, its recovery
+history and its notice machinery: it could show a request as aged and notified when it was neither, or show a contact
+it had swapped. So the operator checks three things outside it before `approve ... --checked`:
+
+- **The verification, at the provider.** The CLI reads the new wallet's inquiry straight from the identity provider
+  with the operator's own API key (`PERSONA_API_KEY` on the operator's machine; a read-only key where the provider
+  offers one) and refuses unless it is approved and bound (by its reference id) to the wallet being approved. Without
+  the key it prints the inquiry id for the operator to look up by hand.
+- **The contact, from the operator's own copy.** Every notice, including `contact_changed`, reaches the relay
+  (`NOTIFY_WEBHOOK_URL`) with the contact it was sent to, so the relay's records, and a periodic export the operator
+  keeps off the web service, hold a contact history the service cannot rewrite afterwards. The contact the request's
+  notice went to must match that history from before the request.
+- **The delivery, from the relay.** Whether the notice was delivered is read from the mail or message relay's own
+  log or dashboard, not from the service's `delivery` flag.
+
+When any of these fails, the operator does not approve, and reaches the member another way.
+
+**A stolen old wallet.** The old wallet's veto is unconditional: it is what stops a fraudulent recovery, and the
+program has no way to tell a member who lost a wallet from a thief who took it. A thief who holds the old wallet can
+therefore veto every recovery. The policy for the pilot:
+- the gatekeeper freezes the stolen wallet's pass, so it can take no new loan or guarantee;
+- the case goes to the administrator as an appeal, with the evidence the operator gathered;
+- the member keeps every right that does not need that wallet: what they owe can be paid back from any wallet, and a
+  loan they borrowed or guaranteed runs its course.
+What remains: the thief can still release to the stolen wallet what the person is owed as a co-signer, and can keep
+vetoing. A program path that lets the administrator override a veto after a longer delay would close that, at the
+price of more power for the administrator; it is not built, and the paper says so.
+
 Compromise, key by key. The issuer key alone cannot move a membership (the recovery key must also sign), cannot skip
 the delay, and cannot stop the old wallet's veto. The recovery key alone cannot propose either: it only ever signs
 what the issuer signed first, and only after checking it is the one instruction it was told to expect. The whole web
 service (issuer and gatekeeper keys, the store) can prepare proposals and issue passes, and still cannot propose a
-move until the operator signs; it cannot make the CLI sign something else (the CLI verifies the bytes) nor hide a
-request from the member whose contact predates it (the notice goes to the contact on file, and the CLI shows whether
-it was delivered). The operator's check in step 3 is the control, and the notice is the second pair of eyes that does
-not depend on the app. The two keys live in different places by construction: the issuer in the service's
-environment, the recovery key in a file the CLI reads.
+move until the operator signs; it cannot make the CLI sign something else (the CLI verifies the bytes). It can try
+to mislead the operator about whom to approve, which is why the checks above read the provider, the operator's own
+export and the relay rather than the service. The two keys live in different places by construction: the issuer in
+the service's environment, the recovery key in a file the CLI reads.
 
 ## Bars
 
