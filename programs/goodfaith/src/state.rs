@@ -73,6 +73,11 @@ pub struct Pool {
     pub cap_step_interval_seconds: i64,
     /// Ceiling on `outstanding_principal` (0 = none).
     pub max_outstanding_principal: u64,
+    /// When `apply_params` last replaced the issuer, the recovery key or the gatekeeper network;
+    /// wallet recoveries are refused for `KEY_QUARANTINE_SECONDS` after it.
+    pub keys_changed_at: i64,
+    /// Second key that must sign a wind-down announcement beside the authority's.
+    pub successor_authority: Pubkey,
 }
 
 impl Pool {
@@ -100,7 +105,8 @@ pub struct Person {
     pub active_guarantee_amount: u64,
     /// Loans repaid on time; raises the personal cap.
     pub completed_loans: u16,
-    /// 0: eligible; i64::MAX: barred for good; otherwise barred until this time.
+    /// 0: eligible; i64::MAX: barred for good; otherwise barred until this time. Always the larger of
+    /// `borrower_bar_until` and `cosigner_bar_until`; kept so every eligibility check reads one field.
     pub ineligible_until: i64,
     /// Until this time the person is on the first-loan cap (new or recovered membership).
     pub restricted_until: i64,
@@ -111,12 +117,25 @@ pub struct Person {
     /// When `completed_loans` last went up; spaces cap steps out in time.
     pub last_cap_step_at: i64,
     /// Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0.
-    pub unrestituted_losses: u8,
+    pub unrestituted_losses: u16,
+    /// Bar from this person's own default (0 when none). Relaxed only by their own pay-back of the loan
+    /// that set it, or by `lift_bar`.
+    pub borrower_bar_until: i64,
+    /// Bar from a loss on a loan this person co-signed (0 when none). Lifted once every such loss is
+    /// paid back, or by `lift_bar`.
+    pub cosigner_bar_until: i64,
+    /// The loan whose settlement set `borrower_bar_until`; only its pay-back relaxes that bar.
+    pub borrower_bar_loan: Option<Pubkey>,
 }
 
 impl Person {
     pub fn eligible(&self, now: i64) -> bool {
         now >= self.ineligible_until
+    }
+
+    /// `ineligible_until` is derived: the longer of the two role bars.
+    pub fn recompute_bar(&mut self) {
+        self.ineligible_until = self.borrower_bar_until.max(self.cosigner_bar_until);
     }
 
     /// Largest loan this person may take now.
@@ -132,27 +151,60 @@ impl Person {
             .min(pool.max_loan)
     }
 
-    /// Bars the person at least until `now + seconds` (never shortens an existing bar).
-    /// Returns the bar this call stands for (0 when `seconds` is 0).
-    pub fn bar(&mut self, now: i64, seconds: i64) -> i64 {
+    /// Bars the person as a borrower at least until `now + seconds` (never shortens an existing bar)
+    /// and remembers which loan did it. Returns the bar this call stands for (0 when `seconds` is 0).
+    pub fn bar_as_borrower(&mut self, now: i64, seconds: i64, loan: Pubkey) -> i64 {
         if seconds <= 0 {
             return 0;
         }
         let until = now.saturating_add(seconds);
-        if until > self.ineligible_until {
-            self.ineligible_until = until;
+        if until >= self.borrower_bar_until {
+            self.borrower_bar_until = until;
+            self.borrower_bar_loan = Some(loan);
         }
+        self.recompute_bar();
         until
     }
 
-    /// Replaces the bar `from` by `to`, but only when `from` is the bar the person is under right now
-    /// (a longer bar from another loan or an operator stays).
-    pub fn relax_bar(&mut self, from: i64, to: i64) -> bool {
-        if from == 0 || self.ineligible_until != from {
+    /// Bars the person as a co-signer at least until `now + seconds` (never shortens an existing bar).
+    /// Returns the bar this call stands for (0 when `seconds` is 0).
+    pub fn bar_as_cosigner(&mut self, now: i64, seconds: i64) -> i64 {
+        if seconds <= 0 {
+            return 0;
+        }
+        let until = now.saturating_add(seconds);
+        if until > self.cosigner_bar_until {
+            self.cosigner_bar_until = until;
+        }
+        self.recompute_bar();
+        until
+    }
+
+    /// Shortens the borrower bar to `to` when `loan` is the loan that set it (a later default's bar
+    /// stays). Returns true when the bar changed.
+    pub fn relax_borrower_bar(&mut self, loan: Pubkey, to: i64) -> bool {
+        if self.borrower_bar_loan != Some(loan) || to >= self.borrower_bar_until {
             return false;
         }
-        self.ineligible_until = to;
+        self.borrower_bar_until = to;
+        self.recompute_bar();
         true
+    }
+
+    /// Ends the co-signer bar. Returns true when there was one.
+    pub fn lift_cosigner_bar(&mut self) -> bool {
+        let had = self.cosigner_bar_until != 0;
+        self.cosigner_bar_until = 0;
+        self.recompute_bar();
+        had
+    }
+
+    /// Clears every bar (the authority's remedy). `unrestituted_losses` is kept, so a later loss still bars.
+    pub fn clear_bars(&mut self) {
+        self.borrower_bar_until = 0;
+        self.cosigner_bar_until = 0;
+        self.borrower_bar_loan = None;
+        self.recompute_bar();
     }
 }
 
@@ -218,6 +270,11 @@ pub struct Loan {
     pub default_ban_seconds: i64,
     pub late_ban_seconds: i64,
     pub cosigner_ban_seconds: i64,
+    /// Cap-credit rules fixed when the loan opened.
+    pub seasoning_seconds: i64,
+    pub cap_step_interval_seconds: i64,
+    /// When the co-signer forgave the unpaid rest of the shortfall (0 = not forgiven).
+    pub forgiven_at: i64,
 }
 
 impl Loan {
@@ -233,8 +290,11 @@ impl Loan {
         self.shortfall.saturating_sub(self.recovered)
     }
 
-    /// Still owed by the borrower after settlement.
+    /// Still owed by the borrower after settlement (nothing once the co-signer forgave the rest).
     pub fn owed_after_settlement(&self) -> u64 {
+        if self.forgiven_at != 0 {
+            return 0;
+        }
         self.shortfall.saturating_sub(self.restituted)
     }
 }
@@ -266,6 +326,8 @@ pub struct PoolParams {
     pub seasoning_seconds: i64,
     pub cap_step_interval_seconds: i64,
     pub max_outstanding_principal: u64,
+    /// Second key for `announce_wind_down`.
+    pub successor_authority: Pubkey,
 }
 
 impl PoolParams {
@@ -308,10 +370,16 @@ impl PoolParams {
             (1..=crate::MAX_WINDOW_SECONDS).contains(&self.disbursement_window_seconds),
             GoodFaithError::InvalidParams
         );
+        // Paying back after a default can only ever shorten the bar, never lengthen it.
         require!(
             self.default_ban_seconds >= 0
                 && self.late_ban_seconds >= 0
-                && self.cosigner_ban_seconds >= 0,
+                && self.cosigner_ban_seconds >= 0
+                && self.late_ban_seconds <= self.default_ban_seconds,
+            GoodFaithError::InvalidParams
+        );
+        require!(
+            self.successor_authority != Pubkey::default(),
             GoodFaithError::InvalidParams
         );
         require!(
@@ -347,6 +415,14 @@ impl PoolParams {
         pool.seasoning_seconds = self.seasoning_seconds;
         pool.cap_step_interval_seconds = self.cap_step_interval_seconds;
         pool.max_outstanding_principal = self.max_outstanding_principal;
+        pool.successor_authority = self.successor_authority;
+    }
+
+    /// The keys that can move a membership: a change to any of them starts the recovery quarantine.
+    pub fn changes_identity_keys(&self, pool: &Pool) -> bool {
+        self.issuer != pool.issuer
+            || self.recovery_authority != pool.recovery_authority
+            || self.gatekeeper_network != pool.gatekeeper_network
     }
 }
 

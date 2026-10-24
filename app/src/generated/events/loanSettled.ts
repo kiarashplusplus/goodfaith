@@ -12,7 +12,7 @@ export const LOAN_SETTLED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Arr
 
 export function getLoanSettledEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(LOAN_SETTLED_EVENT_DISCRIMINATOR); }
 
-export type LoanSettledEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; shortfall: bigint; 
+export type LoanSettledEvent = { pool: Address; loan: Address; loanId: bigint; borrower: Address; cosigner: Address; borrowerPerson: Address; cosignerPerson: Address; shortfall: bigint; 
 /** Escrow applied to the shortfall, waiting in the escrow account for `collect_recovery`. */
 recovered: bigint; 
 /** Escrow left over, waiting in the escrow account for `claim_escrow`. */
@@ -22,7 +22,7 @@ cosignerBarred: boolean; borrowerIneligibleUntil: bigint; cosignerIneligibleUnti
 /** The escrow was empty and could be closed at once. */
 escrowClosed: boolean;  };
 
-export type LoanSettledEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; shortfall: number | bigint; 
+export type LoanSettledEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; borrowerPerson: Address | HasAddress; cosignerPerson: Address | HasAddress; shortfall: number | bigint; 
 /** Escrow applied to the shortfall, waiting in the escrow account for `collect_recovery`. */
 recovered: number | bigint; 
 /** Escrow left over, waiting in the escrow account for `claim_escrow`. */
@@ -34,12 +34,12 @@ escrowClosed: boolean;  };
 
 /** Gets the encoder for {@link LoanSettledEventArgs} event data. */
 export function getLoanSettledEventEncoder(): FixedSizeEncoder<LoanSettledEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['shortfall', getU64Encoder()], ['recovered', getU64Encoder()], ['escrowReturned', getU64Encoder()], ['lost', getU64Encoder()], ['cosignerBarred', getBooleanEncoder()], ['borrowerIneligibleUntil', getI64Encoder()], ['cosignerIneligibleUntil', getI64Encoder()], ['escrowClosed', getBooleanEncoder()]]), [getConstantEncoder(LOAN_SETTLED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()], ['shortfall', getU64Encoder()], ['recovered', getU64Encoder()], ['escrowReturned', getU64Encoder()], ['lost', getU64Encoder()], ['cosignerBarred', getBooleanEncoder()], ['borrowerIneligibleUntil', getI64Encoder()], ['cosignerIneligibleUntil', getI64Encoder()], ['escrowClosed', getBooleanEncoder()]]), [getConstantEncoder(LOAN_SETTLED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link LoanSettledEvent} event data. */
 export function getLoanSettledEventDecoder(): FixedSizeDecoder<LoanSettledEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['shortfall', getU64Decoder()], ['recovered', getU64Decoder()], ['escrowReturned', getU64Decoder()], ['lost', getU64Decoder()], ['cosignerBarred', getBooleanDecoder()], ['borrowerIneligibleUntil', getI64Decoder()], ['cosignerIneligibleUntil', getI64Decoder()], ['escrowClosed', getBooleanDecoder()]]), [getConstantDecoder(LOAN_SETTLED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()], ['shortfall', getU64Decoder()], ['recovered', getU64Decoder()], ['escrowReturned', getU64Decoder()], ['lost', getU64Decoder()], ['cosignerBarred', getBooleanDecoder()], ['borrowerIneligibleUntil', getI64Decoder()], ['cosignerIneligibleUntil', getI64Decoder()], ['escrowClosed', getBooleanDecoder()]]), [getConstantDecoder(LOAN_SETTLED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link LoanSettledEvent} event data. */

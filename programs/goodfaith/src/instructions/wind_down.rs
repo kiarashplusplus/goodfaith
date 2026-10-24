@@ -8,10 +8,13 @@ use crate::{
     POOL_SEED,
 };
 
-/// The authority announces the fund's retirement and names where the remaining balance goes.
+/// The authority and the successor authority together announce the fund's retirement and name where
+/// the remaining balance goes: no single key chooses the successor.
 #[derive(Accounts)]
 pub struct AnnounceWindDown<'info> {
     pub authority: Signer<'info>,
+    #[account(constraint = successor_authority.key() == pool.successor_authority @ GoodFaithError::Unauthorized)]
+    pub successor_authority: Signer<'info>,
     #[account(
         mut,
         constraint = pool.authority == Some(authority.key()) @ GoodFaithError::Unauthorized,

@@ -55,8 +55,12 @@ pub fn settle_handler(mut ctx: Context<Settle>) -> Result<()> {
         .principal
         .checked_sub(a.loan.repaid)
         .ok_or(GoodFaithError::MathOverflow)?;
+    // Only what the co-signer put up at opening counts towards the shortfall; anything sent to the
+    // escrow since (a top-up after the deadline, a stray deposit) goes back to the co-signer and never
+    // turns a loss into a recovery.
     let held = a.escrow.amount;
-    let recovered = held.min(shortfall);
+    let applied = held.min(a.loan.escrowed);
+    let recovered = applied.min(shortfall);
     let returned = held
         .checked_sub(recovered)
         .ok_or(GoodFaithError::MathOverflow)?;
@@ -64,10 +68,10 @@ pub fn settle_handler(mut ctx: Context<Settle>) -> Result<()> {
         .checked_sub(recovered)
         .ok_or(GoodFaithError::MathOverflow)?;
 
-    // Empty escrow: nothing is owed to anyone from it, so give the rent back now (unless it is frozen,
-    // in which case the token program would refuse; it then simply stays).
+    // Empty escrow: nothing is owed to anyone from it, so give the rent back now (the token program
+    // closes an empty account even when it is frozen).
     let mut escrow_closed = false;
-    if held == 0 && !a.escrow.is_frozen() {
+    if held == 0 {
         let mint_key = a.mint.key();
         let seeds: &[&[u8]] = &[POOL_SEED, mint_key.as_ref(), &[a.pool.bump]];
         token_interface::close_account(CpiContext::new_with_signer(
@@ -108,14 +112,26 @@ pub fn settle_handler(mut ctx: Context<Settle>) -> Result<()> {
         .checked_sub(1)
         .ok_or(GoodFaithError::MathOverflow)?;
 
-    let borrower_bar_until = a.borrower_person.bar(now, a.loan.default_ban_seconds);
+    let loan_key = a.loan.key();
+    let borrower_bar_until =
+        a.borrower_person
+            .bar_as_borrower(now, a.loan.default_ban_seconds, loan_key);
     a.borrower_person.active_loan = None;
+    // A defaulter starts over: back on the first-loan cap, with the cooldown of a new member.
+    a.borrower_person.completed_loans = 0;
+    a.borrower_person.restricted_until = now
+        .checked_add(a.pool.cooldown_seconds)
+        .ok_or(GoodFaithError::MathOverflow)?;
     // The co-signer's deposit did its job: if the fund was made whole, they keep their standing.
     let cosigner_barred = lost > 0;
     let cosigner_bar_until = if cosigner_barred {
-        a.cosigner_person.unrestituted_losses =
-            a.cosigner_person.unrestituted_losses.saturating_add(1);
-        a.cosigner_person.bar(now, a.loan.cosigner_ban_seconds)
+        a.cosigner_person.unrestituted_losses = a
+            .cosigner_person
+            .unrestituted_losses
+            .checked_add(1)
+            .ok_or(GoodFaithError::MathOverflow)?;
+        a.cosigner_person
+            .bar_as_cosigner(now, a.loan.cosigner_ban_seconds)
     } else {
         0
     };
@@ -148,6 +164,8 @@ pub fn settle_handler(mut ctx: Context<Settle>) -> Result<()> {
         loan_id: a.loan.id,
         borrower: a.loan.borrower,
         cosigner: a.loan.cosigner,
+        borrower_person: a.borrower_person.key(),
+        cosigner_person: a.cosigner_person.key(),
         shortfall,
         recovered,
         escrow_returned: returned,

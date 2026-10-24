@@ -44,3 +44,11 @@ pub const MAX_WINDOW_SECONDS: i64 = 30 * 86_400;
 /// Longest seasoning period and cap-step interval a pool may set (365 days).
 #[constant]
 pub const MAX_SEASONING_SECONDS: i64 = 365 * 86_400;
+/// Once a pool runs with at least this recovery delay, no scheduled change may take it lower (1 day).
+/// A pool initialised below it is a test pool.
+#[constant]
+pub const MIN_RECOVERY_DELAY_SECONDS: i64 = 86_400;
+/// After the issuer, the recovery key or the gatekeeper network changes, no wallet recovery can be
+/// proposed for this long (7 days): a replaced key set is visible before it can move a membership.
+#[constant]
+pub const KEY_QUARANTINE_SECONDS: i64 = 7 * 86_400;

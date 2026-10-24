@@ -45,6 +45,7 @@ loan: TAccountLoan;
  * vault part alone.
  */
 escrow?: TAccountEscrow;
+/** Claims wait while a wallet recovery is pending, so a lost wallet is never paid. */
 cosignerPerson: TAccountCosignerPerson;
 cosignerToken: TAccountCosignerToken;
 rentPayer: TAccountRentPayer;
@@ -89,6 +90,7 @@ loan: TAccountLoan;
  * vault part alone.
  */
 escrow?: TAccountEscrow;
+/** Claims wait while a wallet recovery is pending, so a lost wallet is never paid. */
 cosignerPerson: TAccountCosignerPerson;
 cosignerToken: TAccountCosignerToken;
 rentPayer: TAccountRentPayer;
@@ -128,6 +130,7 @@ loan: TAccountMetas[4];
  * vault part alone.
  */
 escrow?: TAccountMetas[5] | undefined;
+/** Claims wait while a wallet recovery is pending, so a lost wallet is never paid. */
 cosignerPerson: TAccountMetas[6];
 cosignerToken: TAccountMetas[7];
 rentPayer: TAccountMetas[8];

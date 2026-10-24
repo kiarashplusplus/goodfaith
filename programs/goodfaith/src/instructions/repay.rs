@@ -110,9 +110,9 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
         a.borrower_person.active_loan = None;
         // The cap grows only on loans that ran their course, and at most once per interval, so
         // borrowing and repaying at once does not buy a larger loan.
-        let seasoned = now.saturating_sub(a.loan.opened_at) >= a.pool.seasoning_seconds;
+        let seasoned = now.saturating_sub(a.loan.opened_at) >= a.loan.seasoning_seconds;
         let spaced = now.saturating_sub(a.borrower_person.last_cap_step_at)
-            >= a.pool.cap_step_interval_seconds;
+            >= a.loan.cap_step_interval_seconds;
         if seasoned && spaced {
             a.borrower_person.completed_loans = a.borrower_person.completed_loans.saturating_add(1);
             a.borrower_person.last_cap_step_at = now;
@@ -143,6 +143,8 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
                 .checked_add(refund_pending)
                 .ok_or(GoodFaithError::MathOverflow)?;
         } else {
+            // Empty: the rent goes back now (the token program closes an empty account even when frozen).
+
             let mint_key = a.mint.key();
             let seeds: &[&[u8]] = &[POOL_SEED, mint_key.as_ref(), &[a.pool.bump]];
             token_interface::close_account(CpiContext::new_with_signer(
@@ -163,6 +165,8 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
         loan_id: a.loan.id,
         borrower: a.loan.borrower,
         cosigner: a.loan.cosigner,
+        borrower_person: a.borrower_person.key(),
+        cosigner_person: a.cosigner_person.key(),
         payer: a.payer.key(),
         amount,
         total_repaid: a.loan.repaid,

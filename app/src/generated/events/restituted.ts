@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getI64Decoder, getI64Encoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
+import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getI64Decoder, getI64Encoder, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
 
 export const RESTITUTED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([93, 239, 0, 6, 78, 72, 250, 176]);
 
@@ -17,25 +17,43 @@ export type RestitutedEvent = { pool: Address; loan: Address; loanId: bigint; pa
 toFund: bigint; 
 /** Part of `amount` now owed to the co-signer out of the vault. */
 toCosigner: bigint; restituted: bigint; shortfall: bigint; 
-/** The whole shortfall is paid back: the loan is Restituted and its bars relaxed. */
-complete: boolean; borrowerIneligibleUntil: bigint; cosignerIneligibleUntil: bigint;  };
+/**
+ * Of `to_cosigner`, escrow still uncollected that is released back to the co-signer instead of
+ * being collected and reimbursed from the vault.
+ */
+converted: bigint; 
+/** The whole shortfall is paid back: the loan is Restituted. */
+complete: boolean; 
+/** The borrower paid back their own loan in full: their bar now ends at `now + late_ban_seconds`. */
+borrowerRelaxed: boolean; 
+/** The fund's loss on this loan is covered and it was the co-signer's last one: their bar is lifted. */
+cosignerLifted: boolean; unrestitutedLosses: number; borrowerPerson: Address; cosignerPerson: Address; borrowerIneligibleUntil: bigint; cosignerIneligibleUntil: bigint;  };
 
 export type RestitutedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; payer: Address | HasAddress; amount: number | bigint; 
 /** Part of `amount` that made the fund's loss good. */
 toFund: number | bigint; 
 /** Part of `amount` now owed to the co-signer out of the vault. */
 toCosigner: number | bigint; restituted: number | bigint; shortfall: number | bigint; 
-/** The whole shortfall is paid back: the loan is Restituted and its bars relaxed. */
-complete: boolean; borrowerIneligibleUntil: number | bigint; cosignerIneligibleUntil: number | bigint;  };
+/**
+ * Of `to_cosigner`, escrow still uncollected that is released back to the co-signer instead of
+ * being collected and reimbursed from the vault.
+ */
+converted: number | bigint; 
+/** The whole shortfall is paid back: the loan is Restituted. */
+complete: boolean; 
+/** The borrower paid back their own loan in full: their bar now ends at `now + late_ban_seconds`. */
+borrowerRelaxed: boolean; 
+/** The fund's loss on this loan is covered and it was the co-signer's last one: their bar is lifted. */
+cosignerLifted: boolean; unrestitutedLosses: number; borrowerPerson: Address | HasAddress; cosignerPerson: Address | HasAddress; borrowerIneligibleUntil: number | bigint; cosignerIneligibleUntil: number | bigint;  };
 
 /** Gets the encoder for {@link RestitutedEventArgs} event data. */
 export function getRestitutedEventEncoder(): FixedSizeEncoder<RestitutedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['payer', getAddressEncoder()], ['amount', getU64Encoder()], ['toFund', getU64Encoder()], ['toCosigner', getU64Encoder()], ['restituted', getU64Encoder()], ['shortfall', getU64Encoder()], ['complete', getBooleanEncoder()], ['borrowerIneligibleUntil', getI64Encoder()], ['cosignerIneligibleUntil', getI64Encoder()]]), [getConstantEncoder(RESTITUTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['payer', getAddressEncoder()], ['amount', getU64Encoder()], ['toFund', getU64Encoder()], ['toCosigner', getU64Encoder()], ['restituted', getU64Encoder()], ['shortfall', getU64Encoder()], ['converted', getU64Encoder()], ['complete', getBooleanEncoder()], ['borrowerRelaxed', getBooleanEncoder()], ['cosignerLifted', getBooleanEncoder()], ['unrestitutedLosses', getU16Encoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()], ['borrowerIneligibleUntil', getI64Encoder()], ['cosignerIneligibleUntil', getI64Encoder()]]), [getConstantEncoder(RESTITUTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link RestitutedEvent} event data. */
 export function getRestitutedEventDecoder(): FixedSizeDecoder<RestitutedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['payer', getAddressDecoder()], ['amount', getU64Decoder()], ['toFund', getU64Decoder()], ['toCosigner', getU64Decoder()], ['restituted', getU64Decoder()], ['shortfall', getU64Decoder()], ['complete', getBooleanDecoder()], ['borrowerIneligibleUntil', getI64Decoder()], ['cosignerIneligibleUntil', getI64Decoder()]]), [getConstantDecoder(RESTITUTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['payer', getAddressDecoder()], ['amount', getU64Decoder()], ['toFund', getU64Decoder()], ['toCosigner', getU64Decoder()], ['restituted', getU64Decoder()], ['shortfall', getU64Decoder()], ['converted', getU64Decoder()], ['complete', getBooleanDecoder()], ['borrowerRelaxed', getBooleanDecoder()], ['cosignerLifted', getBooleanDecoder()], ['unrestitutedLosses', getU16Decoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()], ['borrowerIneligibleUntil', getI64Decoder()], ['cosignerIneligibleUntil', getI64Decoder()]]), [getConstantDecoder(RESTITUTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link RestitutedEvent} event data. */

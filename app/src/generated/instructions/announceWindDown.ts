@@ -14,8 +14,8 @@ export const ANNOUNCE_WIND_DOWN_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Arr
 
 export function getAnnounceWindDownDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(ANNOUNCE_WIND_DOWN_DISCRIMINATOR); }
 
-export type AnnounceWindDownInstruction<TProgram extends string = typeof GOODFAITH_PROGRAM_ADDRESS, TAccountAuthority extends string | AccountMeta<string> = string, TAccountPool extends string | AccountMeta<string> = string, TAccountSuccessorVault extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
-Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAuthority extends string ? ReadonlySignerAccount<TAccountAuthority> & AccountSignerMeta<TAccountAuthority> : TAccountAuthority, TAccountPool extends string ? WritableAccount<TAccountPool> : TAccountPool, TAccountSuccessorVault extends string ? ReadonlyAccount<TAccountSuccessorVault> : TAccountSuccessorVault, ...TRemainingAccounts]>;
+export type AnnounceWindDownInstruction<TProgram extends string = typeof GOODFAITH_PROGRAM_ADDRESS, TAccountAuthority extends string | AccountMeta<string> = string, TAccountSuccessorAuthority extends string | AccountMeta<string> = string, TAccountPool extends string | AccountMeta<string> = string, TAccountSuccessorVault extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAuthority extends string ? ReadonlySignerAccount<TAccountAuthority> & AccountSignerMeta<TAccountAuthority> : TAccountAuthority, TAccountSuccessorAuthority extends string ? ReadonlySignerAccount<TAccountSuccessorAuthority> & AccountSignerMeta<TAccountSuccessorAuthority> : TAccountSuccessorAuthority, TAccountPool extends string ? WritableAccount<TAccountPool> : TAccountPool, TAccountSuccessorVault extends string ? ReadonlyAccount<TAccountSuccessorVault> : TAccountSuccessorVault, ...TRemainingAccounts]>;
 
 export type AnnounceWindDownInstructionData = { discriminator: ReadonlyUint8Array;  };
 
@@ -33,14 +33,15 @@ export function getAnnounceWindDownInstructionDataCodec(): FixedSizeCodec<Announ
     return combineCodec(getAnnounceWindDownInstructionDataEncoder(), getAnnounceWindDownInstructionDataDecoder());
 }
 
-export type AnnounceWindDownInput<TAccountAuthority extends InstructionSignerInput = InstructionSignerInput, TAccountPool extends InstructionAccountInput = InstructionAccountInput, TAccountSuccessorVault extends InstructionAccountInput = InstructionAccountInput> =  {
+export type AnnounceWindDownInput<TAccountAuthority extends InstructionSignerInput = InstructionSignerInput, TAccountSuccessorAuthority extends InstructionSignerInput = InstructionSignerInput, TAccountPool extends InstructionAccountInput = InstructionAccountInput, TAccountSuccessorVault extends InstructionAccountInput = InstructionAccountInput> =  {
   authority: TAccountAuthority;
+successorAuthority: TAccountSuccessorAuthority;
 pool: TAccountPool;
 /** Must hold the pool's mint and must not be controlled by the pool itself (the vault, an escrow). */
 successorVault: TAccountSuccessorVault;
 }
 
-export function getAnnounceWindDownInstruction<TAccountAuthority extends InstructionSignerInput, TAccountPool extends InstructionAccountInput, TAccountSuccessorVault extends InstructionAccountInput, TProgramAddress extends Address = typeof GOODFAITH_PROGRAM_ADDRESS>(input: AnnounceWindDownInput<TAccountAuthority, TAccountPool, TAccountSuccessorVault>, config?: { programAddress?: TProgramAddress | { readonly address: TProgramAddress } } ): AnnounceWindDownInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountAuthority, InstructionAccountInputAddress<TAccountAuthority>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountSuccessorVault, InstructionAccountInputAddress<TAccountSuccessorVault>>> {
+export function getAnnounceWindDownInstruction<TAccountAuthority extends InstructionSignerInput, TAccountSuccessorAuthority extends InstructionSignerInput, TAccountPool extends InstructionAccountInput, TAccountSuccessorVault extends InstructionAccountInput, TProgramAddress extends Address = typeof GOODFAITH_PROGRAM_ADDRESS>(input: AnnounceWindDownInput<TAccountAuthority, TAccountSuccessorAuthority, TAccountPool, TAccountSuccessorVault>, config?: { programAddress?: TProgramAddress | { readonly address: TProgramAddress } } ): AnnounceWindDownInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountAuthority, InstructionAccountInputAddress<TAccountAuthority>>, ResolvedInstructionAccountMeta<TAccountSuccessorAuthority, InstructionAccountInputAddress<TAccountSuccessorAuthority>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountSuccessorVault, InstructionAccountInputAddress<TAccountSuccessorVault>>> {
   // Program address.
 const programAddressInput = config?.programAddress ?? GOODFAITH_PROGRAM_ADDRESS;
 const programAddress = typeof programAddressInput === 'string' ? programAddressInput : programAddressInput.address;
@@ -49,27 +50,28 @@ const programAddress = typeof programAddressInput === 'string' ? programAddressI
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
 
  // Original accounts.
-const originalAccounts = { authority: { value: input.authority ?? null, isSigner: true, isWritable: false }, pool: { value: input.pool ?? null, isSigner: false, isWritable: true }, successorVault: { value: input.successorVault ?? null, isSigner: false, isWritable: false } }
+const originalAccounts = { authority: { value: input.authority ?? null, isSigner: true, isWritable: false }, successorAuthority: { value: input.successorAuthority ?? null, isSigner: true, isWritable: false }, pool: { value: input.pool ?? null, isSigner: false, isWritable: true }, successorVault: { value: input.successorVault ?? null, isSigner: false, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>;
 
 
 
 
-return Object.freeze({ accounts: [getAccountMeta("authority", accounts.authority), getAccountMeta("pool", accounts.pool), getAccountMeta("successorVault", accounts.successorVault)], data: getAnnounceWindDownInstructionDataEncoder().encode({}), programAddress } as AnnounceWindDownInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountAuthority, InstructionAccountInputAddress<TAccountAuthority>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountSuccessorVault, InstructionAccountInputAddress<TAccountSuccessorVault>>>);
+return Object.freeze({ accounts: [getAccountMeta("authority", accounts.authority), getAccountMeta("successorAuthority", accounts.successorAuthority), getAccountMeta("pool", accounts.pool), getAccountMeta("successorVault", accounts.successorVault)], data: getAnnounceWindDownInstructionDataEncoder().encode({}), programAddress } as AnnounceWindDownInstruction<TProgramAddress, ResolvedInstructionAccountMeta<TAccountAuthority, InstructionAccountInputAddress<TAccountAuthority>>, ResolvedInstructionAccountMeta<TAccountSuccessorAuthority, InstructionAccountInputAddress<TAccountSuccessorAuthority>>, ResolvedInstructionAccountMeta<TAccountPool, InstructionAccountInputAddress<TAccountPool>>, ResolvedInstructionAccountMeta<TAccountSuccessorVault, InstructionAccountInputAddress<TAccountSuccessorVault>>>);
 }
 
 export type ParsedAnnounceWindDownInstruction<TProgram extends string = typeof GOODFAITH_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
 accounts: {
 authority: TAccountMetas[0];
-pool: TAccountMetas[1];
+successorAuthority: TAccountMetas[1];
+pool: TAccountMetas[2];
 /** Must hold the pool's mint and must not be controlled by the pool itself (the vault, an escrow). */
-successorVault: TAccountMetas[2];
+successorVault: TAccountMetas[3];
 };
 data: AnnounceWindDownInstructionData; };
 
 export function parseAnnounceWindDownInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedAnnounceWindDownInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 3) {
-  throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, { actualAccountMetas: instruction.accounts.length, expectedAccountMetas: 3 });
+  if (instruction.accounts.length < 4) {
+  throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, { actualAccountMetas: instruction.accounts.length, expectedAccountMetas: 4 });
 }
 let accountIndex = 0;
 const getNextAccount = () => {
@@ -77,5 +79,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { authority: getNextAccount(), pool: getNextAccount(), successorVault: getNextAccount() }, data: getAnnounceWindDownInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { authority: getNextAccount(), successorAuthority: getNextAccount(), pool: getNextAccount(), successorVault: getNextAccount() }, data: getAnnounceWindDownInstructionDataDecoder().decode(instruction.data) };
 }

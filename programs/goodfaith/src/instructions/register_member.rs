@@ -64,6 +64,9 @@ pub fn register_member_handler(ctx: Context<RegisterMember>, person_id: [u8; 32]
         bump: ctx.bumps.person,
         last_cap_step_at: 0,
         unrestituted_losses: 0,
+        borrower_bar_until: 0,
+        cosigner_bar_until: 0,
+        borrower_bar_loan: None,
     });
     let member = &mut ctx.accounts.member;
     member.wallet = ctx.accounts.wallet.key();

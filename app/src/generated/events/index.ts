@@ -12,6 +12,7 @@ export * from './authorityProposed';
 export * from './barLifted';
 export * from './donated';
 export * from './escrowClaimed';
+export * from './forgiven';
 export * from './issuerSuspended';
 export * from './lendingPaused';
 export * from './lendingResumed';

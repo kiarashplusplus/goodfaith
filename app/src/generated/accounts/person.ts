@@ -21,7 +21,10 @@ wallet: Address; activeLoan: Option<Address>; activeGuarantees: number;
 activeGuaranteeAmount: bigint; 
 /** Loans repaid on time; raises the personal cap. */
 completedLoans: number; 
-/** 0: eligible; i64::MAX: barred for good; otherwise barred until this time. */
+/**
+ * 0: eligible; i64::MAX: barred for good; otherwise barred until this time. Always the larger of
+ * `borrower_bar_until` and `cosigner_bar_until`; kept so every eligibility check reads one field.
+ */
 ineligibleUntil: bigint; 
 /** Until this time the person is on the first-loan cap (new or recovered membership). */
 restrictedUntil: bigint; 
@@ -30,7 +33,19 @@ pendingWallet: Option<Address>; pendingWalletAt: bigint; bump: number;
 /** When `completed_loans` last went up; spaces cap steps out in time. */
 lastCapStepAt: bigint; 
 /** Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0. */
-unrestitutedLosses: number;  };
+unrestitutedLosses: number; 
+/**
+ * Bar from this person's own default (0 when none). Relaxed only by their own pay-back of the loan
+ * that set it, or by `lift_bar`.
+ */
+borrowerBarUntil: bigint; 
+/**
+ * Bar from a loss on a loan this person co-signed (0 when none). Lifted once every such loss is
+ * paid back, or by `lift_bar`.
+ */
+cosignerBarUntil: bigint; 
+/** The loan whose settlement set `borrower_bar_until`; only its pay-back relaxes that bar. */
+borrowerBarLoan: Option<Address>;  };
 
 export type PersonArgs = { 
 /** Opaque id assigned by the issuer; the mapping to a credential lives off chain. */
@@ -41,7 +56,10 @@ wallet: Address | HasAddress; activeLoan: OptionOrNullable<Address | HasAddress>
 activeGuaranteeAmount: number | bigint; 
 /** Loans repaid on time; raises the personal cap. */
 completedLoans: number; 
-/** 0: eligible; i64::MAX: barred for good; otherwise barred until this time. */
+/**
+ * 0: eligible; i64::MAX: barred for good; otherwise barred until this time. Always the larger of
+ * `borrower_bar_until` and `cosigner_bar_until`; kept so every eligibility check reads one field.
+ */
 ineligibleUntil: number | bigint; 
 /** Until this time the person is on the first-loan cap (new or recovered membership). */
 restrictedUntil: number | bigint; 
@@ -50,16 +68,28 @@ pendingWallet: OptionOrNullable<Address | HasAddress>; pendingWalletAt: number |
 /** When `completed_loans` last went up; spaces cap steps out in time. */
 lastCapStepAt: number | bigint; 
 /** Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0. */
-unrestitutedLosses: number;  };
+unrestitutedLosses: number; 
+/**
+ * Bar from this person's own default (0 when none). Relaxed only by their own pay-back of the loan
+ * that set it, or by `lift_bar`.
+ */
+borrowerBarUntil: number | bigint; 
+/**
+ * Bar from a loss on a loan this person co-signed (0 when none). Lifted once every such loss is
+ * paid back, or by `lift_bar`.
+ */
+cosignerBarUntil: number | bigint; 
+/** The loan whose settlement set `borrower_bar_until`; only its pay-back relaxes that bar. */
+borrowerBarLoan: OptionOrNullable<Address | HasAddress>;  };
 
 /** Gets the encoder for {@link PersonArgs} account data. */
 export function getPersonEncoder(): Encoder<PersonArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['personId', fixEncoderSize(getBytesEncoder(), 32)], ['wallet', getAddressEncoder()], ['activeLoan', getOptionEncoder(getAddressEncoder())], ['activeGuarantees', getU8Encoder()], ['activeGuaranteeAmount', getU64Encoder()], ['completedLoans', getU16Encoder()], ['ineligibleUntil', getI64Encoder()], ['restrictedUntil', getI64Encoder()], ['pendingWallet', getOptionEncoder(getAddressEncoder())], ['pendingWalletAt', getI64Encoder()], ['bump', getU8Encoder()], ['lastCapStepAt', getI64Encoder()], ['unrestitutedLosses', getU8Encoder()]]), (value) => ({ ...value, discriminator: PERSON_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['personId', fixEncoderSize(getBytesEncoder(), 32)], ['wallet', getAddressEncoder()], ['activeLoan', getOptionEncoder(getAddressEncoder())], ['activeGuarantees', getU8Encoder()], ['activeGuaranteeAmount', getU64Encoder()], ['completedLoans', getU16Encoder()], ['ineligibleUntil', getI64Encoder()], ['restrictedUntil', getI64Encoder()], ['pendingWallet', getOptionEncoder(getAddressEncoder())], ['pendingWalletAt', getI64Encoder()], ['bump', getU8Encoder()], ['lastCapStepAt', getI64Encoder()], ['unrestitutedLosses', getU16Encoder()], ['borrowerBarUntil', getI64Encoder()], ['cosignerBarUntil', getI64Encoder()], ['borrowerBarLoan', getOptionEncoder(getAddressEncoder())]]), (value) => ({ ...value, discriminator: PERSON_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Person} account data. */
 export function getPersonDecoder(): Decoder<Person> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['personId', fixDecoderSize(getBytesDecoder(), 32)], ['wallet', getAddressDecoder()], ['activeLoan', getOptionDecoder(getAddressDecoder())], ['activeGuarantees', getU8Decoder()], ['activeGuaranteeAmount', getU64Decoder()], ['completedLoans', getU16Decoder()], ['ineligibleUntil', getI64Decoder()], ['restrictedUntil', getI64Decoder()], ['pendingWallet', getOptionDecoder(getAddressDecoder())], ['pendingWalletAt', getI64Decoder()], ['bump', getU8Decoder()], ['lastCapStepAt', getI64Decoder()], ['unrestitutedLosses', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['personId', fixDecoderSize(getBytesDecoder(), 32)], ['wallet', getAddressDecoder()], ['activeLoan', getOptionDecoder(getAddressDecoder())], ['activeGuarantees', getU8Decoder()], ['activeGuaranteeAmount', getU64Decoder()], ['completedLoans', getU16Decoder()], ['ineligibleUntil', getI64Decoder()], ['restrictedUntil', getI64Decoder()], ['pendingWallet', getOptionDecoder(getAddressDecoder())], ['pendingWalletAt', getI64Decoder()], ['bump', getU8Decoder()], ['lastCapStepAt', getI64Decoder()], ['unrestitutedLosses', getU16Decoder()], ['borrowerBarUntil', getI64Decoder()], ['cosignerBarUntil', getI64Decoder()], ['borrowerBarLoan', getOptionDecoder(getAddressDecoder())]]);
 }
 
 /** Gets the codec for {@link Person} account data. */

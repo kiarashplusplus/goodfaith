@@ -95,6 +95,8 @@ pub fn cosign_loan_handler(
     expected_amount: u64,
     expected_term_days: u16,
     max_escrow: u64,
+    expected_grace_days: u16,
+    expected_cosigner_ban_seconds: i64,
 ) -> Result<()> {
     let a = &mut ctx.accounts;
     let now = Clock::get()?.unix_timestamp;
@@ -109,6 +111,13 @@ pub fn cosign_loan_handler(
     // replaced (cancel + new request) since.
     require!(
         amount == expected_amount && term_days == expected_term_days,
+        GoodFaithError::RequestMismatch
+    );
+    // Nor to terms the pool changed under them: the grace period and their own ban are fixed on the
+    // loan from what they saw.
+    require!(
+        a.pool.grace_days == expected_grace_days
+            && a.pool.cosigner_ban_seconds == expected_cosigner_ban_seconds,
         GoodFaithError::RequestMismatch
     );
     require!(amount > 0, GoodFaithError::AmountZero);
@@ -214,7 +223,11 @@ pub fn cosign_loan_handler(
         a.cosigner_person.active_guarantees < a.pool.max_guarantees_per_member,
         GoodFaithError::CosignerLimit
     );
-    require!(a.vault.amount >= amount, GoodFaithError::InsufficientFund);
+    // Reimbursements owed to co-signers sit in the vault and are not the fund's to lend.
+    require!(
+        a.vault.amount.saturating_sub(a.pool.vault_claims) >= amount,
+        GoodFaithError::InsufficientFund
+    );
 
     let escrowed = u64::try_from(
         u128::from(amount)
@@ -273,6 +286,9 @@ pub fn cosign_loan_handler(
         default_ban_seconds: a.pool.default_ban_seconds,
         late_ban_seconds: a.pool.late_ban_seconds,
         cosigner_ban_seconds: a.pool.cosigner_ban_seconds,
+        seasoning_seconds: a.pool.seasoning_seconds,
+        cap_step_interval_seconds: a.pool.cap_step_interval_seconds,
+        forgiven_at: 0,
     });
     a.borrower_person.active_loan = Some(a.loan.key());
     a.cosigner_person.active_guarantees = a

@@ -41,10 +41,11 @@ pub struct Restitute<'info> {
 }
 
 /// Anyone pays back part or all of a settled loan's shortfall. The fund's loss is made good first; the
-/// rest reimburses the co-signer for the escrow that was used (claimable from the vault). Once the
-/// whole shortfall is back, the loan is Restituted and the bars it set are relaxed: the borrower to a
-/// late-repayment bar from the settlement, the co-signer's lifted once none of their guaranteed losses
-/// is outstanding, each only where that bar is the one the person is under now.
+/// rest gives the co-signer back the escrow that was used: escrow the fund has not collected yet is
+/// simply released to them (the vault keeps the payment instead), the rest is owed to them out of the
+/// vault. Once the fund's loss is covered and it was the last loss this co-signer guaranteed, their bar
+/// is lifted, whoever paid. Once the whole shortfall is back and the borrower paid it themselves, their
+/// bar is shortened to a late-payment bar counted from now; a third party's payment leaves it alone.
 pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()> {
     let a = &mut ctx.accounts;
     require!(amount > 0, GoodFaithError::AmountZero);
@@ -66,12 +67,14 @@ pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()>
         a.mint.decimals,
     )?;
 
+    let now = Clock::get()?.unix_timestamp;
     let lost = a.loan.lost();
     let fund_had_back = a.loan.restituted.min(lost);
     let to_fund = amount.min(lost.saturating_sub(fund_had_back));
     let to_cosigner = amount
         .checked_sub(to_fund)
         .ok_or(GoodFaithError::MathOverflow)?;
+    let fund_covered_now = lost > 0 && fund_had_back < lost && fund_had_back + to_fund >= lost;
 
     a.loan.restituted = a
         .loan
@@ -88,41 +91,71 @@ pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()>
         .total_lost
         .checked_sub(to_fund)
         .ok_or(GoodFaithError::MathOverflow)?;
-    if to_cosigner > 0 {
+    // The co-signer's share: escrow still waiting to be collected is released to them where it is
+    // (the fund keeps this payment in its place, so the vault is never short while the escrow is
+    // frozen); only escrow the fund already collected is reimbursed from the vault.
+    let converted = to_cosigner.min(a.loan.recovery_pending);
+    let reimburse = to_cosigner
+        .checked_sub(converted)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    if converted > 0 {
+        a.loan.recovery_pending -= converted;
+        a.loan.refund_pending = a
+            .loan
+            .refund_pending
+            .checked_add(converted)
+            .ok_or(GoodFaithError::MathOverflow)?;
+        a.pool.recoveries_pending = a
+            .pool
+            .recoveries_pending
+            .checked_sub(converted)
+            .ok_or(GoodFaithError::MathOverflow)?;
+        a.pool.pending_claims = a
+            .pool
+            .pending_claims
+            .checked_add(converted)
+            .ok_or(GoodFaithError::MathOverflow)?;
+    }
+    if reimburse > 0 {
         a.loan.reimbursement_pending = a
             .loan
             .reimbursement_pending
-            .checked_add(to_cosigner)
+            .checked_add(reimburse)
             .ok_or(GoodFaithError::MathOverflow)?;
         a.pool.vault_claims = a
             .pool
             .vault_claims
-            .checked_add(to_cosigner)
+            .checked_add(reimburse)
             .ok_or(GoodFaithError::MathOverflow)?;
     }
 
+    // The co-signer's bar answers to the fund's loss alone, in any order of pay-backs.
+    let mut cosigner_lifted = false;
+    if fund_covered_now {
+        a.cosigner_person.unrestituted_losses = a
+            .cosigner_person
+            .unrestituted_losses
+            .checked_sub(1)
+            .ok_or(GoodFaithError::MathOverflow)?;
+        if a.cosigner_person.unrestituted_losses == 0 {
+            cosigner_lifted = a.cosigner_person.lift_cosigner_bar();
+            a.loan.cosigner_bar_until = 0;
+        }
+    }
+
     let complete = a.loan.restituted == a.loan.shortfall;
+    let mut borrower_relaxed = false;
     if complete {
         a.loan.status = LoanStatus::Restituted;
-        let relaxed_to = if a.loan.late_ban_seconds > 0 {
-            a.loan.closed_at.saturating_add(a.loan.late_ban_seconds)
-        } else {
-            0
-        };
-        if a.borrower_person
-            .relax_bar(a.loan.borrower_bar_until, relaxed_to)
-        {
-            a.loan.borrower_bar_until = relaxed_to;
-        }
-        if a.loan.lost() > 0 {
-            a.cosigner_person.unrestituted_losses =
-                a.cosigner_person.unrestituted_losses.saturating_sub(1);
-            // Lifted only once every loss this person guaranteed is paid back, and only where this
-            // bar is the one they are under.
-            if a.cosigner_person.unrestituted_losses == 0
-                && a.cosigner_person.relax_bar(a.loan.cosigner_bar_until, 0)
+        // Only the borrower's own pay-back speaks for them; and the late bar runs from today, so a
+        // pay-back years later still carries it.
+        if a.payer.key() == a.borrower_person.wallet {
+            let relaxed_to = now.saturating_add(a.loan.late_ban_seconds);
+            if a.borrower_person
+                .relax_borrower_bar(a.loan.key(), relaxed_to)
             {
-                a.loan.cosigner_bar_until = 0;
+                a.loan.borrower_bar_until = relaxed_to;
+                borrower_relaxed = true;
             }
         }
     }
@@ -137,7 +170,13 @@ pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()>
         to_cosigner,
         restituted: a.loan.restituted,
         shortfall: a.loan.shortfall,
+        converted,
         complete,
+        borrower_relaxed,
+        cosigner_lifted,
+        unrestituted_losses: a.cosigner_person.unrestituted_losses,
+        borrower_person: a.borrower_person.key(),
+        cosigner_person: a.cosigner_person.key(),
         borrower_ineligible_until: a.borrower_person.ineligible_until,
         cosigner_ineligible_until: a.cosigner_person.ineligible_until,
     });

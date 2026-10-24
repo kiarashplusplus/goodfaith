@@ -35,6 +35,8 @@ const mint = address(flag('mint') ?? file.mint);
 const issuer = address(flag('issuer') ?? admin.address);
 const recovery = address(flag('recovery') ?? admin.address);
 const pause = address(flag('pause') ?? admin.address);
+// Second signer of a wind-down announcement: the upgrade multisig at launch, the admin on a test fork.
+const successorAuthority = address(flag('successor-authority') ?? admin.address);
 
 // Gatekeeper network: an explicit key, the one gatekeeper-setup wrote, or a fresh one created now.
 let network: Address;
@@ -78,6 +80,7 @@ const params = {
   seasoningSeconds: days(file.seasoningDays),
   capStepIntervalSeconds: days(file.capStepIntervalDays),
   maxOutstandingPrincipal: base(file.maxOutstandingPrincipal),
+  successorAuthority,
 };
 
 const [pool] = await gf.findPoolPda({ mint });
@@ -95,6 +98,7 @@ if (p.gatekeeperNetwork !== network) problems.push(`gatekeeper network is ${p.ga
 if (p.issuer !== issuer) problems.push(`issuer is ${p.issuer}, expected ${issuer}`);
 if (p.recoveryAuthority !== recovery) problems.push(`recovery authority is ${p.recoveryAuthority}, expected ${recovery}`);
 if (p.pauseAuthority !== pause) problems.push(`pause authority is ${p.pauseAuthority}, expected ${pause}`);
+if (p.successorAuthority !== successorAuthority) problems.push(`successor authority is ${p.successorAuthority}, expected ${successorAuthority}`);
 const authority = p.authority.__option === 'Some' ? p.authority.value : 'none';
 const fmt = (n: bigint) => (Number(n) / 10 ** file.decimals).toFixed(2);
 const d = (s: bigint) => (s === 9223372036854775807n ? 'for good' : s % 86_400n === 0n ? `${s / 86_400n} days` : `${s} s`);

@@ -60,7 +60,7 @@ if (existing.__option === 'Some') {
   await send([await gf.getRequestLoanInstructionAsync({ payer: borrower, borrower, mint: MINT, borrowerPerson: pB, cosignerMember: mC, borrowerGatewayToken: gwB, amount, termDays: 1, cosigner: cosigner.address })], borrower, 'request');
   loan = await loanPda(pool, (await fetchPool(pool)).loanCount);
   const escrow = (amount * BigInt(p0.cosignerEscrowBps) + 9999n) / 10000n;
-  await send([await gf.getCosignLoanInstructionAsync({ payer: cosigner, cosigner, mint: MINT, vault, request, requestRentPayer: borrower.address, borrowerPerson: pB, cosignerPerson: pC, borrowerToken: await ata(borrower.address), cosignerToken: await ata(cosigner.address), loan, borrowerGatewayToken: gwB, cosignerGatewayToken: gwC, expectedAmount: amount, expectedTermDays: 1, maxEscrow: escrow })], cosigner, 'cosign');
+  await send([await gf.getCosignLoanInstructionAsync({ payer: cosigner, cosigner, mint: MINT, vault, request, requestRentPayer: borrower.address, borrowerPerson: pB, cosignerPerson: pC, borrowerToken: await ata(borrower.address), cosignerToken: await ata(cosigner.address), loan, borrowerGatewayToken: gwB, cosignerGatewayToken: gwC, expectedAmount: amount, expectedTermDays: 1, maxEscrow: escrow, expectedGraceDays: p0.graceDays, expectedCosignerBanSeconds: p0.cosignerBanSeconds })], cosigner, 'cosign');
   const [escrowAddr] = await gf.findEscrowPda({ loan });
   await send([await gf.getRepayInstructionAsync({ payer: borrower, mint: MINT, vault, loan, escrow: escrowAddr, payerToken: await ata(borrower.address), borrowerPerson: pB, cosignerPerson: pC, rentPayer: cosigner.address, amount: 35n * USDC })], borrower, 'repay 35');
 }

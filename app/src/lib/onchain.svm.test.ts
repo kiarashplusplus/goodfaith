@@ -127,6 +127,7 @@ beforeAll(async () => {
     recoveryAuthority: rec.address,
     pauseAuthority: pauser.address,
     recoveryDelaySeconds: 3n * SECONDS_PER_DAY,
+    successorAuthority: adm.address,
     requestTtlSeconds: 7n * SECONDS_PER_DAY,
     firstLoanCap: 1000n * USDC,
     loanCapStep: 100n * USDC,
@@ -562,7 +563,7 @@ describe("settlement", () => {
     await expectCode(collect(stranger, poolA, loanA1), 3012); // the escrow account is gone
   });
 
-  it("restitution pays the fund back first, then the co-signer, and relaxes the bars", async () => {
+  it("restitution pays the fund back first, then the co-signer; the borrower's own pay-back relaxes their bar", async () => {
     const restitute = async (payer: KeyPairSigner, amount: bigint) =>
       sendInstructions(rpc, payer, [await restituteIx({ payer: payer.address, pool: poolA, loan: loanA1, amount })]);
     expect(await expectCode(restitute(third, 101n * USDC), 6009)).toBe("That is more than what is still owed.");
@@ -574,16 +575,25 @@ describe("settlement", () => {
     let p = (await fetchCanonicalPool(rpc))!;
     expect(p).toMatchObject({ totalLost: 0n, totalRestituted: 75n * USDC, vaultClaims: 0n });
     expect(tokenAmount(svm, poolA.vault)).toBe(vault + 75n * USDC);
-    // The last 25 reimburse the co-signer, claimable from the vault; the loan is Restituted and the bars relax.
-    await restitute(third, 25n * USDC);
+    // The fund is whole, so the co-signer's bar lifts now, whoever paid; the borrower's does not.
+    expect(await fetchMember(rpc, poolA.address, cosigner.address)).toMatchObject({ ineligible: false, ineligibleUntil: 0n });
+    expect(await fetchMember(rpc, poolA.address, borrower2.address)).toMatchObject({ ineligible: true, ineligibleUntil: PERMANENT });
+    // The last 25, paid by the borrower, reimburse the co-signer (claimable from the vault); the loan is
+    // Restituted and the borrower's bar relaxes to the late bar counted from today.
+    await restitute(borrower2, 25n * USDC);
     loanA1 = (await fetchLoanById(rpc, poolA.address, 1n))!;
     expect(loanA1).toMatchObject({ status: "Restituted", restituted: 100n * USDC, reimbursementPending: 25n * USDC, cosignerBarUntil: 0n });
     expect(loanTiming(loanA1, svm.getClock().unixTimestamp).state).toBe("restituted");
     p = (await fetchCanonicalPool(rpc))!;
     expect(p).toMatchObject({ totalRestituted: 100n * USDC, vaultClaims: 25n * USDC });
-    // Zero late ban in PARAMS: the borrower is eligible again; the co-signer's bar is lifted.
-    expect(await fetchMember(rpc, poolA.address, borrower2.address)).toMatchObject({ ineligible: false });
-    expect(await fetchMember(rpc, poolA.address, cosigner.address)).toMatchObject({ ineligible: false, ineligibleUntil: 0n });
+    // Zero late ban in PARAMS: the borrower is eligible again from today.
+    expect(await fetchMember(rpc, poolA.address, borrower2.address)).toMatchObject({
+      ineligible: false,
+      ineligibleUntil: svm.getClock().unixTimestamp,
+    });
+    expect((await fetchPerson(rpc, (await fetchMember(rpc, poolA.address, borrower2.address))!.person))!.borrowerBarUntil).toBe(
+      svm.getClock().unixTimestamp,
+    );
     const cosignerUsdc = tokenAmount(svm, await findAta(cosigner.address, POOL_MINT));
     // The claim pays from the vault; no escrow account is involved any more.
     await sendInstructions(rpc, stranger, async () => {
@@ -788,7 +798,10 @@ describe("wallet replacement", () => {
     const successorOwner = await actor(svm, { gateway: false });
     const successor = await plantAta(svm, successorOwner.address, MINT_B, 0n);
     await sendInstructions(rpc, adm, [
-      getAnnounceWindDownInstruction({ authority: adm, pool: poolB.address, successorVault: successor }, { programAddress: PROGRAM_ID }),
+      getAnnounceWindDownInstruction(
+        { authority: adm, successorAuthority: adm, pool: poolB.address, successorVault: successor },
+        { programAddress: PROGRAM_ID },
+      ),
     ]);
     let pool = (await fetchPool(rpc, poolB.address))!;
     const now = svm.getClock().unixTimestamp;

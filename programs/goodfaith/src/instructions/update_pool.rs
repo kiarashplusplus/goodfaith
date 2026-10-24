@@ -8,7 +8,7 @@ use crate::{
         PoolFrozen, PoolUpdated,
     },
     state::*,
-    MIN_TIMELOCK_SECONDS, PERSON_SEED,
+    MIN_RECOVERY_DELAY_SECONDS, MIN_TIMELOCK_SECONDS, PERSON_SEED,
 };
 
 #[derive(Accounts)]
@@ -66,18 +66,24 @@ pub struct LiftBar<'info> {
 }
 
 /// Instant and public: the event carries the hash of the written reason, which the operator publishes.
+/// Both role bars are cleared; the count of unpaid losses the person guaranteed is kept.
 pub fn lift_bar_handler(ctx: Context<LiftBar>, reason: [u8; 32]) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let person = &mut ctx.accounts.person;
     require!(person.ineligible_until > now, GoodFaithError::NotBarred);
     let previous_until = person.ineligible_until;
-    person.ineligible_until = now;
+    let previous_borrower_bar = person.borrower_bar_until;
+    let previous_cosigner_bar = person.cosigner_bar_until;
+    person.clear_bars();
     emit!(BarLifted {
         pool: ctx.accounts.pool.key(),
         person: person.key(),
         by: ctx.accounts.authority.key(),
         reason,
         previous_until,
+        previous_borrower_bar,
+        previous_cosigner_bar,
+        unrestituted_losses: person.unrestituted_losses,
     });
     Ok(())
 }
@@ -110,6 +116,12 @@ pub fn schedule_params_handler(ctx: Context<UpdatePool>, params: PoolParams) -> 
     require!(
         params.timelock_seconds >= MIN_TIMELOCK_SECONDS.min(pool.timelock_seconds),
         GoodFaithError::TimelockBelowMinimum
+    );
+    // Likewise the recovery delay: the veto window can never be scheduled away.
+    require!(
+        params.recovery_delay_seconds
+            >= MIN_RECOVERY_DELAY_SECONDS.min(pool.recovery_delay_seconds),
+        GoodFaithError::RecoveryDelayBelowMinimum
     );
     let effective_at = Clock::get()?
         .unix_timestamp
@@ -147,6 +159,9 @@ pub fn apply_params_handler(ctx: Context<ApplyParams>) -> Result<()> {
         GoodFaithError::TimelockNotElapsed
     );
     params.validate()?;
+    if params.changes_identity_keys(pool) {
+        pool.keys_changed_at = Clock::get()?.unix_timestamp;
+    }
     params.apply_to(pool);
     pool.pending_params = None;
     pool.params_effective_at = 0;

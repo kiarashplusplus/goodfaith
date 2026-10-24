@@ -6,24 +6,28 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
+import { combineCodec, containsBytes, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
 
 export const RECOVERY_COLLECTED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([103, 218, 62, 215, 78, 218, 215, 170]);
 
 export function getRecoveryCollectedEventDiscriminatorBytes(): ReadonlyUint8Array { return fixEncoderSize(getBytesEncoder(), 8).encode(RECOVERY_COLLECTED_EVENT_DISCRIMINATOR); }
 
-export type RecoveryCollectedEvent = { pool: Address; loan: Address; loanId: bigint; amount: bigint; by: Address;  };
+export type RecoveryCollectedEvent = { pool: Address; loan: Address; loanId: bigint; amount: bigint; 
+/** Tokens somebody sent to the escrow beyond what it was owed, kept by the fund as a donation. */
+donated: bigint; by: Address; escrowClosed: boolean;  };
 
-export type RecoveryCollectedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; amount: number | bigint; by: Address | HasAddress;  };
+export type RecoveryCollectedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; amount: number | bigint; 
+/** Tokens somebody sent to the escrow beyond what it was owed, kept by the fund as a donation. */
+donated: number | bigint; by: Address | HasAddress; escrowClosed: boolean;  };
 
 /** Gets the encoder for {@link RecoveryCollectedEventArgs} event data. */
 export function getRecoveryCollectedEventEncoder(): FixedSizeEncoder<RecoveryCollectedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['amount', getU64Encoder()], ['by', getAddressEncoder()]]), [getConstantEncoder(RECOVERY_COLLECTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['amount', getU64Encoder()], ['donated', getU64Encoder()], ['by', getAddressEncoder()], ['escrowClosed', getBooleanEncoder()]]), [getConstantEncoder(RECOVERY_COLLECTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link RecoveryCollectedEvent} event data. */
 export function getRecoveryCollectedEventDecoder(): FixedSizeDecoder<RecoveryCollectedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['amount', getU64Decoder()], ['by', getAddressDecoder()]]), [getConstantDecoder(RECOVERY_COLLECTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['amount', getU64Decoder()], ['donated', getU64Decoder()], ['by', getAddressDecoder()], ['escrowClosed', getBooleanDecoder()]]), [getConstantDecoder(RECOVERY_COLLECTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link RecoveryCollectedEvent} event data. */

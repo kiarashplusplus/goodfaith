@@ -19,6 +19,7 @@ export * from './collectRecovery';
 export * from './cosignLoan';
 export * from './donate';
 export * from './finalizeRebind';
+export * from './forgive';
 export * from './freezePool';
 export * from './initializePool';
 export * from './liftBar';

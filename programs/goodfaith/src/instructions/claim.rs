@@ -47,7 +47,11 @@ pub struct ClaimEscrow<'info> {
         token::authority = pool,
     )]
     pub escrow: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
-    #[account(address = loan.cosigner_person)]
+    /// Claims wait while a wallet recovery is pending, so a lost wallet is never paid.
+    #[account(
+        address = loan.cosigner_person,
+        constraint = cosigner_person.pending_wallet.is_none() @ GoodFaithError::RecoveryPending,
+    )]
     pub cosigner_person: Box<Account<'info, Person>>,
     #[account(
         mut,
@@ -68,8 +72,14 @@ pub fn claim_escrow_handler(mut ctx: Context<ClaimEscrow>) -> Result<()> {
     let decimals = a.mint.decimals;
 
     let mut from_escrow = 0u64;
+    let mut escrow_closed = false;
     if let Some(escrow) = a.escrow.as_ref() {
-        from_escrow = a.loan.refund_pending;
+        // Everything in the escrow beyond the fund's uncollected recovery is the co-signer's: the refund
+        // owed plus anything sent to the account since, so a stray deposit never blocks the close.
+        from_escrow = escrow
+            .amount
+            .checked_sub(a.loan.recovery_pending)
+            .ok_or(GoodFaithError::MathOverflow)?;
         if from_escrow > 0 {
             token_interface::transfer_checked(
                 CpiContext::new_with_signer(
@@ -88,10 +98,11 @@ pub fn claim_escrow_handler(mut ctx: Context<ClaimEscrow>) -> Result<()> {
             a.pool.pending_claims = a
                 .pool
                 .pending_claims
-                .checked_sub(from_escrow)
+                .checked_sub(a.loan.refund_pending)
                 .ok_or(GoodFaithError::MathOverflow)?;
             a.loan.refund_pending = 0;
         }
+        // Nothing is left in the account once the recovery is collected too.
         if a.loan.recovery_pending == 0 {
             token_interface::close_account(CpiContext::new_with_signer(
                 a.token_program.key(),
@@ -102,6 +113,7 @@ pub fn claim_escrow_handler(mut ctx: Context<ClaimEscrow>) -> Result<()> {
                 },
                 &[seeds],
             ))?;
+            escrow_closed = true;
         }
     }
 
@@ -146,6 +158,7 @@ pub fn claim_escrow_handler(mut ctx: Context<ClaimEscrow>) -> Result<()> {
         amount,
         from_escrow,
         from_vault,
+        escrow_closed,
     });
     Ok(())
 }
@@ -194,6 +207,17 @@ pub fn collect_recovery_handler(mut ctx: Context<CollectRecovery>) -> Result<()>
     let amount = a.loan.recovery_pending;
     let mint_key = a.mint.key();
     let seeds: &[&[u8]] = &[POOL_SEED, mint_key.as_ref(), &[a.pool.bump]];
+    // When the co-signer is owed nothing from this account, whatever else is in it (a stray deposit)
+    // comes along as a donation, so the account is empty and can be closed.
+    let closing = a.loan.refund_pending == 0;
+    let donated = if closing {
+        a.escrow
+            .amount
+            .checked_sub(amount)
+            .ok_or(GoodFaithError::MathOverflow)?
+    } else {
+        0
+    };
     token_interface::transfer_checked(
         CpiContext::new_with_signer(
             a.token_program.key(),
@@ -205,10 +229,12 @@ pub fn collect_recovery_handler(mut ctx: Context<CollectRecovery>) -> Result<()>
             },
             &[seeds],
         ),
-        amount,
+        amount
+            .checked_add(donated)
+            .ok_or(GoodFaithError::MathOverflow)?,
         a.mint.decimals,
     )?;
-    if a.loan.refund_pending == 0 {
+    if closing {
         token_interface::close_account(CpiContext::new_with_signer(
             a.token_program.key(),
             CloseAccount {
@@ -229,13 +255,20 @@ pub fn collect_recovery_handler(mut ctx: Context<CollectRecovery>) -> Result<()>
         .total_recovered
         .checked_add(amount)
         .ok_or(GoodFaithError::MathOverflow)?;
+    a.pool.total_donated = a
+        .pool
+        .total_donated
+        .checked_add(donated)
+        .ok_or(GoodFaithError::MathOverflow)?;
     a.loan.recovery_pending = 0;
     emit!(RecoveryCollected {
         pool: a.pool.key(),
         loan: a.loan.key(),
         loan_id: a.loan.id,
         amount,
+        donated,
         by: a.collector.key(),
+        escrow_closed: closing,
     });
     Ok(())
 }

@@ -5,7 +5,7 @@ use crate::{
     events::{RebindProposed, RebindVetoed, WalletRebound},
     gateway::verify_gateway_token,
     state::*,
-    MEMBER_SEED, PERSON_SEED,
+    KEY_QUARANTINE_SECONDS, MEMBER_SEED, PERSON_SEED,
 };
 
 /// Step one of a wallet recovery (lost keys): the issuer and the recovery authority both vouch for
@@ -89,6 +89,15 @@ pub struct FinalizeRebind<'info> {
 
 pub fn propose_rebind_handler(ctx: Context<ProposeRebind>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
+    // A freshly installed issuer, recovery key or gatekeeper network cannot move anyone yet.
+    require!(
+        now >= ctx
+            .accounts
+            .pool
+            .keys_changed_at
+            .saturating_add(KEY_QUARANTINE_SECONDS),
+        GoodFaithError::KeysRecentlyChanged
+    );
     verify_gateway_token(
         &ctx.accounts.gateway_token,
         &ctx.accounts.new_wallet.key(),

@@ -98,6 +98,8 @@ pub struct EscrowClaimed {
     pub from_escrow: u64,
     /// Reimbursement paid from the vault.
     pub from_vault: u64,
+    /// Nothing is left in the escrow account; its rent went back.
+    pub escrow_closed: bool,
 }
 
 #[event]
@@ -106,7 +108,21 @@ pub struct RecoveryCollected {
     pub loan: Pubkey,
     pub loan_id: u64,
     pub amount: u64,
+    /// Tokens somebody sent to the escrow beyond what it was owed, kept by the fund as a donation.
+    pub donated: u64,
     pub by: Pubkey,
+    pub escrow_closed: bool,
+}
+
+#[event]
+pub struct Forgiven {
+    pub pool: Pubkey,
+    pub loan: Pubkey,
+    pub loan_id: u64,
+    pub cosigner_person: Pubkey,
+    pub by: Pubkey,
+    /// What the borrower no longer owes.
+    pub unpaid: u64,
 }
 
 #[event]
@@ -122,8 +138,18 @@ pub struct Restituted {
     pub to_cosigner: u64,
     pub restituted: u64,
     pub shortfall: u64,
-    /// The whole shortfall is paid back: the loan is Restituted and its bars relaxed.
+    /// Of `to_cosigner`, escrow still uncollected that is released back to the co-signer instead of
+    /// being collected and reimbursed from the vault.
+    pub converted: u64,
+    /// The whole shortfall is paid back: the loan is Restituted.
     pub complete: bool,
+    /// The borrower paid back their own loan in full: their bar now ends at `now + late_ban_seconds`.
+    pub borrower_relaxed: bool,
+    /// The fund's loss on this loan is covered and it was the co-signer's last one: their bar is lifted.
+    pub cosigner_lifted: bool,
+    pub unrestituted_losses: u16,
+    pub borrower_person: Pubkey,
+    pub cosigner_person: Pubkey,
     pub borrower_ineligible_until: i64,
     pub cosigner_ineligible_until: i64,
 }
@@ -136,6 +162,10 @@ pub struct BarLifted {
     /// Hash of the operator's written reason; the log it points to is public.
     pub reason: [u8; 32],
     pub previous_until: i64,
+    pub previous_borrower_bar: i64,
+    pub previous_cosigner_bar: i64,
+    /// Kept as it was: a later loss on a guaranteed loan bars again.
+    pub unrestituted_losses: u16,
 }
 
 #[event]
@@ -202,6 +232,8 @@ pub struct Repaid {
     pub loan_id: u64,
     pub borrower: Pubkey,
     pub cosigner: Pubkey,
+    pub borrower_person: Pubkey,
+    pub cosigner_person: Pubkey,
     pub payer: Pubkey,
     pub amount: u64,
     pub total_repaid: u64,
@@ -219,6 +251,8 @@ pub struct LoanSettled {
     pub loan_id: u64,
     pub borrower: Pubkey,
     pub cosigner: Pubkey,
+    pub borrower_person: Pubkey,
+    pub cosigner_person: Pubkey,
     pub shortfall: u64,
     /// Escrow applied to the shortfall, waiting in the escrow account for `collect_recovery`.
     pub recovered: u64,

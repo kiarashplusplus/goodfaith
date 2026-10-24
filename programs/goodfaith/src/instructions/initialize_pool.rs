@@ -59,6 +59,7 @@ pub fn initialize_pool_handler(ctx: Context<InitializePool>, params: PoolParams)
     pool.vault_claims = 0;
     pool.total_restituted = 0;
     pool.total_reimbursed = 0;
+    pool.keys_changed_at = 0;
     pool.bump = ctx.bumps.pool;
     pool.vault_bump = ctx.bumps.vault;
     emit!(PoolInitialized {

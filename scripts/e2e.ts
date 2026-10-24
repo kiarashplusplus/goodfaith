@@ -83,7 +83,7 @@ const params = (timelockSeconds: bigint) => ({
   recoveryDelaySeconds: 3600n, requestTtlSeconds: 7n * DAY, firstLoanCap: 1000n * USDC, loanCapStep: 100n * USDC, cooldownSeconds: 0n,
   maxExposurePerPerson: 10_000n * USDC, disbursementWindowSeconds: DAY, disbursementCapPerWindow: 0n,
   defaultBanSeconds: PERMANENT, lateBanSeconds: 0n, cosignerBanSeconds: PERMANENT,
-  seasoningSeconds: 0n, capStepIntervalSeconds: 0n, maxOutstandingPrincipal: 0n,
+  seasoningSeconds: 0n, capStepIntervalSeconds: 0n, maxOutstandingPrincipal: 0n, successorAuthority: admin.address,
 });
 
 const [pool] = await gf.findPoolPda({ mint: MINT });
@@ -152,7 +152,7 @@ async function openLoan(amount: bigint, termDays: number, b: Party = B, c: Party
   const loan = await loanPda(pool, id);
   const escrow = (amount * BigInt(pBefore.cosignerEscrowBps) + 9999n) / 10000n;
   const before = { vault: await tok(vault), b: await tok(b.token), c: await tok(c.token) };
-  await send([await gf.getCosignLoanInstructionAsync({ payer: c.signer, cosigner: c.signer, mint: MINT, vault, request, requestRentPayer: b.signer.address, borrowerPerson: b.person, cosignerPerson: c.person, borrowerToken: b.token, cosignerToken: c.token, loan, borrowerGatewayToken: b.gw, cosignerGatewayToken: c.gw, expectedAmount: amount, expectedTermDays: termDays, maxEscrow: escrow })], c.signer, 'cosign_loan');
+  await send([await gf.getCosignLoanInstructionAsync({ payer: c.signer, cosigner: c.signer, mint: MINT, vault, request, requestRentPayer: b.signer.address, borrowerPerson: b.person, cosignerPerson: c.person, borrowerToken: b.token, cosignerToken: c.token, loan, borrowerGatewayToken: b.gw, cosignerGatewayToken: c.gw, expectedAmount: amount, expectedTermDays: termDays, maxEscrow: escrow, expectedGraceDays: p.graceDays, expectedCosignerBanSeconds: p.cosignerBanSeconds })], c.signer, 'cosign_loan');
   const [escrowAddr] = await gf.findEscrowPda({ loan });
   assert.equal(await tok(vault), before.vault - amount);
   assert.equal(await tok(b.token), before.b + amount);
@@ -301,7 +301,7 @@ const paramsOf = (x: Awaited<ReturnType<typeof fetchPool>>) => ({
   issuer: x.issuer, timelockSeconds: x.timelockSeconds, recoveryAuthority: x.recoveryAuthority, pauseAuthority: x.pauseAuthority, recoveryDelaySeconds: x.recoveryDelaySeconds, requestTtlSeconds: x.requestTtlSeconds,
   firstLoanCap: x.firstLoanCap, loanCapStep: x.loanCapStep, cooldownSeconds: x.cooldownSeconds, maxExposurePerPerson: x.maxExposurePerPerson, disbursementWindowSeconds: x.disbursementWindowSeconds,
   disbursementCapPerWindow: x.disbursementCapPerWindow, defaultBanSeconds: x.defaultBanSeconds, lateBanSeconds: x.lateBanSeconds, cosignerBanSeconds: x.cosignerBanSeconds,
-  seasoningSeconds: x.seasoningSeconds, capStepIntervalSeconds: x.capStepIntervalSeconds, maxOutstandingPrincipal: x.maxOutstandingPrincipal,
+  seasoningSeconds: x.seasoningSeconds, capStepIntervalSeconds: x.capStepIntervalSeconds, maxOutstandingPrincipal: x.maxOutstandingPrincipal, successorAuthority: x.successorAuthority,
 });
 let newGrace = p.graceDays;
 if (frozenAtStart) {
@@ -446,7 +446,7 @@ if (!frozenAtStart) {
   await cheat('surfnet_timeTravel', [{ absoluteTimestamp: (Number(req.expiresAt) + 60) * 1000 }]);
   await new Promise(r => setTimeout(r, 1500));
   const [cm] = await gf.findMemberPda({ pool, wallet: fourth.address });
-  const expiredCosign = await expectFail(send([await gf.getCosignLoanInstructionAsync({ payer: fifth, cosigner: fifth, mint: MINT, vault, request, requestRentPayer: fourth.address, borrowerPerson: p4, cosignerPerson: (await getMember(m5)).person, borrowerToken: await ata(fourth.address), cosignerToken: await ata(fifth.address), loan: await loanPda(pool, (await fetchPool(pool)).loanCount), borrowerGatewayToken: gw4, cosignerGatewayToken: gw5, expectedAmount: 10n * USDC, expectedTermDays: 5, maxEscrow: 3n * USDC })], fifth, 'cosign expired'), 'cosign an expired request');
+  const expiredCosign = await expectFail(send([await gf.getCosignLoanInstructionAsync({ payer: fifth, cosigner: fifth, mint: MINT, vault, request, requestRentPayer: fourth.address, borrowerPerson: p4, cosignerPerson: (await getMember(m5)).person, borrowerToken: await ata(fourth.address), cosignerToken: await ata(fifth.address), loan: await loanPda(pool, (await fetchPool(pool)).loanCount), borrowerGatewayToken: gw4, cosignerGatewayToken: gw5, expectedAmount: 10n * USDC, expectedTermDays: 5, maxEscrow: 3n * USDC, expectedGraceDays: (await fetchPool(pool)).graceDays, expectedCosignerBanSeconds: (await fetchPool(pool)).cosignerBanSeconds })], fifth, 'cosign expired'), 'cosign an expired request');
   void cm;
   const solBefore = await sol(fourth.address);
   await send([gf.getCloseExpiredRequestInstruction({ closer: third, pool, request, rentPayer: fourth.address })], third, 'close_expired_request');
@@ -507,9 +507,10 @@ if (!frozenAtStart) {
   const donorW = await ataFor(donor.address, M2);
   const successor = await ataFor(third.address, M2);
   await send([await gf.getDonateInstructionAsync({ donor, mint: M2, vault: vaultW, donorToken: donorW, amount: 100n * USDC })], donor, 'donate W');
-  const badSuccessor = await expectFail(send([gf.getAnnounceWindDownInstruction({ authority: admin, pool: poolW, successorVault: vaultW })], admin, 'announce with vault'), 'vault as successor');
-  const stranger = await expectFail(send([gf.getAnnounceWindDownInstruction({ authority: third, pool: poolW, successorVault: successor })], third, 'announce by stranger'), 'stranger announce');
-  await send([gf.getAnnounceWindDownInstruction({ authority: admin, pool: poolW, successorVault: successor })], admin, 'announce_wind_down');
+  const badSuccessor = await expectFail(send([gf.getAnnounceWindDownInstruction({ authority: admin, successorAuthority: admin, pool: poolW, successorVault: vaultW })], admin, 'announce with vault'), 'vault as successor');
+  const stranger = await expectFail(send([gf.getAnnounceWindDownInstruction({ authority: third, successorAuthority: third, pool: poolW, successorVault: successor })], third, 'announce by stranger'), 'stranger announce');
+  const oneKey = await expectFail(send([gf.getAnnounceWindDownInstruction({ authority: admin, successorAuthority: third, pool: poolW, successorVault: successor })], admin, 'announce without the successor key'), 'announce with one key');
+  await send([gf.getAnnounceWindDownInstruction({ authority: admin, successorAuthority: admin, pool: poolW, successorVault: successor })], admin, 'announce_wind_down');
   let pw = await fetchPool(poolW);
   assert.equal(pw.successor.__option === 'Some' ? pw.successor.value : null, successor);
   // zero timelock on this pool: in effect at once
@@ -520,7 +521,7 @@ if (!frozenAtStart) {
   assert.equal(await tok(vaultW), 0n);
   assert.equal(await tok(successor), 100n * USDC);
   assert.equal(pw.totalSwept, 100n * USDC);
-  row('wind-down (pool W)', `vault as successor ${errName(badSuccessor)}`, `stranger ${errName(stranger)}`, `donate after effect ${errName(closedDonate)}`, `cancel after effect ${errName(noCancel)}`, `swept 100.00 to the successor by a third party`);
+  row('wind-down (pool W)', `vault as successor ${errName(badSuccessor)}`, `stranger ${errName(stranger)}`, `without the successor key ${errName(oneKey)}`, `donate after effect ${errName(closedDonate)}`, `cancel after effect ${errName(noCancel)}`, `swept 100.00 to the successor by a third party`);
 }
 
 // ---------- freeze_pool (irreversible) ----------

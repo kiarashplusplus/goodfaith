@@ -26,6 +26,7 @@ const FIELDS: Record<keyof Params, 'address' | 'u64' | 'i64' | 'u16' | 'u8'> = {
   issuer: 'address', timelockSeconds: 'i64', recoveryAuthority: 'address', pauseAuthority: 'address', recoveryDelaySeconds: 'i64', requestTtlSeconds: 'i64',
   firstLoanCap: 'u64', loanCapStep: 'u64', cooldownSeconds: 'i64', maxExposurePerPerson: 'u64', disbursementWindowSeconds: 'i64', disbursementCapPerWindow: 'u64',
   defaultBanSeconds: 'i64', lateBanSeconds: 'i64', cosignerBanSeconds: 'i64', seasoningSeconds: 'i64', capStepIntervalSeconds: 'i64', maxOutstandingPrincipal: 'u64',
+  successorAuthority: 'address',
 };
 const PERMANENT = 9223372036854775807n;
 const paramsOf = (p: Awaited<ReturnType<typeof fetchPool>>): Params =>
@@ -108,8 +109,13 @@ export async function run(argv: string[], out: (line: string) => void = console.
       out(`lending resumed: ${await send([gf.getResumeLendingInstruction({ authority: signer, pool })], signer, 'resume_lending')}`);
       return;
     case 'announce-wind-down': {
+      // Two keys: the authority and the pool's successor authority (SUCCESSOR_KEYPAIR, or the same key
+      // when the pool names the authority as both).
       const successor = address(positional[0] ?? '');
-      out(`wind-down announced to ${successor}: ${await send([gf.getAnnounceWindDownInstruction({ authority: signer, pool, successorVault: successor })], signer, 'announce_wind_down')}`);
+      const secondPath = process.env.SUCCESSOR_KEYPAIR;
+      const second = secondPath ? await createKeyPairSignerFromBytes(Uint8Array.from(JSON.parse(fs.readFileSync(secondPath, 'utf8')))) : signer;
+      if (second.address !== p.successorAuthority) throw new Error(`the successor authority is ${p.successorAuthority}; set SUCCESSOR_KEYPAIR to its keypair file`);
+      out(`wind-down announced to ${successor}: ${await send([gf.getAnnounceWindDownInstruction({ authority: signer, successorAuthority: second, pool, successorVault: successor })], signer, 'announce_wind_down')}`);
       return;
     }
     case 'cancel-wind-down':

@@ -157,6 +157,10 @@ export type Pool = {
   seasoningSeconds: bigint;
   capStepIntervalSeconds: bigint;
   maxOutstandingPrincipal: bigint;
+  /** When the issuer, recovery key or gatekeeper network last changed; recoveries wait 7 days after it. */
+  keysChangedAt: bigint;
+  /** Second key that must sign a wind-down announcement. */
+  successorAuthority: Address;
   /** Principal still owed on Active loans. */
   outstandingPrincipal: bigint;
   /** Escrow owed to the fund by settled loans, still in escrow accounts until collected. */
@@ -189,6 +193,12 @@ export type Person = {
   lastCapStepAt: bigint;
   /** Settled loans this person co-signed whose loss is not yet paid back. */
   unrestitutedLosses: number;
+  /** Bar from this person's own default (0: none); relaxed only by their own pay-back, or a lift. */
+  borrowerBarUntil: bigint;
+  /** Bar from a loss on a loan they co-signed (0: none); lifted once every such loss is paid back. */
+  cosignerBarUntil: bigint;
+  /** The loan whose settlement set `borrowerBarUntil`. */
+  borrowerBarLoan: Address | null;
 };
 
 export const PERMANENT = 9223372036854775807n;
@@ -253,6 +263,11 @@ export type Loan = {
   defaultBanSeconds: bigint;
   lateBanSeconds: bigint;
   cosignerBanSeconds: bigint;
+  /** Cap-credit rules fixed when the loan opened. */
+  seasoningSeconds: bigint;
+  capStepIntervalSeconds: bigint;
+  /** When the co-signer forgave the unpaid rest (0: not forgiven). */
+  forgivenAt: bigint;
 };
 
 /** What the co-signer can still collect: the escrow refund plus any reimbursement from the vault. */
@@ -430,6 +445,8 @@ export async function fetchPool(rpc: ReadRpc, a: Address): Promise<Pool | null> 
     seasoningSeconds: d.seasoningSeconds,
     capStepIntervalSeconds: d.capStepIntervalSeconds,
     maxOutstandingPrincipal: d.maxOutstandingPrincipal,
+    keysChangedAt: d.keysChangedAt,
+    successorAuthority: d.successorAuthority,
     outstandingPrincipal: d.outstandingPrincipal,
     recoveriesPending: d.recoveriesPending,
     vaultClaims: d.vaultClaims,
@@ -459,6 +476,9 @@ function toPerson(address: Address, d: PersonData): Person {
     pendingWalletAt: d.pendingWalletAt,
     lastCapStepAt: d.lastCapStepAt,
     unrestitutedLosses: d.unrestitutedLosses,
+    borrowerBarUntil: d.borrowerBarUntil,
+    cosignerBarUntil: d.cosignerBarUntil,
+    borrowerBarLoan: unwrap(d.borrowerBarLoan),
   };
 }
 
@@ -564,6 +584,9 @@ function toLoan(address: Address, d: LoanData): Loan {
     defaultBanSeconds: d.defaultBanSeconds,
     lateBanSeconds: d.lateBanSeconds,
     cosignerBanSeconds: d.cosignerBanSeconds,
+    seasoningSeconds: d.seasoningSeconds,
+    capStepIntervalSeconds: d.capStepIntervalSeconds,
+    forgivenAt: d.forgivenAt,
   };
 }
 
@@ -931,6 +954,9 @@ export async function cosignLoanIx(a: {
       expectedAmount: a.expectedAmount,
       expectedTermDays: a.expectedTermDays,
       maxEscrow: a.maxEscrow,
+      // The pool's terms as the co-signer saw them; a change under them makes the program refuse.
+      expectedGraceDays: p.graceDays,
+      expectedCosignerBanSeconds: p.cosignerBanSeconds,
     },
     cfg,
   );

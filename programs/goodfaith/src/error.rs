@@ -92,4 +92,8 @@ pub enum GoodFaithError {
     LoanNotSettled,
     #[msg("The person is not barred")]
     NotBarred,
+    #[msg("The recovery delay cannot be set below the minimum")]
+    RecoveryDelayBelowMinimum,
+    #[msg("The identity keys changed recently; wallet recoveries wait out the quarantine")]
+    KeysRecentlyChanged,
 }

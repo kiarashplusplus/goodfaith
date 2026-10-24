@@ -115,12 +115,16 @@ pub mod goodfaith {
         expected_amount: u64,
         expected_term_days: u16,
         max_escrow: u64,
+        expected_grace_days: u16,
+        expected_cosigner_ban_seconds: i64,
     ) -> Result<()> {
         instructions::cosign_loan::cosign_loan_handler(
             ctx,
             expected_amount,
             expected_term_days,
             max_escrow,
+            expected_grace_days,
+            expected_cosigner_ban_seconds,
         )
     }
 
@@ -146,5 +150,9 @@ pub mod goodfaith {
 
     pub fn lift_bar(ctx: Context<LiftBar>, reason: [u8; 32]) -> Result<()> {
         instructions::update_pool::lift_bar_handler(ctx, reason)
+    }
+
+    pub fn forgive(ctx: Context<Forgive>) -> Result<()> {
+        instructions::forgive::forgive_handler(ctx)
     }
 }

@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, containsBytes, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getI64Decoder, getI64Encoder, getStructDecoder, getStructEncoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
+import { combineCodec, containsBytes, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getConstantDecoder, getConstantEncoder, getHiddenPrefixDecoder, getHiddenPrefixEncoder, getI64Decoder, getI64Encoder, getStructDecoder, getStructEncoder, getU16Decoder, getU16Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type HasAddress, type ReadonlyUint8Array } from '@solana/kit';
 
 export const BAR_LIFTED_EVENT_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([209, 9, 252, 83, 102, 1, 41, 109]);
 
@@ -14,20 +14,24 @@ export function getBarLiftedEventDiscriminatorBytes(): ReadonlyUint8Array { retu
 
 export type BarLiftedEvent = { pool: Address; person: Address; by: Address; 
 /** Hash of the operator's written reason; the log it points to is public. */
-reason: ReadonlyUint8Array; previousUntil: bigint;  };
+reason: ReadonlyUint8Array; previousUntil: bigint; previousBorrowerBar: bigint; previousCosignerBar: bigint; 
+/** Kept as it was: a later loss on a guaranteed loan bars again. */
+unrestitutedLosses: number;  };
 
 export type BarLiftedEventArgs = { pool: Address | HasAddress; person: Address | HasAddress; by: Address | HasAddress; 
 /** Hash of the operator's written reason; the log it points to is public. */
-reason: ReadonlyUint8Array; previousUntil: number | bigint;  };
+reason: ReadonlyUint8Array; previousUntil: number | bigint; previousBorrowerBar: number | bigint; previousCosignerBar: number | bigint; 
+/** Kept as it was: a later loss on a guaranteed loan bars again. */
+unrestitutedLosses: number;  };
 
 /** Gets the encoder for {@link BarLiftedEventArgs} event data. */
 export function getBarLiftedEventEncoder(): FixedSizeEncoder<BarLiftedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['person', getAddressEncoder()], ['by', getAddressEncoder()], ['reason', fixEncoderSize(getBytesEncoder(), 32)], ['previousUntil', getI64Encoder()]]), [getConstantEncoder(BAR_LIFTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['person', getAddressEncoder()], ['by', getAddressEncoder()], ['reason', fixEncoderSize(getBytesEncoder(), 32)], ['previousUntil', getI64Encoder()], ['previousBorrowerBar', getI64Encoder()], ['previousCosignerBar', getI64Encoder()], ['unrestitutedLosses', getU16Encoder()]]), [getConstantEncoder(BAR_LIFTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link BarLiftedEvent} event data. */
 export function getBarLiftedEventDecoder(): FixedSizeDecoder<BarLiftedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['person', getAddressDecoder()], ['by', getAddressDecoder()], ['reason', fixDecoderSize(getBytesDecoder(), 32)], ['previousUntil', getI64Decoder()]]), [getConstantDecoder(BAR_LIFTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['person', getAddressDecoder()], ['by', getAddressDecoder()], ['reason', fixDecoderSize(getBytesDecoder(), 32)], ['previousUntil', getI64Decoder()], ['previousBorrowerBar', getI64Decoder()], ['previousCosignerBar', getI64Decoder()], ['unrestitutedLosses', getU16Decoder()]]), [getConstantDecoder(BAR_LIFTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link BarLiftedEvent} event data. */

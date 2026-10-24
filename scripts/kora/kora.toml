@@ -33,7 +33,7 @@ get_payer_signer = true
 
 [validation]
 # Fee payer outflow per transaction, rent created through CPI included. The largest sponsored transaction is a
-# first co-sign: borrower token account 2_039_280 + Loan (317 bytes) 3_097_200 + escrow 2_039_280 = 7_175_760 lamports,
+# first co-sign: borrower token account 2_039_280 + Loan (341 bytes) 3_264_240 + escrow 2_039_280 = 7_342_800 lamports,
 # plus fee headroom. Rent returned by closing accounts does not count against this.
 max_allowed_lamports = 8_000_000
 # Kora + the wallet + the issuer on a registration (recovery proposals are sent by the operator's CLI; the app's proxy only lets extra
