@@ -19,7 +19,9 @@ release set `SOLANA_VERSION` (only tarballs that exist on release.anza.xyz work;
 2. Plant the program on the fork: `npm run deploy-fork`. This writes `target/deploy/goodfaith.so` at the program id
    declared in `programs/goodfaith/src/lib.rs` with the `surfnet_writeProgram` cheatcode, so the original program keypair
    is not needed (a fresh `anchor build` generates a new, unrelated `target/deploy/goodfaith-keypair.json`; ignore it).
-   The upgrade authority is your `~/.config/solana/id.json`.
+   The upgrade authority is your `~/.config/solana/id.json`. The program is also live on devnet, so before planting it
+   takes the program, every account it owns and their vaults and escrows offline on the fork (`surfnet_offlineAccount`);
+   otherwise the fork would clone the devnet pool, which sits at the same address (`REMOTE_RPC_URL` overrides devnet).
 3. Create the gatekeeper network and the fund: `npm run gatekeeper-setup && npm run launch -- --timelock 3600
    --recovery-delay 3600` (`launch.ts` reads `launch.json`, the decided settings; without the two flags it uses the
    real seven-day notice and three-day recovery delay). It prints the app's `NEXT_PUBLIC_*` block and writes
