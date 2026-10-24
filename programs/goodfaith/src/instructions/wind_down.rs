@@ -35,7 +35,8 @@ pub struct CancelWindDown<'info> {
     pub pool: Account<'info, Pool>,
 }
 
-/// Anyone may move the balance to the successor once the wind-down is in effect and no loan is open.
+/// Anyone may move the balance (less what co-signers are owed from it) to the successor once the
+/// wind-down is in effect and no loan is open.
 #[derive(Accounts)]
 pub struct SweepToSuccessor<'info> {
     #[account(
@@ -97,7 +98,8 @@ pub fn sweep_to_successor_handler(ctx: Context<SweepToSuccessor>) -> Result<()> 
     let pool = &ctx.accounts.pool;
     require!(pool.winding_down(now), GoodFaithError::NotWindingDown);
     require!(pool.active_loans == 0, GoodFaithError::LoansOutstanding);
-    let amount = ctx.accounts.vault.amount;
+    // Reimbursements owed to co-signers stay behind; recoveries collected later can be swept again.
+    let amount = ctx.accounts.vault.amount.saturating_sub(pool.vault_claims);
     require!(amount > 0, GoodFaithError::AmountZero);
 
     let mint_key = ctx.accounts.mint.key();

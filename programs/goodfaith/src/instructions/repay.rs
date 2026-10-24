@@ -53,11 +53,15 @@ pub struct Repay<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
+/// Repayment is only possible up to the deadline; after it the loan is settled like any other and the
+/// borrower pays back through `restitute`, so a late payer and the cranker reach the same state.
 /// Repayment never touches a co-signer's token account: on the closing payment the escrow is marked as
 /// owed and waits for `claim_escrow`, so a frozen or closed account can never block a loan from closing.
 pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
     let a = &mut ctx.accounts;
     let now = Clock::get()?.unix_timestamp;
+    let deadline = a.loan.deadline().ok_or(GoodFaithError::MathOverflow)?;
+    require!(now <= deadline, GoodFaithError::LoanPastDeadline);
     require!(amount > 0, GoodFaithError::AmountZero);
     let owed = a
         .loan
@@ -91,25 +95,28 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
         .total_repaid
         .checked_add(amount)
         .ok_or(GoodFaithError::MathOverflow)?;
+    a.pool.outstanding_principal = a
+        .pool
+        .outstanding_principal
+        .checked_sub(amount)
+        .ok_or(GoodFaithError::MathOverflow)?;
     let fully_repaid = a.loan.repaid == a.loan.principal;
-    let mut late = false;
+    let mut cap_credited = false;
     let mut refund_pending = 0;
 
     if fully_repaid {
-        let deadline = a.loan.deadline().ok_or(GoodFaithError::MathOverflow)?;
-        late = now > deadline;
-        a.loan.status = if late {
-            LoanStatus::RepaidLate
-        } else {
-            LoanStatus::Repaid
-        };
+        a.loan.status = LoanStatus::Repaid;
         a.loan.closed_at = now;
         a.borrower_person.active_loan = None;
-        if late {
-            let secs = a.pool.late_ban_seconds;
-            a.borrower_person.bar(now, secs);
-        } else {
+        // The cap grows only on loans that ran their course, and at most once per interval, so
+        // borrowing and repaying at once does not buy a larger loan.
+        let seasoned = now.saturating_sub(a.loan.opened_at) >= a.pool.seasoning_seconds;
+        let spaced = now.saturating_sub(a.borrower_person.last_cap_step_at)
+            >= a.pool.cap_step_interval_seconds;
+        if seasoned && spaced {
             a.borrower_person.completed_loans = a.borrower_person.completed_loans.saturating_add(1);
+            a.borrower_person.last_cap_step_at = now;
+            cap_credited = true;
         }
         a.cosigner_person.active_guarantees = a
             .cosigner_person
@@ -160,7 +167,7 @@ pub fn repay_handler(mut ctx: Context<Repay>, amount: u64) -> Result<()> {
         amount,
         total_repaid: a.loan.repaid,
         fully_repaid,
-        late,
+        cap_credited,
         refund_pending,
     });
     Ok(())

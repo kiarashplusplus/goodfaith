@@ -54,6 +54,11 @@ pub fn initialize_pool_handler(ctx: Context<InitializePool>, params: PoolParams)
     pool.window_start = Clock::get()?.unix_timestamp;
     pool.window_disbursed = 0;
     pool.pending_claims = 0;
+    pool.outstanding_principal = 0;
+    pool.recoveries_pending = 0;
+    pool.vault_claims = 0;
+    pool.total_restituted = 0;
+    pool.total_reimbursed = 0;
     pool.bump = ctx.bumps.pool;
     pool.vault_bump = ctx.bumps.vault;
     emit!(PoolInitialized {

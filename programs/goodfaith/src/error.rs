@@ -24,7 +24,7 @@ pub enum GoodFaithError {
     OverRepay,
     #[msg("Loan is not active")]
     LoanNotActive,
-    #[msg("Loan cannot be marked as defaulted yet")]
+    #[msg("Loan cannot be settled yet")]
     NotYetDefaultable,
     #[msg("Not authorized")]
     Unauthorized,
@@ -80,4 +80,16 @@ pub enum GoodFaithError {
     TimelockBelowMinimum,
     #[msg("The co-signer's open loan must be passed to check for a reciprocal guarantee")]
     MissingCosignerLoan,
+    #[msg("The deadline has passed; settle the loan and pay back what is owed")]
+    LoanPastDeadline,
+    #[msg("Nothing is owed on this loan")]
+    NothingOwed,
+    #[msg("Nothing to collect")]
+    NothingToCollect,
+    #[msg("This would exceed the fund's outstanding-principal ceiling")]
+    OverOutstandingCeiling,
+    #[msg("Loan has not been settled as defaulted")]
+    LoanNotSettled,
+    #[msg("The person is not barred")]
+    NotBarred,
 }

@@ -132,7 +132,19 @@ pub mod goodfaith {
         instructions::repay::repay_handler(ctx, amount)
     }
 
-    pub fn mark_default(ctx: Context<MarkDefault>) -> Result<()> {
-        instructions::mark_default::mark_default_handler(ctx)
+    pub fn settle(ctx: Context<Settle>) -> Result<()> {
+        instructions::settle::settle_handler(ctx)
+    }
+
+    pub fn collect_recovery(ctx: Context<CollectRecovery>) -> Result<()> {
+        instructions::claim::collect_recovery_handler(ctx)
+    }
+
+    pub fn restitute(ctx: Context<Restitute>, amount: u64) -> Result<()> {
+        instructions::restitute::restitute_handler(ctx, amount)
+    }
+
+    pub fn lift_bar(ctx: Context<LiftBar>, reason: [u8; 32]) -> Result<()> {
+        instructions::update_pool::lift_bar_handler(ctx, reason)
     }
 }

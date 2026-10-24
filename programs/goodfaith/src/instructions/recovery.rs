@@ -8,11 +8,14 @@ use crate::{
     MEMBER_SEED, PERSON_SEED,
 };
 
-/// Step one of a wallet recovery (lost keys): the issuer and the recovery authority both vouch,
-/// the new wallet proves control. Nothing moves until the delay passes without a veto.
+/// Step one of a wallet recovery (lost keys): the issuer and the recovery authority both vouch for
+/// the new wallet, which holds a valid pass of its own. The new wallet need not sign, so the recovery
+/// key can live with an operator rather than in the web service. Nothing moves until the delay passes
+/// without a veto.
 #[derive(Accounts)]
 pub struct ProposeRebind<'info> {
-    pub new_wallet: Signer<'info>,
+    /// CHECK: the wallet the person moves to; its gateway token is verified in the handler.
+    pub new_wallet: UncheckedAccount<'info>,
     #[account(constraint = issuer.key() == pool.issuer @ GoodFaithError::Unauthorized)]
     pub issuer: Signer<'info>,
     #[account(constraint = recovery_authority.key() == pool.recovery_authority @ GoodFaithError::Unauthorized)]

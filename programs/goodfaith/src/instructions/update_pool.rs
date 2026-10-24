@@ -3,11 +3,12 @@ use anchor_lang::prelude::*;
 use crate::{
     error::GoodFaithError,
     events::{
-        AuthorityChanged, AuthorityProposalCancelled, AuthorityProposed, IssuerSuspended,
-        LendingPaused, LendingResumed, ParamsCancelled, ParamsScheduled, PoolFrozen, PoolUpdated,
+        AuthorityChanged, AuthorityProposalCancelled, AuthorityProposed, BarLifted,
+        IssuerSuspended, LendingPaused, LendingResumed, ParamsCancelled, ParamsScheduled,
+        PoolFrozen, PoolUpdated,
     },
     state::*,
-    MIN_TIMELOCK_SECONDS,
+    MIN_TIMELOCK_SECONDS, PERSON_SEED,
 };
 
 #[derive(Accounts)]
@@ -48,6 +49,37 @@ pub struct PauseLending<'info> {
     pub signer: Signer<'info>,
     #[account(mut)]
     pub pool: Account<'info, Pool>,
+}
+
+/// The authority ends a person's bar early (an appeal upheld, an outage that caused a default).
+#[derive(Accounts)]
+pub struct LiftBar<'info> {
+    pub authority: Signer<'info>,
+    #[account(constraint = pool.authority == Some(authority.key()) @ GoodFaithError::Unauthorized)]
+    pub pool: Account<'info, Pool>,
+    #[account(
+        mut,
+        seeds = [PERSON_SEED, pool.key().as_ref(), person.person_id.as_ref()],
+        bump = person.bump,
+    )]
+    pub person: Account<'info, Person>,
+}
+
+/// Instant and public: the event carries the hash of the written reason, which the operator publishes.
+pub fn lift_bar_handler(ctx: Context<LiftBar>, reason: [u8; 32]) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let person = &mut ctx.accounts.person;
+    require!(person.ineligible_until > now, GoodFaithError::NotBarred);
+    let previous_until = person.ineligible_until;
+    person.ineligible_until = now;
+    emit!(BarLifted {
+        pool: ctx.accounts.pool.key(),
+        person: person.key(),
+        by: ctx.accounts.authority.key(),
+        reason,
+        previous_until,
+    });
+    Ok(())
 }
 
 /// Emergency brake on new loans and guarantees. Repayments, defaults, claims and donations continue.

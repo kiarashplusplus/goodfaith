@@ -57,6 +57,22 @@ pub struct Pool {
     pub default_ban_seconds: i64,
     pub late_ban_seconds: i64,
     pub cosigner_ban_seconds: i64,
+    /// Principal still owed on Active loans (the fund's open credit).
+    pub outstanding_principal: u64,
+    /// Escrow owed to the fund by settled loans, still in escrow accounts until `collect_recovery`.
+    pub recoveries_pending: u64,
+    /// Reimbursements owed to co-signers out of the vault (restitution of escrow that was used).
+    pub vault_claims: u64,
+    /// Everything paid back after a settlement, by or for borrowers.
+    pub total_restituted: u64,
+    /// Reimbursements paid out of the vault to co-signers.
+    pub total_reimbursed: u64,
+    /// A loan counts towards the personal cap only when it ran at least this long.
+    pub seasoning_seconds: i64,
+    /// At most one cap step per person per this many seconds.
+    pub cap_step_interval_seconds: i64,
+    /// Ceiling on `outstanding_principal` (0 = none).
+    pub max_outstanding_principal: u64,
 }
 
 impl Pool {
@@ -92,6 +108,10 @@ pub struct Person {
     pub pending_wallet: Option<Pubkey>,
     pub pending_wallet_at: i64,
     pub bump: u8,
+    /// When `completed_loans` last went up; spaces cap steps out in time.
+    pub last_cap_step_at: i64,
+    /// Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0.
+    pub unrestituted_losses: u8,
 }
 
 impl Person {
@@ -113,14 +133,26 @@ impl Person {
     }
 
     /// Bars the person at least until `now + seconds` (never shortens an existing bar).
-    pub fn bar(&mut self, now: i64, seconds: i64) {
+    /// Returns the bar this call stands for (0 when `seconds` is 0).
+    pub fn bar(&mut self, now: i64, seconds: i64) -> i64 {
         if seconds <= 0 {
-            return;
+            return 0;
         }
         let until = now.saturating_add(seconds);
         if until > self.ineligible_until {
             self.ineligible_until = until;
         }
+        until
+    }
+
+    /// Replaces the bar `from` by `to`, but only when `from` is the bar the person is under right now
+    /// (a longer bar from another loan or an operator stays).
+    pub fn relax_bar(&mut self, from: i64, to: i64) -> bool {
+        if from == 0 || self.ineligible_until != from {
+            return false;
+        }
+        self.ineligible_until = to;
+        true
     }
 }
 
@@ -137,10 +169,12 @@ pub struct Member {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace, Debug)]
 pub enum LoanStatus {
     Active,
+    /// Repaid in full at or before the deadline.
     Repaid,
+    /// Settled after the deadline: the shortfall came out of the escrow, the rest is a loss until restituted.
     Defaulted,
-    /// Repaid in full, but after the term and grace period had passed.
-    RepaidLate,
+    /// Settled, and the whole shortfall has since been paid back.
+    Restituted,
 }
 
 #[account]
@@ -167,6 +201,23 @@ pub struct Loan {
     pub closed_at: i64,
     /// Escrow owed to the co-signer, still in the escrow account until `claim_escrow`.
     pub refund_pending: u64,
+    /// Principal unpaid at settlement.
+    pub shortfall: u64,
+    /// Escrow applied to the shortfall at settlement (fixed then; `lost` is the rest).
+    pub recovered: u64,
+    /// Of `recovered`, what is still in the escrow account until `collect_recovery`.
+    pub recovery_pending: u64,
+    /// Paid back after settlement, by or for the borrower.
+    pub restituted: u64,
+    /// Reimbursement owed to the co-signer out of the vault (their escrow, paid back by restitution).
+    pub reimbursement_pending: u64,
+    /// Bars this loan set at settlement (0 when none); relaxed when the loan is restituted.
+    pub borrower_bar_until: i64,
+    pub cosigner_bar_until: i64,
+    /// Consequences fixed when the loan opened; later pool changes do not apply.
+    pub default_ban_seconds: i64,
+    pub late_ban_seconds: i64,
+    pub cosigner_ban_seconds: i64,
 }
 
 impl Loan {
@@ -175,6 +226,16 @@ impl Loan {
         i64::from(self.grace_days)
             .checked_mul(crate::SECONDS_PER_DAY)
             .and_then(|g| self.due_at.checked_add(g))
+    }
+
+    /// What the fund wrote off at settlement and has not had back yet.
+    pub fn lost(&self) -> u64 {
+        self.shortfall.saturating_sub(self.recovered)
+    }
+
+    /// Still owed by the borrower after settlement.
+    pub fn owed_after_settlement(&self) -> u64 {
+        self.shortfall.saturating_sub(self.restituted)
     }
 }
 
@@ -202,6 +263,9 @@ pub struct PoolParams {
     pub default_ban_seconds: i64,
     pub late_ban_seconds: i64,
     pub cosigner_ban_seconds: i64,
+    pub seasoning_seconds: i64,
+    pub cap_step_interval_seconds: i64,
+    pub max_outstanding_principal: u64,
 }
 
 impl PoolParams {
@@ -250,6 +314,11 @@ impl PoolParams {
                 && self.cosigner_ban_seconds >= 0,
             GoodFaithError::InvalidParams
         );
+        require!(
+            (0..=crate::MAX_SEASONING_SECONDS).contains(&self.seasoning_seconds)
+                && (0..=crate::MAX_SEASONING_SECONDS).contains(&self.cap_step_interval_seconds),
+            GoodFaithError::InvalidParams
+        );
         Ok(())
     }
 
@@ -275,6 +344,9 @@ impl PoolParams {
         pool.default_ban_seconds = self.default_ban_seconds;
         pool.late_ban_seconds = self.late_ban_seconds;
         pool.cosigner_ban_seconds = self.cosigner_ban_seconds;
+        pool.seasoning_seconds = self.seasoning_seconds;
+        pool.cap_step_interval_seconds = self.cap_step_interval_seconds;
+        pool.max_outstanding_principal = self.max_outstanding_principal;
     }
 }
 

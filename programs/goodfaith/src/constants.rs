@@ -41,3 +41,6 @@ pub const MAX_REQUEST_TTL_SECONDS: i64 = 90 * 86_400;
 pub const MAX_COOLDOWN_SECONDS: i64 = 365 * 86_400;
 #[constant]
 pub const MAX_WINDOW_SECONDS: i64 = 30 * 86_400;
+/// Longest seasoning period and cap-step interval a pool may set (365 days).
+#[constant]
+pub const MAX_SEASONING_SECONDS: i64 = 365 * 86_400;

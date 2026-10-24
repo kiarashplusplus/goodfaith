@@ -162,7 +162,17 @@ pub fn cosign_loan_handler(
         cosigner_exposure <= a.pool.max_exposure_per_person,
         GoodFaithError::OverExposure
     );
-    // The fund's own limit on how fast money goes out.
+    // The fund's own limits: on open credit, and on how fast money goes out.
+    let outstanding = a
+        .pool
+        .outstanding_principal
+        .checked_add(amount)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    require!(
+        a.pool.max_outstanding_principal == 0 || outstanding <= a.pool.max_outstanding_principal,
+        GoodFaithError::OverOutstandingCeiling
+    );
+    a.pool.outstanding_principal = outstanding;
     if a.pool.disbursement_cap_per_window > 0 {
         let window_end = a
             .pool
@@ -253,6 +263,16 @@ pub fn cosign_loan_handler(
         cosigner_person: a.cosigner_person.key(),
         closed_at: 0,
         refund_pending: 0,
+        shortfall: 0,
+        recovered: 0,
+        recovery_pending: 0,
+        restituted: 0,
+        reimbursement_pending: 0,
+        borrower_bar_until: 0,
+        cosigner_bar_until: 0,
+        default_ban_seconds: a.pool.default_ban_seconds,
+        late_ban_seconds: a.pool.late_ban_seconds,
+        cosigner_ban_seconds: a.pool.cosigner_ban_seconds,
     });
     a.borrower_person.active_loan = Some(a.loan.key());
     a.cosigner_person.active_guarantees = a
