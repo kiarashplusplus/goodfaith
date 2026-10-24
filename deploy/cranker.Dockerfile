@@ -4,7 +4,7 @@
 # APP_URL + IDENTITY_ADMIN_KEY (pass revocation), optional KORA_URL. Override the command for admin or member.
 FROM node:22-alpine
 WORKDIR /srv
-COPY app/package.json app/package-lock.json app/
+COPY app/package.json app/package-lock.json app/.npmrc app/
 RUN cd app && npm ci --no-audit --no-fund
 COPY scripts/package.json scripts/package-lock.json scripts/
 RUN cd scripts && npm ci --no-audit --no-fund

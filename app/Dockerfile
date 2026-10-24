@@ -6,7 +6,7 @@
 # NEXT_PUBLIC_* are baked in at build time (the browser bundle carries them); everything secret is runtime env.
 FROM node:22-alpine AS deps
 WORKDIR /src/app
-COPY app/package.json app/package-lock.json ./
+COPY app/package.json app/package-lock.json app/.npmrc ./
 RUN npm ci --no-audit --no-fund
 
 FROM node:22-alpine AS build
