@@ -14,17 +14,20 @@ export PATH="$HOME/.local/share/solana/install/active_release/bin:$HOME/.cargo/b
 
 ## 1. Keys
 
-Five keys with five jobs. Generate each with `solana-keygen new -o <file>` and keep them apart (different machines or
-custodians where the deployment allows). The fork and CI use one key for everything; a real deployment must not.
+Several keys with separate jobs. Generate each with `solana-keygen new -o <file>` and keep them apart (different
+machines or custodians where the deployment allows). The fork and CI use one key for everything; a real deployment
+must not, and the CLIs refuse to run without their own variable (`ADMIN_KEYPAIR`, `CRANKER_KEYPAIR`,
+`RECOVERY_KEYPAIR`, `SUCCESSOR_KEYPAIR` for the wind-down) so no two jobs share a key by accident.
 
 | key | holds | used by |
 |---|---|---|
 | deploy / upgrade | the program keypair (`target/deploy/goodfaith-keypair.json`) and the upgrade authority | `anchor deploy`; later a multisig with a timelock, then removed |
-| pool authority | the administrator | `scripts/launch.ts` (payer, first authority), `scripts/admin.ts`; hand to a multisig with `propose-authority` |
+| pool authority | the administrator | `scripts/launch.ts` (payer, first authority), `scripts/admin.ts` (`ADMIN_KEYPAIR`); hand to a multisig with `propose-authority` |
+| successor authority | the second signer of a wind-down announcement (`successor_authority` setting; the upgrade multisig at launch) | `npm run launch -- --successor-authority <pubkey>`; `scripts/admin.ts announce-wind-down` with `SUCCESSOR_KEYPAIR` |
 | issuer | `ISSUER_SECRET` in the identity service | co-signs registrations and recovery proposals |
-| recovery | `RECOVERY_KEYPAIR` on the operator's machine for `npm run recovery`; never the web service | co-signs recovery proposals the service prepared |
+| recovery | `RECOVERY_KEYPAIR` on the operator's machine for `npm run recovery` (required); never the web service | verifies and co-signs recovery proposals the service prepared |
 | pause | `pause_authority` | the one person who can stop new lending at once |
-| gatekeeper | `GATEKEEPER_SECRET` in the identity service | issues and revokes passes on the fund's network |
+| gatekeeper | `GATEKEEPER_SECRET` in the identity service | issues, renews, freezes and thaws passes on the fund's network |
 | sponsor | `KORA_PRIVATE_KEY` for Kora | pays fees and rent; a Turnkey or Privy signer in hosting |
 | cranker | `CRANKER_KEYPAIR` | pays the cranker's own fees (or Kora does) |
 
@@ -56,7 +59,7 @@ On a local fork there is no deploy: `cd scripts && npm run deploy-fork` plants t
 ```sh
 cd scripts
 npm run gatekeeper-setup                                   # creates the fund's network; writes gatekeeper.json (+ the network keypair, keep it)
-npm run launch -- --issuer <issuer pubkey> --recovery <recovery pubkey> --pause <pause pubkey>
+npm run launch -- --issuer <issuer pubkey> --recovery <recovery pubkey> --pause <pause pubkey> --successor-authority <upgrade multisig>
 ```
 
 `launch.ts` reads `launch.json` (the decided settings in whole tokens and days), converts them with the mint's
@@ -84,7 +87,8 @@ pins.
 
 Copy `deploy/.env.example` to `deploy/.env`, paste the `NEXT_PUBLIC_*` block from the launch output and the secrets
 (each key as a JSON array; `PERSON_HASH_SECRETS=1:<random 32 bytes hex>`; random `KORA_API_KEY`, `KORA_HMAC_SECRET`,
-`IDENTITY_ADMIN_KEY`, `MOCK_WEBHOOK_SECRET` or the Persona settings). Then:
+`IDENTITY_ADMIN_KEY`, `MOCK_WEBHOOK_SECRET` or the Persona settings; `RECOVERY_MIN_AGE_SECONDS` if a day is not the
+right wait before a recovery may be proposed; `CRANKER_KEYPAIR_FILE` for the cranker's own key). Then:
 
 ```sh
 docker compose -f deploy/docker-compose.yml up -d --build            # app + Kora (internal only) + cranker, SQLite volume

@@ -25,14 +25,21 @@ export type Scenario = {
   repaidBeforeDefault: number;
   /** Loans one borrower takes in a year, so loans can be turned into people (default 2). */
   loansPerBorrowerPerYear: number;
+  /** Share of a year's borrowers who also borrowed in an earlier year (0..1), so borrower-years can be turned into people over a horizon. */
+  repeatRate: number;
+  /** What a borrower pays to turn USDC into dollars and back, per conversion (a fixed fee; default $3 each way). Not the fund's cost, but the borrower's. */
+  conversionFeeUsd: number;
   costs: Costs;
 };
 
 export type Costs = {
   /** Per identity check, dollars (provider fee). */
   identityCheck: number;
-  /** New verified people per year (each pays one check; renewals excluded). */
+  /** New verified people per year (each pays one check). */
   newMembersPerYear: number;
+  /** Pass renewals per year (members in good standing, once a year) and what one costs the fund (a signed message and a transaction fee, cents). */
+  renewalsPerYear: number;
+  passRenewal: number;
   /** Sponsor's unrecoverable cost per loan: Loan account rent + fees, dollars. */
   sponsorPerLoan: number;
   /** Recurring, dollars per year. */
@@ -67,8 +74,14 @@ export type Result = {
   cashRunwayYears: number;
   /** Loans repaid in full per year. */
   completedLoansPerYear: number;
-  /** People who completed a loan in the year: loans divided by loans per borrower (not one person per loan). */
+  /** Borrower-years: people who completed a loan in the year, loans divided by loans per borrower (not one person per loan). Across years the same person can appear again; see `compareWithGrants`. */
   distinctBorrowersPerYear: number;
+  /** Co-signer deposits used to cover defaults in the year: the co-signers' money, lost unless the borrower pays back. */
+  cosignerDepositsLostPerYear: number;
+  /** What borrowers pay in conversion fees in the year (one conversion out and one back per loan), at `conversionFeeUsd`. */
+  borrowerConversionPerYear: number;
+  /** Conversion fees per loan, both ways. */
+  conversionPerLoan: number;
   /** Gifts spent per completed loan: capital lost plus operating cost, divided by the loans that worked. */
   subsidyPerCompletedLoan: number;
   /** Gifts spent per person helped in the year. */
@@ -91,6 +104,12 @@ export function lossPerDefault(avgLoan: number, escrowRate: number, repaidBefore
   return Math.max(0, unpaid - avgLoan * escrowRate);
 }
 
+/** The co-signer's deposit used on one defaulted loan: the unpaid part, up to the deposit. */
+export function depositUsedPerDefault(avgLoan: number, escrowRate: number, repaidBeforeDefault: number): number {
+  const unpaid = avgLoan * (1 - repaidBeforeDefault);
+  return Math.min(unpaid, avgLoan * escrowRate);
+}
+
 export const recurringTotal = (c: Costs) => Object.values(c.recurring).reduce((a, b) => a + b, 0);
 export const oneOffTotal = (c: Costs) => Object.values(c.oneOff).reduce((a, b) => a + b, 0);
 
@@ -103,8 +122,7 @@ export function evaluate(s: Scenario): Result {
   const perDefault = lossPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault);
   const lossPerCycle = loansPerCycle * s.defaultRate * perDefault;
   const lossPerYear = lossPerCycle * cyclesPerYear;
-  const recurringPerYear =
-    s.costs.identityCheck * s.costs.newMembersPerYear + s.costs.sponsorPerLoan * loansPerYear + recurringTotal(s.costs);
+  const recurringPerYear = recurringCosts(s.costs, loansPerYear);
   const oneOff = oneOffTotal(s.costs);
   const oneOffPerYear = s.costs.oneOffYears > 0 ? oneOff / s.costs.oneOffYears : oneOff;
   const operatingPerYear = recurringPerYear + oneOffPerYear;
@@ -112,6 +130,8 @@ export function evaluate(s: Scenario): Result {
   const donationsNeededPerYear = lossPerYear + operatingPerYear;
   const perBorrower = s.loansPerBorrowerPerYear > 0 ? s.loansPerBorrowerPerYear : 1;
   const distinctBorrowersPerYear = completedLoansPerYear / perBorrower;
+  const defaultsPerYear = loansPerYear * s.defaultRate;
+  const conversionPerLoan = 2 * s.conversionFeeUsd;
   return {
     loansPerYear,
     cyclesPerYear,
@@ -129,6 +149,9 @@ export function evaluate(s: Scenario): Result {
     cashRunwayYears: cashRunway(s),
     completedLoansPerYear,
     distinctBorrowersPerYear,
+    cosignerDepositsLostPerYear: defaultsPerYear * depositUsedPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault),
+    borrowerConversionPerYear: loansPerYear * conversionPerLoan,
+    conversionPerLoan,
     subsidyPerCompletedLoan: completedLoansPerYear > 0 ? donationsNeededPerYear / completedLoansPerYear : Infinity,
     subsidyPerBorrower: distinctBorrowersPerYear > 0 ? donationsNeededPerYear / distinctBorrowersPerYear : Infinity,
     grantsInsteadPerYear: donationsNeededPerYear / s.avgLoan,
@@ -144,11 +167,16 @@ export function evaluate(s: Scenario): Result {
  * operating costs (one-offs in the first year, then the recurring ones) out of the vault. Returns the years until
  * it cannot cover the next year's costs, as a fraction; 50 means "longer than the model looks".
  */
+/** The recurring costs for a year with `loansPerYear` loans: identity checks and renewals, the sponsor's rent and fees, and the fixed items. */
+export function recurringCosts(c: Costs, loansPerYear: number): number {
+  return c.identityCheck * c.newMembersPerYear + c.passRenewal * c.renewalsPerYear + c.sponsorPerLoan * loansPerYear + recurringTotal(c);
+}
+
 export function cashRunway(s: Scenario): number {
   let fund = s.fund;
   for (let year = 0; year < 50; year++) {
     const r = evaluateShallow({ ...s, fund });
-    const recurring = s.costs.identityCheck * s.costs.newMembersPerYear + s.costs.sponsorPerLoan * r.loansPerYear + recurringTotal(s.costs);
+    const recurring = recurringCosts(s.costs, r.loansPerYear);
     const spend = r.lossPerYear + recurring + (year === 0 ? oneOffTotal(s.costs) : 0);
     if (spend >= fund) return year + (spend > 0 ? fund / spend : 0);
     fund -= spend;
@@ -157,20 +185,29 @@ export function cashRunway(s: Scenario): number {
 }
 
 /**
- * Lending against giving over `years`, with the same money on both sides: the endowment and the yearly gifts.
- * Grants: everything is handed out as one average loan each. Loans: the gifts keep the fund level (they cover
- * the losses and the costs), and the endowment keeps turning over; the fund is still there at the end.
+ * Lending against giving over `years`, with the same money on both sides: the endowment, the yearly gifts that cover
+ * the capital lost and the recurring costs, and the one-off items charged once (not once per amortisation period).
+ * Grants: everything is handed out as one average loan each. Loans: the fund is still there at the end.
+ * `borrowerYears` counts a person once per year they borrowed; `people` turns that into distinct people with the
+ * scenario's repeat rate (a repeat borrower is the same person as last year).
  */
 export function compareWithGrants(s: Scenario, years: number) {
   const r = evaluate(s);
-  const money = s.fund + r.donationsNeededPerYear * years;
+  const money = s.fund + (r.lossPerYear + r.recurringPerYear) * years + r.oneOffTotal;
+  const borrowerYears = r.distinctBorrowersPerYear * years;
+  const people = r.distinctBorrowersPerYear * (1 + Math.max(0, years - 1) * (1 - s.repeatRate));
   return {
     years,
     moneyIn: money,
     grants: money / s.avgLoan,
     loansCompleted: r.completedLoansPerYear * years,
-    borrowers: r.distinctBorrowersPerYear * years,
+    borrowerYears,
+    people,
     fundLeft: s.fund,
+    /** Deposits co-signers lost to defaults over the horizon (nobody's gift, but a real cost of the loan side). */
+    cosignerDepositsLost: r.cosignerDepositsLostPerYear * years,
+    /** Conversion fees borrowers paid over the horizon. */
+    borrowerConversion: r.borrowerConversionPerYear * years,
   };
 }
 
@@ -262,6 +299,7 @@ export function issuerCompromise(p: {
  * whole crowd to the fund-wide daily budget (transactions, and wallets sponsored for the first time).
  */
 export function sponsorAbuse(p: {
+  /** Distinct abusive wallets; with a budget on first-time wallets only `dailyNewWallets x days` of them get in. */
   wallets: number;
   days: number;
   dailyTxsPerWallet: number;
@@ -319,7 +357,12 @@ export function collusionRing(p: { people: number; loanCap: number; escrowRate: 
   return { feasible, loans, payoff: loans * perLoan, fundLoss: loans * perLoan, perPerson: perLoan };
 }
 
-/** The launch assumptions; `scripts/model.ts` varies them one at a time. */
+/**
+ * The assumptions behind the tables. `LAUNCH` is what the fund can do under its launch settings: the ceiling on
+ * principal out on loan is $25,000, so with a $100,000 fund at most a quarter is ever lent. `BASE` is the same fund
+ * with the ceiling raised to lend 80% of it, which is the scale the design was costed at; `scripts/model.ts` varies
+ * BASE one input at a time and prints LAUNCH first.
+ */
 export const BASE: Scenario = {
   name: "base",
   fund: 100_000,
@@ -330,15 +373,22 @@ export const BASE: Scenario = {
   escrowRate: 0.25,
   repaidBeforeDefault: 0.2,
   loansPerBorrowerPerYear: 2,
+  repeatRate: 0.5,
+  conversionFeeUsd: 3,
   costs: {
     identityCheck: 2.5,
     newMembersPerYear: 600,
+    renewalsPerYear: 1_000,
+    passRenewal: 0.01,
     sponsorPerLoan: 0.6,
     recurring: { hosting: 1_800, support: 6_000, disputes: 1_500, fraudResponse: 1_500, bookkeeping: 2_400 },
     oneOff: { audit: 30_000, legal: 15_000, development: 20_000 },
     oneOffYears: 3,
   },
 };
+
+/** The launch settings: the $25,000 outstanding-principal ceiling binds, so a quarter of the fund is out at most. */
+export const LAUNCH: Scenario = { ...BASE, name: "launch ($25,000 ceiling)", utilisation: 0.25 };
 
 export const money = (n: number) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString("en-US")}` : "never");
 export const pct = (n: number) => `${(n * 100).toFixed(1)}%`;

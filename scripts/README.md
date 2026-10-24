@@ -42,15 +42,19 @@ operator's recovery CLI, a permanent ban and a temporary bar.
 
 `npm run admin -- show | schedule --set field=value | cancel-params | apply | propose-authority <key> | cancel-proposal |
 accept-authority | suspend-issuer | pause | resume | announce-wind-down <account> | cancel-wind-down | sweep |
-lift-bar <personAccount> <reason...> | freeze --yes` is everything the pool authority can do (`ADMIN_KEYPAIR`, default
-`~/.config/solana/id.json`; `--mint` for another pool). `lift-bar` puts the hash of the reason on chain, prints it for
-publication and tells the identity service. `e2e.ts` drives pause, schedule, apply, suspend-issuer, lift-bar and
-freeze through it. `npm run member -- status | request | cancel | cosign | repay | pay-back | settle | collect | claim |
-close-expired | veto | finalize | donate` is a member's fallback client (`MEMBER_KEYPAIR`), everything the app offers
-from a terminal against the RPC alone (`pay-back` settles first when nobody has); `kora-e2e` runs its `status`.
-`npm run recovery -- list | approve <personId> | reject <personId>` is the operator's recovery CLI: it holds the pool's
-recovery key (`RECOVERY_KEYPAIR`, default `~/.config/solana/id.json`) and talks to the identity service
-(`IDENTITY_URL`, `IDENTITY_ADMIN_KEY`), which never holds that key; `identity-e2e` drives it.
+lift-bar <personAccount> <reason...> | freeze --yes` is everything the pool authority can do (`ADMIN_KEYPAIR`,
+required; `--mint` for another pool; `announce-wind-down` also needs `SUCCESSOR_KEYPAIR`, the second key a wind-down
+takes). `lift-bar` puts the hash of the reason on chain, prints it for publication and tells the identity service.
+`e2e.ts` drives pause, schedule, apply, suspend-issuer, lift-bar and freeze through it. `npm run member -- status |
+request | cancel | cosign | repay | pay-back | settle | collect | claim | forgive | close-expired | veto | finalize |
+donate | renew` is a member's fallback client (`MEMBER_KEYPAIR`), everything the app offers from a terminal against
+the RPC alone (`pay-back` settles first when nobody has; `forgive` is the co-signer's; `renew` goes through the app at
+`APP_URL`); `kora-e2e` runs its `status`. `npm run recovery -- list | approve <personId> <newWallet> [--force] | reject
+<personId>` is the operator's recovery CLI: it holds the pool's recovery key (`RECOVERY_KEYPAIR`, required: no default
+path), talks to the identity service (`IDENTITY_URL`, `IDENTITY_ADMIN_KEY`), which never holds that key, and signs a
+proposal only after decoding it and checking it is the one `propose_rebind` for that person and wallet; the service
+refuses a request younger than `RECOVERY_MIN_AGE_SECONDS` or whose notice failed unless `--force`; `identity-e2e`
+drives it.
 
 ## Cranker and model
 
@@ -58,11 +62,13 @@ recovery key (`RECOVERY_KEYPAIR`, default `~/.config/solana/id.json`) and talks 
 job: it applies settings whose timelock has elapsed, settles loans past the cutoff, collects what settled loans owe
 the fund from their escrows, releases what co-signers are owed (from escrows and the vault), closes expired requests,
 finalises recoveries whose delay has passed, sweeps the vault (less what co-signers are owed from it) to the
-successor once a wind-down is in effect with no loan open, and posts the barred people, with the end of their bar,
-to the identity service (`APP_URL`/`IDENTITY_URL` + `IDENTITY_ADMIN_KEY`). It pays with `CRANKER_KEYPAIR`
-(default `~/.config/solana/id.json`) or through Kora when `KORA_URL` is set. `cranker-e2e` proves it on the fork with
-a one-day loan from the member `identity-e2e` created, a pending recovery and an expiring request. `npm run model`
-prints the economic tables behind `docs/economics.md`.
+successor once a wind-down is in effect with no loan open, and reconciles the identity service with the chain: every
+person the chain bars, with the end of their bar (`APP_URL`/`IDENTITY_URL` + `IDENTITY_ADMIN_KEY`), after which the
+service lifts the rest, closes finished recovery requests and retries failed notices. Frozen escrows and claims held
+by a pending wallet move are reported as `waiting`, not errors (`--once` exits 1 only on errors). It pays with
+`CRANKER_KEYPAIR` (required) or through Kora when `KORA_URL` is set. `cranker-e2e` proves it on the fork with a
+one-day loan from the member `identity-e2e` created, settled by the borrower with a frozen escrow, a pending recovery
+and an expiring request. `npm run model` prints the economic tables behind `docs/economics.md`.
 
 ## Run
 - `npm run e2e` - full loan cycle with users paying fees: register, request, co-sign, partial and full repay, the
@@ -111,7 +117,7 @@ kora --config scripts/kora/kora.toml --rpc-url http://127.0.0.1:8899 rpc start -
 - `kora/kora.toml` is the deployable policy; its header lists what to change for mainnet. Kora 2.0.5 answers any
   origin, so never expose its port: the app's `/api/sponsor` route is the origin and auth boundary.
 - `max_allowed_lamports` is the fee payer's outflow per transaction, CPI-created rent included. A first co-sign costs
-  7,175,760 lamports (borrower token account + Loan + escrow with the v4 Loan), hence 8,000,000. `max_signatures = 4`
+  7,342,800 lamports (borrower token account + Loan + escrow with the v5 Loan), hence 8,000,000. `max_signatures = 4`
   fits a registration (wallet + issuer + Kora) with room; the app's proxy only lets extra signers through on Good
   Faith instructions.
 - `[kora.usage_limit]` counts transactions per wallet for ever (no window); keep it off.

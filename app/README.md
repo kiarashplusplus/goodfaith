@@ -67,26 +67,35 @@ proposal also needs the pool's recovery authority). The app's `/api/identity/*` 
   the inquiry id and a status stay in the store (`IDENTITY_DB_PATH`, Node's built-in SQLite; `memory` for throwaway
   runs).
 - `status`: where a wallet stands and what comes next (`verify`, `wait`, `join`, `recover`, `review`, `pending`,
-  `finalize`, `done`, `blocked`), with the person's bar and its end when there is one.
+  `finalize`, `done`, `renew`, `blocked`), with the person's bar and its end when there is one and the pass (expiry,
+  active or frozen).
+- `renew`: a fresh year on a member's pass without a new check (proof of control as in `start`; refused while the
+  person is barred). `contact`: where notices go, changeable only from the wallet linked to the membership; the
+  previous contact is told.
 - `join`: the `register_member` transaction, built for the fee sponsor when one is configured and signed with
   `ISSUER_SECRET`; the browser adds the wallet's signature and sends it (`sendPrepared` in `lib/tx.ts`).
-- `rebind`: wallet recovery. A person who verifies again from a new wallet gets `recover`: the call records a request
-  for the operator (202 with `requestedAt`; DELETE withdraws it) and a notice goes to the member's contact. The
-  operator's recovery CLI (`scripts/recovery.ts`, the only holder of the recovery key) reads the queue
-  (`GET /api/identity/recoveries`, admin key), asks for the issuer-signed `propose_rebind` built for the recovery key
-  as fee payer (`POST /api/identity/recoveries/:personId`), signs, sends and reports it (the member is told about the
-  veto window), or rejects it (DELETE). The old wallet may veto during `pool.recoveryDelaySeconds`; once the delay
-  has passed `rebind` returns `finalize_rebind`, paid by the new wallet (the cranker finalises due recoveries too).
-  The old wallet is retired on chain and open loans, guarantees, eligibility and claims follow the person. A barred
+- `rebind`: wallet recovery, signed by the new wallet (proof of control as in `start`). A person who verifies again
+  from a new wallet gets `recover`: the call records a request for the operator (202 with `requestedAt`; DELETE
+  withdraws it until it is proposed) and a notice goes to the contact on file from before the request, with its
+  delivery recorded. The operator's recovery CLI (`scripts/recovery.ts`, the only holder of the recovery key) reads
+  the queue (`GET /api/identity/recoveries`, admin key), asks for the issuer-signed `propose_rebind` built for the
+  recovery key as fee payer (`POST /api/identity/recoveries/:personId {feePayer, newWallet, force?}`; refused for a
+  wallet other than the recorded one, a request already proposed, one younger than `RECOVERY_MIN_AGE_SECONDS` or one
+  whose notice failed), verifies the transaction, signs, sends and reports it (the member is told about the veto
+  window), or rejects it (DELETE). The old wallet may veto during `pool.recoveryDelaySeconds`; once the delay has
+  passed `rebind` returns `finalize_rebind`, paid by the new wallet (the cranker finalises due recoveries too). The
+  old wallet is retired on chain and open loans, guarantees, eligibility and claims follow the person. A barred
   person may recover too.
 - `link`: a verified wallet re-checks with a renewed or second document; the new fingerprint joins the same person
   (refused when it already belongs to another membership). Fingerprint keys are versioned (`PERSON_HASH_SECRETS`)
   so a rotation re-links people on their next check instead of orphaning them. `docs/identity.md` has the details.
-- `ban` (operator, `IDENTITY_ADMIN_KEY`, by `personId` or `wallet`, with `until` as the chain has it): mirrors a bar
-  the chain set. A time-bounded bar is recorded and lapses by itself; a permanent one revokes the passes of every
-  wallet the person verified with and refuses future checks; `until` in the past lifts the record (the admin CLI
-  sends it after `lift-bar`). Each change notifies the member (`notify.ts`: the log, or `NOTIFY_WEBHOOK_URL`).
-  Eligibility itself is on chain (`ineligible_until`).
+- `ban` and `reconcile` (operator, `IDENTITY_ADMIN_KEY`): mirror the chain's bars. `reconcile` takes every person
+  the chain bars now with `until` (the cranker sends it each pass), lifts stored bars the chain no longer has, closes
+  recovery requests the chain finalised or vetoed and retries failed notices; `ban` does one person. A time-bounded
+  bar is recorded and lapses by itself; a permanent one freezes the passes of every wallet the person verified with
+  and refuses future checks; `until` in the past lifts the record and thaws the passes (the admin CLI sends it after
+  `lift-bar`). Each change notifies the member (`notify.ts`: the log, or `NOTIFY_WEBHOOK_URL`). Eligibility itself is
+  on chain (`ineligible_until`).
 
 All of it is behind `lib/identity/provider.ts`; `persona.ts` is the production provider (inquiry creation with a
 one-time link, `Persona-Signature` HMAC over `t.body`, configurable field keys), `mock.ts` the test one. Unit tests
@@ -98,7 +107,7 @@ whole flow against the app on a Surfpool fork with real gateway tokens.
 - `src/app/*` — one client page per route plus a server `layout.tsx` for its title; `error.tsx`, `not-found.tsx` and `loading.tsx` at the root.
 - `src/components` — UI primitives (`ui.tsx`: `Field` takes an `error` prop wired for screen readers; `Notice` is a live region), wallet connect, nav, verify-and-join, loan list.
 - `src/lib/identity` — the identity issuer (provider interface, Persona, mock, person hash, store, gatekeeper, service).
-- `src/app/api/sponsor` — the fee-sponsor proxy (method allow-list, per-client rate limit, Kora auth headers; helpers in `src/lib/sponsor-proxy.ts`).
+- `src/app/api/sponsor` — the fee-sponsor proxy (method allow-list, per-client rate limit, Kora auth headers, the sponsorship policy with atomically reserved per-wallet and fund-wide counters; helpers in `src/lib/sponsor-proxy.ts` and `src/lib/sponsor-policy.ts`).
 - `src/lib` — config, program access layer (`program.ts`), transaction flow (`tx.ts`), Kora client (`kora.ts`), send planner (`send.ts`), pure helpers (`format.ts`, `escrow.ts`, `loan-status.ts`, `cosign-link.ts`, `clipboard.ts`). All token math is `bigint`.
 - `src/generated` — Codama output. Never edit by hand.
 

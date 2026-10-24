@@ -21,8 +21,9 @@ to a licence). The fingerprint is what makes the same human resolve to the same 
 The store (`store.ts`) therefore has: `persons` (id, first wallet, the bar mirrored from the chain with its end,
 an optional contact), `credentials` (fingerprint, key version, person, when and how it was attached), `wallets`
 (every wallet that started a check, its status and the person it resolved to), `recoveries` (wallet-recovery
-requests waiting for the operator), `sponsorship` (per-wallet sponsor counters and the fund-wide daily budget rows)
-and `events` (provider event ids already handled). SQLite in a single-instance deployment, Postgres for
+requests: when opened, whether the notice reached the member, when the operator proposed it and how it closed),
+`sponsorship` and `sponsor_budget` (the per-wallet and fund-wide sponsor counters, reserved atomically) and `events`
+(provider event ids already handled). SQLite in a single-instance deployment, Postgres for
 anything else (`IDENTITY_DB_URL`, Phase 6), memory in tests.
 
 ## Verification
@@ -34,9 +35,20 @@ anything else (`IDENTITY_DB_URL`, Phase 6), memory in tests.
 3. A known fingerprint resolves to its person; an unknown one creates a person. A person barred for good is
    refused; a person under a time-bounded bar is not (the chain refuses their loans and guarantees; a pass lets them
    recover a lost wallet and collect what they are owed meanwhile). A wallet that already belongs to one person and
-   verifies as another is refused (one wallet, one person). A contact given at `start` is kept on the person.
+   verifies as another is refused (one wallet, one person). A contact given at `start` is kept on the person only when
+   the person has none yet: a second wallet verifying later can never replace where the member's notices go.
 4. A gateway token (the pass the program checks) is issued to the wallet on the fund's gatekeeper network, and the
-   wallet record becomes `issued`. The pass expires after a year; verifying again renews it.
+   wallet record becomes `issued`. The pass expires after a year.
+
+## Renewal and contact
+
+The pass is renewed without a new paid check: `renew` (`POST /api/identity/renew`, the wallet's dated signature as in
+`start`) moves the expiry of the member's token another `tokenTtlSec` out when the wallet is the one linked to the
+membership, the person is not barred for good in the store and not barred on chain right now (a barred member renews
+once the bar ends). `status` reports the pass (`pass.expiresAt`, `pass.state`) and says `next: "renew"` when it
+expires within thirty days; the app shows a button. A member's contact changes only through the wallet currently
+linked to the membership (`POST /api/identity/contact`, signed), and the previous contact is told about the change, so
+taking over a wallet cannot silently redirect the notices that protect it.
 
 **Duplicate detection reduces abuse; it does not prove uniqueness.** A person holding two documents the service has
 never seen together can hold two memberships until the documents are linked or the provider's own duplicate
@@ -64,62 +76,87 @@ Losing a wallet must not mean losing a membership, and recovering one must not b
 
 1. The person verifies from the new wallet; it resolves to their existing person, and `status` says `recover`. A
    barred person may do this too: the bar is on the person, and the new wallet is how they reach what they are owed.
-2. `rebind` records a **recovery request** on the service (202, status `review`) and sends a notice to the person's
-   contact. The wallet can withdraw it (`DELETE /api/identity/rebind`). One request per person at a time.
+2. `rebind`, signed by the new wallet (the dated proof as in `start`: nobody can open a request in someone else's
+   name), records a **recovery request** on the service (202, status `review`) and sends a notice to the contact on
+   file from before the request and, when it differs, to the contact the requesting wallet gave. Whether the channel
+   took the notice is recorded on the request (`delivery`); a failed one is sent again on the cranker's next pass.
+   The wallet can withdraw the request (`DELETE`, signed) until the operator proposes it. One request per person at a
+   time; a closed request stays as history (`closedAs`: finalized, vetoed, rejected, withdrawn or barred).
 3. The operator reviews it with the recovery CLI (`cd scripts && npm run recovery -- list`), which reads
    `GET /api/identity/recoveries` (admin key): the request beside the chain's view of the person (current wallet, any
-   pending move, any bar, whether a contact is on file). `approve <personId>` asks the service for the
-   `propose_rebind` transaction built for the recovery key as fee payer and signed by the issuer
-   (`POST /api/identity/recoveries/:personId {feePayer}`), adds the recovery authority's signature from
-   `RECOVERY_KEYPAIR` (a file on the operator's machine; the web service never has it), sends it, and reports the
-   signature back so the member is told about the veto window. `reject <personId>` turns the request down and tells
-   the member. The service refuses to prepare a proposal for a fee payer that is not the pool's recovery authority, for
-   a person with a move already pending, or when the pool names another issuer.
+   pending move, any bar, whether the notice went out). `approve <personId> <newWallet>` names the wallet the operator
+   checked and asks the service for the `propose_rebind` transaction built for the recovery key as fee payer and signed
+   by the issuer (`POST /api/identity/recoveries/:personId {feePayer, newWallet, force?}`). The service refuses a
+   wallet that is not the recorded one, a request already proposed, a request younger than `RECOVERY_MIN_AGE_SECONDS`
+   (one day by default: the member gets time to see the notice) or one whose notice failed, the last two unless the
+   operator passes `--force`, a fee payer that is not the pool's recovery authority, a person with a move already
+   pending, or a pool that names another issuer. The CLI then decodes the transaction and signs only if it is exactly
+   one instruction: the Good Faith `propose_rebind` for that person account and that new wallet on this pool, with no
+   signer but the issuer and this key and this key as fee payer; it prints what it saw. It adds the recovery
+   authority's signature from `RECOVERY_KEYPAIR` (a file on the operator's machine, required, never a default path
+   shared with other keys; the web service never has it), sends it, and reports the signature back so the request is
+   marked proposed and the member is told about the veto window. `reject <personId>` turns the request down and tells
+   the member.
 4. On chain the proposal waits `recovery_delay_seconds`. The old wallet (or the pool authority) can veto it at any
    time during the delay; `status` shows the old wallet that a move is pending, and it keeps working.
 5. After the delay anyone finalises: the new wallet from the app (`finalize`, paying its own fee) or the cranker. The
    old wallet's member account is retired; loans, guarantees, eligibility and pending claims follow the person. The
-   recovered membership sits on the first-loan cap for `cooldown_seconds`.
+   recovered membership sits on the first-loan cap for `cooldown_seconds`. While a move is pending, what the person is
+   owed as a co-signer waits (the program refuses `claim_escrow`), so a lost wallet is never paid. The cranker's
+   reconciliation pass closes the request as finalized or vetoed from what the chain shows.
+
+The program adds a floor the service cannot move: after the pool's issuer, recovery key or gatekeeper network changes
+(a timelocked settings change), no recovery can be proposed for seven days (`KeysRecentlyChanged`), and the recovery
+delay can never be scheduled below one day.
 
 Compromise, key by key. The issuer key alone cannot move a membership (the recovery key must also sign), cannot skip
 the delay, and cannot stop the old wallet's veto. The recovery key alone cannot propose either: it only ever signs
-what the issuer signed first. The whole web service (issuer and gatekeeper keys, the store) can prepare proposals
-and issue passes, and still cannot propose a move until the operator signs; the operator's check in step 3 is the
-control, and the notice to the member's contact is the second pair of eyes that does not depend on the app. The
-two keys live in different places by construction: the issuer in the service's environment, the recovery key in a
-file the CLI reads.
+what the issuer signed first, and only after checking it is the one instruction it was told to expect. The whole web
+service (issuer and gatekeeper keys, the store) can prepare proposals and issue passes, and still cannot propose a
+move until the operator signs; it cannot make the CLI sign something else (the CLI verifies the bytes) nor hide a
+request from the member whose contact predates it (the notice goes to the contact on file, and the CLI shows whether
+it was delivered). The operator's check in step 3 is the control, and the notice is the second pair of eyes that does
+not depend on the app. The two keys live in different places by construction: the issuer in the service's
+environment, the recovery key in a file the CLI reads.
 
 ## Bars
 
 When a loan is settled after its deadline, the program bars the borrower (and the co-signer, when the fund lost
 money) for the durations fixed into the loan at opening; that is the eligibility that matters, and it follows the
-person across wallets. The cranker mirrors it to the service (`POST /api/identity/ban {personId, until}`):
+person across wallets. The cranker reconciles the service with the chain every pass (`POST /api/identity/reconcile
+{barred: [{personId, until}]}`: every person the chain bars right now, whoever settled the loan and whatever relaxed
+or lifted the bar since); `POST /api/identity/ban {personId, until}` does the same for one person (the admin CLI sends
+it after `lift-bar`). Both are idempotent:
 
-- a **time-bounded bar** is recorded with its end and revokes nothing: the chain refuses the person's loans and
+- a **time-bounded bar** is recorded with its end and freezes nothing: the chain refuses the person's loans and
   guarantees, their passes stay so they can recover a wallet and collect what they are owed, and the record lapses
   when the chain's bar does;
-- a **permanent bar** (`until` absent or the chain's maximum) revokes the passes of every wallet the person verified
-  with and refuses future checks, so the person cannot come back on a fresh wallet;
-- `until` in the past **lifts** the record (the admin CLI sends this after `lift-bar`; a restitution that relaxed a
-  bar is picked up on the cranker's next pass).
+- a **permanent bar** (`until` absent or the chain's maximum) **freezes** the passes of every wallet the person
+  verified with (the gateway token's frozen state, which the program refuses) and refuses future checks, so the
+  person cannot come back on a fresh wallet;
+- `until` in the past, or a bar relaxed to a date, **lifts** or relaxes the record and **thaws** passes a permanent bar
+  froze; a stored bar the chain no longer has is lifted by the reconciliation pass.
 
-Each change sends a notice to the person's contact. A person whose permanent bar is lifted verifies from a new wallet
-(a revoked pass cannot be re-issued) and recovers.
+Each change sends a notice to the person's contact. A permanent bar is therefore reversible: paying the fund back, or
+the authority's `lift_bar`, gives the member their passes back on the wallets they had.
 
 ## Notices
 
-`notify.ts` sends one message per event (recovery requested, proposed, rejected; barred; bar lifted) to the server
-log, or as a JSON POST to `NOTIFY_WEBHOOK_URL` when set (an operator points it at a mail or messaging relay). The
-body carries the person id, the wallet concerned, the contact when one is on file, a one-sentence detail and the
-figures (an end date, a signature). A failed webhook falls back to the log, so nothing is dropped silently. The
-contact is optional, given at `start`, never shown or forwarded elsewhere.
+`notify.ts` sends one message per event (recovery requested, proposed, rejected; barred; bar lifted; contact changed;
+pass renewed) to the server log, or as a JSON POST to `NOTIFY_WEBHOOK_URL` when set (an operator points it at a mail or
+messaging relay). The body carries the person id, the wallet concerned, the contact when one is on file, a
+one-sentence detail and the figures (an end date, a signature). A failed webhook falls back to the log and reports
+the failure; for a recovery request that outcome is stored (`delivery`), shown to the operator and retried on the
+cranker's next pass. The contact is optional, given at `start` or changed from the member's wallet, never shown or
+forwarded elsewhere; the relay the operator chooses sees it, which is part of the privacy statement in the paper.
 
 ## Operations
 
 - **Keys**: `ISSUER_SECRET` (the pool's issuer) and `GATEKEEPER_SECRET` (a gatekeeper on the fund's network) in the
   web service; `RECOVERY_KEYPAIR` (the pool's recovery authority) on the operator's machine for `npm run recovery`,
-  never in the web service (`/api/health` reports it as a problem when `RECOVERY_SECRET` is set); `PERSON_HASH_SECRETS`
-  in the web service. Each is a separate key with a separate job; losing the issuer or recovery key means scheduling
+  required (no shared default path) and never in the web service (`/api/health` reports it as a problem when
+  `RECOVERY_SECRET` is set); `PERSON_HASH_SECRETS` in the web service; `RECOVERY_MIN_AGE_SECONDS` sets how long a
+  request must have been open before the operator may propose it. Each is a separate key with a separate job; losing the issuer or recovery key means scheduling
   a replacement through the pool's timelock, losing the gatekeeper key means adding a new gatekeeper to the network,
   losing the fingerprint key means every person has to re-verify as new.
 - **Backups**: the store is the only link between people and memberships. Back it up with the keys; without the
@@ -133,5 +170,6 @@ contact is optional, given at `start`, never shown or forwarded elsewhere.
 ## What the service cannot do
 
 It cannot move money, open or close loans, change pool settings, bar or unbar someone on chain, or move a membership
-without the operator's recovery key. It decides who may join, prepares recovery proposals for the operator to sign,
-and keeps a mirror of the chain's bars; everything else is the program's.
+without the operator's recovery key. It decides who may join, renews passes, prepares recovery proposals for the
+operator to sign and verify, and keeps a mirror of the chain's bars (freezing and thawing passes for the permanent
+ones); everything else is the program's.
