@@ -221,7 +221,8 @@ if (viaProxy) {
   const wrongPayer = await refusal(kora.kora!.signAndSendTransaction({ transaction: tx.toBase64(signedByThird) }));
   assert.equal(wrongPayer.code, kora.KORA_CODES.REFUSED, wrongPayer.message);
   assert.match(wrongPayer.message, /fee payer/);
-  // a close whose rent goes to someone else, and a token account on its own for a wallet that is not a member
+  // a close (never sponsored: its rent would go to the wallet), and a token account for a wallet that is not a member,
+  // even beside a Good Faith instruction that wallet signs (the sponsor pays rent for members' accounts only)
   const viaKora = async (w: Signer, ixs: Instruction[]) => {
     const built = await tx.buildTransaction(txRpc, payer!, ixs);
     const signed = await partiallySignTransaction([(w as unknown as { keyPair: CryptoKeyPair }).keyPair], built);
@@ -229,10 +230,10 @@ if (viaProxy) {
   };
   const closeElsewhere = await refusal(viaKora(third, [getCloseAccountInstruction({ account: await ata(third.address), destination: stranger.address, owner: third as never }) as Instruction]));
   assert.equal(closeElsewhere.code, kora.KORA_CODES.REFUSED, closeElsewhere.message);
-  assert.match(closeElsewhere.message, /rent to the wallet/);
+  assert.match(closeElsewhere.message, /not sponsored/);
   await setSol(stranger.address, 100_000_000n);
   const strangerAta = await ata(stranger.address);
-  const nonMember = await refusal(viaKora(stranger, [ataCreate(payer!, strangerAta, stranger.address, pool.mint), getCloseAccountInstruction({ account: strangerAta, destination: stranger.address, owner: stranger as never }) as Instruction]));
+  const nonMember = await refusal(viaKora(stranger, [ataCreate(payer!, strangerAta, stranger.address, pool.mint), await prog.donateIx({ donor: stranger.address, pool, amount: 1n })]));
   assert.equal(nonMember.code, kora.KORA_CODES.REFUSED, nonMember.message);
   assert.match(nonMember.message, /members/);
   row('sponsorship policy', `stranger token account beside a donation: ${farm.message}`, `SOL transfer: ${solMove.message}`, `wallet as fee payer: ${wrongPayer.message}`, `close paid elsewhere: ${closeElsewhere.message}`, `non-member token account: ${nonMember.message}`);
@@ -271,9 +272,9 @@ for (const w of [borrower, cosigner, donor, borrower2]) assert.equal(await sol(w
 // cosigner2 paid one unsponsored close (fee) and got the account rent back
 const koraSpent = koraBase - (await sol(payer!));
 const rent = async (n: number) => BigInt(await rpc.getMinimumBalanceForRentExemption(BigInt(n)).send());
-// 4 people (Person 233 + Member 74 bytes each), 2 loans (341 bytes, permanent), 3 token accounts (two borrowers, the
+// 4 people (Person 233 + Member 74 bytes each), 2 loans (389 bytes, permanent), 3 token accounts (two borrowers, the
 // second co-signer's re-created by the claim), two signatures per transaction (three for registrations).
-const expected = 4n * ((await rent(233)) + (await rent(74))) + 2n * (await rent(341)) + 3n * (await rent(165)) + 10_000n * BigInt(sponsoredTxs) + 5_000n * 4n;
+const expected = 4n * ((await rent(233)) + (await rent(74))) + 2n * (await rent(389)) + 3n * (await rent(165)) + 10_000n * BigInt(sponsoredTxs) + 5_000n * 4n;
 console.log('Kora spent', koraSpent, 'lamports; expected about', expected, `(${sponsoredTxs} sponsored txs; request + escrow rents came back)`);
 assert.ok(koraSpent >= expected - 100_000n && koraSpent <= expected + 200_000n, 'Kora spend within the expected range');
 row('accounting', `users paid 0`, `Kora spent ${koraSpent} lamports (${sponsoredTxs} sponsored txs)`);

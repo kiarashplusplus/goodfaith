@@ -469,6 +469,7 @@ describe("prepared transactions", () => {
       {
         personId: id,
         newWallet: w2,
+        inquiryId: expect.any(String),
         requestedAt: Math.floor(now() / 1000),
         hasContact: false,
         delivery: null,

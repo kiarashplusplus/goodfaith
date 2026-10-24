@@ -6,7 +6,17 @@ import { LoanList } from "@/components/loan-list";
 import type { Address } from "@solana/kit";
 import { Button, Card, Field, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
 import { useApp, useBalances, useLoans, useNow, usePool } from "@/lib/hooks";
-import { fetchLoanById, lossOutstanding, owedAfterSettlement, repayIx, restituteIx, settleIx, type Loan, type Pool } from "@/lib/program";
+import {
+  cosignerClaim,
+  fetchLoanById,
+  fundClaim,
+  owedAfterSettlement,
+  repayIx,
+  restituteIx,
+  settleIx,
+  type Loan,
+  type Pool,
+} from "@/lib/program";
 import { loanTiming } from "@/lib/loan-status";
 import { sendInstructions } from "@/lib/tx";
 import { formatAmount, formatUsdc, parseAmount, shortAddress } from "@/lib/format";
@@ -99,7 +109,8 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
           ? "Your wallet doesn't have enough for that."
           : null;
   const ok = mode !== "closed" && !!amount && amount > 0n && amount <= owed && enough && !!signer;
-  const toFund = mode === "restitute" ? lossOutstanding(loan) : owed > loan.escrowed ? owed - loan.escrowed : 0n;
+  const toFund = mode === "restitute" ? fundClaim(loan) : owed > loan.escrowed ? owed - loan.escrowed : 0n;
+  const toCosignerClaim = mode === "restitute" ? cosignerClaim(loan) : owed - toFund;
 
   return (
     <div className="space-y-3">
@@ -127,22 +138,20 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
               The grace period has passed, so a repayment is no longer accepted. Paying now settles the loan and pays back what is owed in
               one step: the escrow covers {formatUsdc(owed < loan.escrowed ? owed : loan.escrowed)} and is reimbursed to the co-signer from
               your payment{toFund > 0n ? `, after the fund's ${formatUsdc(toFund)} shortfall` : ""}. The outcome is the same whoever settles
-              first. You are barred {bar(loan.defaultBanSeconds)} by the settlement; paying everything back from your own wallet{" "}
-              {loan.lateBanSeconds > 0n
-                ? `shortens that to ${Number(loan.lateBanSeconds / 86_400n)} days from the day you pay`
-                : "lifts it"}
-              .
+              first. You are barred {bar(loan.defaultBanSeconds)} by the settlement; once everything is paid back, by you or anyone for you,
+              that{" "}
+              {loan.lateBanSeconds > 0n ? `shortens to ${Number(loan.lateBanSeconds / 86_400n)} days from the day it is paid` : "lifts"}.
             </Notice>
           )}
           {mode === "restitute" && (
             <Notice tone="warn">
               This loan was settled on {new Date(Number(loan.closedAt) * 1000).toLocaleDateString()}. {formatUsdc(owed)} is still owed:{" "}
-              {toFund > 0n ? `${formatUsdc(toFund)} to the fund first, then ` : ""}
-              {formatUsdc(owed - toFund)} back to the co-signer whose escrow was used. The co-signer&apos;s bar lifts as soon as the fund is
-              whole, whoever pays. The borrower&apos;s bar{" "}
-              {loan.lateBanSeconds > 0n ? `shortens to ${Number(loan.lateBanSeconds / 86_400n)} days from the day they pay` : "is lifted"}{" "}
-              only when the whole shortfall is back and the borrower&apos;s own wallet made the final payment; a friend&apos;s payment helps
-              the fund and the co-signer, not the borrower&apos;s standing.
+              {toFund > 0n ? `${formatUsdc(toFund)} to the fund first` : ""}
+              {toFund > 0n && toCosignerClaim > 0n ? ", then " : ""}
+              {toCosignerClaim > 0n ? `${formatUsdc(toCosignerClaim)} back to the co-signer whose escrow was used` : ""}. The
+              co-signer&apos;s bar lifts as soon as the fund is whole. Once everything is paid back, whoever pays, the borrower&apos;s bar{" "}
+              {loan.lateBanSeconds > 0n ? `shortens to ${Number(loan.lateBanSeconds / 86_400n)} days from that day` : "is lifted"}
+              {loan.fundForgivenAt > 0n ? " (not here: the fund forgave its claim, which is not the same as being paid back)" : ""}.
             </Notice>
           )}
           <div className="flex items-end gap-2">

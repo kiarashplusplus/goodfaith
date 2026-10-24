@@ -8,6 +8,7 @@
 //   npm run admin -- suspend-issuer | pause | resume
 //   npm run admin -- announce-wind-down <successorTokenAccount> | cancel-wind-down | sweep
 //   npm run admin -- lift-bar <personAccount> <reason words...>   (public: the event carries the hash of the reason)
+//   npm run admin -- forgive-fund-claim <loanId> <reason words...>   (public; the loss stays recognised, no bar changes)
 //   npm run admin -- announce-wind-down <successorTokenAccount>   (two keys: ADMIN_KEYPAIR and SUCCESSOR_KEYPAIR)
 //   npm run admin -- freeze --yes
 import fs from 'node:fs';
@@ -26,7 +27,7 @@ const FIELDS: Record<keyof Params, 'address' | 'u64' | 'i64' | 'u16' | 'u8'> = {
   issuer: 'address', timelockSeconds: 'i64', recoveryAuthority: 'address', pauseAuthority: 'address', recoveryDelaySeconds: 'i64', requestTtlSeconds: 'i64',
   firstLoanCap: 'u64', loanCapStep: 'u64', cooldownSeconds: 'i64', maxExposurePerPerson: 'u64', disbursementWindowSeconds: 'i64', disbursementCapPerWindow: 'u64',
   defaultBanSeconds: 'i64', lateBanSeconds: 'i64', cosignerBanSeconds: 'i64', seasoningSeconds: 'i64', capStepIntervalSeconds: 'i64', maxOutstandingPrincipal: 'u64',
-  successorAuthority: 'address',
+  successorAuthority: 'address', maxTotalLent: 'u64',
 };
 const PERMANENT = 9223372036854775807n;
 const paramsOf = (p: Awaited<ReturnType<typeof fetchPool>>): Params =>
@@ -54,9 +55,9 @@ export async function run(argv: string[], out: (line: string) => void = console.
       out(`issuer        ${p.issuer}${p.issuer === '11111111111111111111111111111111' ? ' (SUSPENDED)' : ''}`);
       out(`recovery      ${p.recoveryAuthority}    pause ${p.pauseAuthority}`);
       out(`network       ${p.gatekeeperNetwork}`);
-      out(`lending       ${p.paused ? 'PAUSED' : 'open'}; active loans ${p.activeLoans}; outstanding ${fmt(p.outstandingPrincipal)} of ${p.maxOutstandingPrincipal === 0n ? 'no ceiling' : fmt(p.maxOutstandingPrincipal)}; window ${fmt(p.windowDisbursed)} of ${p.disbursementCapPerWindow === 0n ? 'no cap' : fmt(p.disbursementCapPerWindow)} since ${when(p.windowStart)}`);
+      out(`lending       ${p.paused ? 'PAUSED' : 'open'}; active loans ${p.activeLoans}; outstanding ${fmt(p.outstandingPrincipal)} of ${p.maxOutstandingPrincipal === 0n ? 'no ceiling' : fmt(p.maxOutstandingPrincipal)}; lent ${fmt(p.totalLent)} of ${p.maxTotalLent === 0n ? 'no budget' : `a ${fmt(p.maxTotalLent)} budget`}; window ${fmt(p.windowDisbursed)} of ${p.disbursementCapPerWindow === 0n ? 'no cap' : fmt(p.disbursementCapPerWindow)} since ${when(p.windowStart)}`);
       out(`owed          to co-signers: ${fmt(p.pendingClaims)} in escrows + ${fmt(p.vaultClaims)} in the vault; to the fund: ${fmt(p.recoveriesPending)} in escrows`);
-      out(`totals        donated ${fmt(p.totalDonated)}, lent ${fmt(p.totalLent)}, repaid ${fmt(p.totalRepaid)}, recovered ${fmt(p.totalRecovered)}, lost ${fmt(p.totalLost)}, restituted ${fmt(p.totalRestituted)}, reimbursed ${fmt(p.totalReimbursed)}, swept ${fmt(p.totalSwept)}, loans ${p.loanCount}`);
+      out(`totals        donated ${fmt(p.totalDonated)}, lent ${fmt(p.totalLent)}, repaid ${fmt(p.totalRepaid)}, recovered ${fmt(p.totalRecovered)}, lost ${fmt(p.totalLost)} (forgiven ${fmt(p.totalForgiven)}), restituted ${fmt(p.totalRestituted)}, reimbursed ${fmt(p.totalReimbursed)}, swept ${fmt(p.totalSwept)}, loans ${p.loanCount}`);
       out(`settings      max loan ${fmt(p.maxLoan)}, first ${fmt(p.firstLoanCap)} +${fmt(p.loanCapStep)}/loan (held ${dur(p.seasoningSeconds)}, one step per ${dur(p.capStepIntervalSeconds)}), cooldown ${dur(p.cooldownSeconds)}, term ${p.maxTermDays}d, grace ${p.graceDays}d, escrow ${p.cosignerEscrowBps} bps, ${p.maxGuaranteesPerMember} guarantees, exposure ${fmt(p.maxExposurePerPerson)}`);
       out(`timing        notice ${dur(p.timelockSeconds)}, recovery delay ${dur(p.recoveryDelaySeconds)}, request ttl ${dur(p.requestTtlSeconds)}, bars default ${dur(p.defaultBanSeconds)} / late ${dur(p.lateBanSeconds)} / co-signer ${dur(p.cosignerBanSeconds)}`);
       const pending = opt(p.pendingParams);
@@ -143,6 +144,25 @@ export async function run(argv: string[], out: (line: string) => void = console.
         const res = await fetch(`${url}/api/identity/ban`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-identity-admin-key': key }, body: JSON.stringify({ personId, until: '0' }) });
         out(`identity      ${res.ok ? 'bar lifted in the identity service' : `identity service answered HTTP ${res.status}`}`);
       } else out('identity      IDENTITY_URL/APP_URL and IDENTITY_ADMIN_KEY not set; lift the bar in the identity service too (POST /api/identity/ban with until=0)');
+      return;
+    }
+    case 'forgive-fund-claim': {
+      const id = BigInt(positional[0] ?? '');
+      const reason = positional.slice(1).join(' ').trim();
+      if (!reason) throw new Error('usage: forgive-fund-claim <loanId> <reason words...>  (publish the reason; its hash goes on chain)');
+      const prog = await import('../app/src/lib/program.ts');
+      const loan = await prog.fetchLoanById(rpc as any, pool, id);
+      if (!loan || loan.status !== 'Defaulted') throw new Error(`loan #${id} is ${loan?.status ?? 'missing'}: only a settled loan with a fund claim can be forgiven`);
+      if (prog.fundClaim(loan) === 0n) throw new Error(`loan #${id}: the fund is owed nothing`);
+      const hash = createHash('sha256').update(reason).digest();
+      const sig = await send(
+        [gf.getForgiveFundClaimInstruction({ authority: signer, pool, loan: loan.address, borrowerPerson: loan.borrowerPerson, reason: hash })],
+        signer,
+        'forgive_fund_claim',
+      );
+      out(`fund claim of ${fmt(prog.fundClaim(loan))} on loan #${id} forgiven: ${sig}`);
+      out(`still owed   ${fmt(prog.cosignerClaim(loan))} to the co-signer (theirs to waive)`);
+      out(`reason hash  ${hash.toString('hex')}  (sha256 of: ${JSON.stringify(reason)}; publish both)`);
       return;
     }
     case 'freeze':

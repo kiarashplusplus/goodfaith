@@ -21,5 +21,6 @@
   "cosignerBanDays": 365,
   "seasoningDays": 30,
   "capStepIntervalDays": 30,
-  "maxOutstandingPrincipal": 25000
+  "maxOutstandingPrincipal": 25000,
+  "maxTotalLent": 40000
 }

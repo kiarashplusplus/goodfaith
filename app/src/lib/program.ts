@@ -49,7 +49,8 @@ import {
   getCollectRecoveryInstruction,
   getRestituteInstruction,
   getLiftBarInstruction,
-  getForgiveInstruction,
+  getWaiveReimbursementInstruction,
+  getForgiveFundClaimInstruction,
   getClaimEscrowInstruction,
   getCloseExpiredRequestInstruction,
   getApplyParamsInstruction,
@@ -105,6 +106,8 @@ export type PoolParams = {
   capStepIntervalSeconds: bigint;
   /** Ceiling on principal out on loan (0: none). */
   maxOutstandingPrincipal: bigint;
+  /** Ceiling on everything ever lent (0: none); a settlement frees none of it. */
+  maxTotalLent: bigint;
 };
 
 export type Pool = {
@@ -158,6 +161,7 @@ export type Pool = {
   seasoningSeconds: bigint;
   capStepIntervalSeconds: bigint;
   maxOutstandingPrincipal: bigint;
+  maxTotalLent: bigint;
   /** When the issuer, recovery key or gatekeeper network last changed; recoveries wait 7 days after it. */
   keysChangedAt: bigint;
   /** Second key that must sign a wind-down announcement. */
@@ -172,6 +176,8 @@ export type Pool = {
   totalRestituted: bigint;
   /** Reimbursements paid to co-signers out of the vault. */
   totalReimbursed: bigint;
+  /** Fund claims the authority forgave (still counted in the recognised loss). */
+  totalForgiven: bigint;
 };
 
 /** One verified human; eligibility and open positions live here and follow a replaced wallet. */
@@ -253,8 +259,10 @@ export type Loan = {
   recovered: bigint;
   /** Of `recovered`, still in the escrow account until collected into the vault. */
   recoveryPending: bigint;
-  /** Paid back after settlement. */
+  /** Paid back after settlement, to both claims. */
   restituted: bigint;
+  /** Of `restituted`, what made the fund's loss good. */
+  restitutedToFund: bigint;
   /** Reimbursement owed to the co-signer out of the vault. */
   reimbursementPending: bigint;
   /** Bars this loan set at settlement (0: none); relaxed once the loan is restituted. */
@@ -267,21 +275,21 @@ export type Loan = {
   /** Cap-credit rules fixed when the loan opened. */
   seasoningSeconds: bigint;
   capStepIntervalSeconds: bigint;
-  /** When the co-signer forgave the unpaid rest (0: not forgiven). */
-  forgivenAt: bigint;
+  /** When the co-signer waived the rest of their reimbursement (0: not waived). */
+  cosignerWaivedAt: bigint;
+  /** When the authority forgave the rest of the fund's claim (0: not forgiven). */
+  fundForgivenAt: bigint;
 };
 
 /** What the co-signer can still collect: the escrow refund plus any reimbursement from the vault. */
 export const owedToCosigner = (l: Pick<Loan, "refundPending" | "reimbursementPending">) => l.refundPending + l.reimbursementPending;
-/** What the borrower still owes after a settlement. */
-export const owedAfterSettlement = (l: Pick<Loan, "shortfall" | "restituted"> & Partial<Pick<Loan, "forgivenAt">>) =>
-  l.forgivenAt && l.forgivenAt > 0n ? 0n : l.shortfall - l.restituted;
-/** The fund's loss on a settled loan that is not yet made good. */
-export const lossOutstanding = (l: Pick<Loan, "shortfall" | "recovered" | "restituted">) => {
-  const lost = l.shortfall - l.recovered;
-  const back = l.restituted < lost ? l.restituted : lost;
-  return lost - back;
-};
+type Claims = Pick<Loan, "shortfall" | "recovered" | "restituted" | "restitutedToFund" | "cosignerWaivedAt" | "fundForgivenAt">;
+/** The fund's claim on a settled loan: its loss not yet paid back (0 once forgiven). */
+export const fundClaim = (l: Claims) => (l.fundForgivenAt > 0n ? 0n : l.shortfall - l.recovered - l.restitutedToFund);
+/** The co-signer's claim on a settled loan: the deposit used, not yet paid back (0 once waived). */
+export const cosignerClaim = (l: Claims) => (l.cosignerWaivedAt > 0n ? 0n : l.recovered - (l.restituted - l.restitutedToFund));
+/** What the borrower still owes after a settlement: both claims. */
+export const owedAfterSettlement = (l: Claims) => fundClaim(l) + cosignerClaim(l);
 
 export type LoanRequest = {
   address: Address;
@@ -358,6 +366,7 @@ const toParams = (d: PoolParamsData): PoolParams => ({
   seasoningSeconds: d.seasoningSeconds,
   capStepIntervalSeconds: d.capStepIntervalSeconds,
   maxOutstandingPrincipal: d.maxOutstandingPrincipal,
+  maxTotalLent: d.maxTotalLent,
 });
 const STATUSES: LoanStatus[] = ["Active", "Repaid", "Defaulted", "Restituted"];
 
@@ -447,6 +456,7 @@ export async function fetchPool(rpc: ReadRpc, a: Address): Promise<Pool | null> 
     seasoningSeconds: d.seasoningSeconds,
     capStepIntervalSeconds: d.capStepIntervalSeconds,
     maxOutstandingPrincipal: d.maxOutstandingPrincipal,
+    maxTotalLent: d.maxTotalLent,
     keysChangedAt: d.keysChangedAt,
     successorAuthority: d.successorAuthority,
     outstandingPrincipal: d.outstandingPrincipal,
@@ -454,6 +464,7 @@ export async function fetchPool(rpc: ReadRpc, a: Address): Promise<Pool | null> 
     vaultClaims: d.vaultClaims,
     totalRestituted: d.totalRestituted,
     totalReimbursed: d.totalReimbursed,
+    totalForgiven: d.totalForgiven,
   };
 }
 
@@ -580,6 +591,7 @@ function toLoan(address: Address, d: LoanData): Loan {
     recovered: d.recovered,
     recoveryPending: d.recoveryPending,
     restituted: d.restituted,
+    restitutedToFund: d.restitutedToFund,
     reimbursementPending: d.reimbursementPending,
     borrowerBarUntil: d.borrowerBarUntil,
     cosignerBarUntil: d.cosignerBarUntil,
@@ -588,7 +600,8 @@ function toLoan(address: Address, d: LoanData): Loan {
     cosignerBanSeconds: d.cosignerBanSeconds,
     seasoningSeconds: d.seasoningSeconds,
     capStepIntervalSeconds: d.capStepIntervalSeconds,
-    forgivenAt: d.forgivenAt,
+    cosignerWaivedAt: d.cosignerWaivedAt,
+    fundForgivenAt: d.fundForgivenAt,
   };
 }
 
@@ -1079,15 +1092,29 @@ export async function restituteIx(a: { payer: Address; pool: Pool; loan: Loan; a
   );
 }
 
-/** The authority ends a bar early; `reason` is the 32-byte hash of a written, published reason. */
-/** The co-signer of a settled loan lets the borrower off the unpaid rest; the fund's loss and both bars stay. */
-export function forgiveIx(a: { cosigner: Address; pool: Pool; loan: Loan }): Instruction {
-  return getForgiveInstruction(
-    { cosigner: signer(a.cosigner), pool: a.pool.address, loan: a.loan.address, cosignerPerson: a.loan.cosignerPerson },
+/** The co-signer of a settled loan gives up their own claim; the fund's claim stays payable. */
+export function waiveReimbursementIx(a: { cosigner: Address; pool: Pool; loan: Loan }): Instruction {
+  return getWaiveReimbursementInstruction(
+    {
+      cosigner: signer(a.cosigner),
+      pool: a.pool.address,
+      loan: a.loan.address,
+      borrowerPerson: a.loan.borrowerPerson,
+      cosignerPerson: a.loan.cosignerPerson,
+    },
     cfg,
   );
 }
 
+/** The authority forgives the fund's claim on a settled loan; `reason` is the hash of a published reason. */
+export function forgiveFundClaimIx(a: { authority: Address; pool: Pool; loan: Loan; reason: Uint8Array }): Instruction {
+  return getForgiveFundClaimInstruction(
+    { authority: signer(a.authority), pool: a.pool.address, loan: a.loan.address, borrowerPerson: a.loan.borrowerPerson, reason: a.reason },
+    cfg,
+  );
+}
+
+/** The authority ends a bar early; `reason` is the 32-byte hash of a written, published reason. */
 export function liftBarIx(a: { authority: Address; pool: Pool; person: Address; reason: Uint8Array }): Instruction {
   return getLiftBarInstruction({ authority: signer(a.authority), pool: a.pool.address, person: a.person, reason: a.reason }, cfg);
 }
@@ -1141,6 +1168,8 @@ const ERROR_NAMES = [
   "NotBarred",
   "RecoveryDelayBelowMinimum",
   "KeysRecentlyChanged",
+  "LendingBudgetReached",
+  "NothingToWaive",
 ];
 const ERROR_COPY: Record<string, string> = {
   AmountZero: "Enter an amount greater than zero.",
@@ -1190,6 +1219,8 @@ const ERROR_COPY: Record<string, string> = {
   NotBarred: "This member isn't barred.",
   RecoveryDelayBelowMinimum: "The recovery delay can't be set below the minimum.",
   KeysRecentlyChanged: "The fund's identity keys changed recently; wallet moves wait out the quarantine.",
+  LendingBudgetReached: "The fund has lent its whole budget for this period. New loans wait until the administrator raises it.",
+  NothingToWaive: "There is nothing left for you to waive on this loan.",
 };
 
 const WALLET_REJECTED = /user rejected|rejected the request|user denied|user declined|declined by user|rejected by user/i;

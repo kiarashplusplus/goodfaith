@@ -128,14 +128,15 @@ async function recoverVia(w: KeyPairSigner) {
   assert.ok(mine, 'the request is in the operator queue');
   assert.equal(mine!.onChain, true);
   assert.equal(mine!.delivery, 'sent', 'the notice about the request went out');
-  assert.match(cliFails(['approve', mine!.personId, w.address]) ?? '', /old;|--force/, 'a request younger than the minimum age is refused without --force');
+  assert.match(cliFails(['approve', mine!.personId, w.address, '--checked']) ?? '', /old;|--force/, 'a request younger than the minimum age is refused without --force');
   const other = (await generateKeyPairSigner()).address;
-  assert.match(cliFails(['approve', mine!.personId, other, '--force']) ?? '', /names wallet/, 'the CLI names the wallet it checked');
-  const outApprove = recoveryCli(['approve', mine!.personId, w.address, '--force']);
+  assert.match(cliFails(['approve', mine!.personId, w.address, '--force']) ?? '', /--checked/, 'nothing is signed before the operator confirms the independent checks');
+  assert.match(cliFails(['approve', mine!.personId, other, '--force', '--checked']) ?? '', /names wallet/, 'the CLI names the wallet it checked');
+  const outApprove = recoveryCli(['approve', mine!.personId, w.address, '--force', '--checked']);
   assert.match(outApprove, /instruction\s+propose_rebind/);
   assert.match(outApprove, /proposed on chain/);
   assert.equal(queue().find((q) => q.newWallet === w.address)?.pendingWallet, w.address, 'the queue shows it proposed');
-  assert.match(cliFails(['approve', mine!.personId, w.address, '--force']) ?? '', /already proposed|already pending/, 'never twice');
+  assert.match(cliFails(['approve', mine!.personId, w.address, '--force', '--checked']) ?? '', /already proposed|already pending/, 'never twice');
   return mine!.personId;
 }
 

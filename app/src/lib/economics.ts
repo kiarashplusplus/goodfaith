@@ -4,8 +4,10 @@
  * attacks (a correlated shock, a compromised issuer, sponsor abuse, an outage across a deadline) can cost. Pure
  * functions; `scripts/model.ts` prints the tables and docs/economics.md explains them.
  *
- * Definitions. A "cycle" is the average term plus the time to re-lend repaid money. The default rate is the share
- * of loans originated in a cycle that end in default (per originated loan, per cycle), not a share of the fund.
+ * Definitions. A "cycle" is the average term plus the time to re-lend repaid money. The settlement rate is the share
+ * of loans originated in a cycle that are not repaid by their cutoff and are settled (per originated loan, per cycle),
+ * not a share of the fund, and not the ultimate loss: after a settlement the escrow covers part, and pay-backs may
+ * cover more (`paybackRate`). What stays unpaid after both is the ultimate loss.
  */
 export type Scenario = {
   name: string;
@@ -17,8 +19,10 @@ export type Scenario = {
   avgLoan: number;
   /** Average term plus the time to redeploy repaid money, days. */
   cycleDays: number;
-  /** Share of loans originated in a cycle that default (0..1). */
-  defaultRate: number;
+  /** Share of loans originated in a cycle that are settled after their cutoff (0..1). */
+  settlementRate: number;
+  /** Share of what a settlement leaves owed that is eventually paid back (0..1; the fund's claim is paid first). */
+  paybackRate: number;
   /** Co-signer escrow as a share of the loan (0..1). */
   escrowRate: number;
   /** Average share of principal repaid before a default (0..1). Zero is the worst case. */
@@ -52,8 +56,13 @@ export type Costs = {
 export type Result = {
   loansPerYear: number;
   cyclesPerYear: number;
-  /** Capital lost per full cycle of the deployed fund. */
+  /** Capital lost per full cycle of the deployed fund (ultimate loss, after escrow and pay-backs). */
   lossPerCycle: number;
+  /** Per year: principal unpaid at settlement, what the escrows covered, what later pay-backs returned to the fund, and
+   * what stays lost. principalAtSettlement = escrowRecoveries + laterRecoveries + ultimateLoss. */
+  principalAtSettlementPerYear: number;
+  escrowRecoveriesPerYear: number;
+  laterRecoveriesPerYear: number;
   lossPerYear: number;
   /** Loss as a share of the whole fund per year. */
   lossRatePerYear: number;
@@ -98,10 +107,21 @@ export type Result = {
   breakEvenEscrowRate: number;
 };
 
-/** Loss on one defaulted loan: the unpaid part minus what the escrow covers, never below zero. */
-export function lossPerDefault(avgLoan: number, escrowRate: number, repaidBeforeDefault: number): number {
+/**
+ * Ultimate loss on one settled loan: the unpaid part minus what the escrow covers, minus what later pay-backs return to
+ * the fund (pay-backs go to the fund's claim first), never below zero.
+ */
+export function lossPerDefault(avgLoan: number, escrowRate: number, repaidBeforeDefault: number, paybackRate = 0): number {
+  return settlementSplit(avgLoan, escrowRate, repaidBeforeDefault, paybackRate).ultimateLoss;
+}
+
+/** Where the principal unpaid at one settlement ends up. */
+export function settlementSplit(avgLoan: number, escrowRate: number, repaidBeforeDefault: number, paybackRate = 0) {
   const unpaid = avgLoan * (1 - repaidBeforeDefault);
-  return Math.max(0, unpaid - avgLoan * escrowRate);
+  const escrow = Math.min(unpaid, avgLoan * escrowRate);
+  const fundClaim = unpaid - escrow;
+  const later = Math.min(fundClaim, unpaid * paybackRate);
+  return { unpaid, escrow, later, ultimateLoss: fundClaim - later };
 }
 
 /** The co-signer's deposit used on one defaulted loan: the unpaid part, up to the deposit. */
@@ -119,23 +139,28 @@ export function evaluate(s: Scenario): Result {
   const cyclesPerYear = 365 / s.cycleDays;
   const loansPerCycle = deployed / s.avgLoan;
   const loansPerYear = loansPerCycle * cyclesPerYear;
-  const perDefault = lossPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault);
-  const lossPerCycle = loansPerCycle * s.defaultRate * perDefault;
+  const split = settlementSplit(s.avgLoan, s.escrowRate, s.repaidBeforeDefault, s.paybackRate);
+  const lossPerCycle = loansPerCycle * s.settlementRate * split.ultimateLoss;
   const lossPerYear = lossPerCycle * cyclesPerYear;
+  const settledPerYear = loansPerYear * s.settlementRate;
   const recurringPerYear = recurringCosts(s.costs, loansPerYear);
   const oneOff = oneOffTotal(s.costs);
   const oneOffPerYear = s.costs.oneOffYears > 0 ? oneOff / s.costs.oneOffYears : oneOff;
   const operatingPerYear = recurringPerYear + oneOffPerYear;
-  const completedLoansPerYear = loansPerYear * (1 - s.defaultRate);
+  const completedLoansPerYear = loansPerYear * (1 - s.settlementRate);
   const donationsNeededPerYear = lossPerYear + operatingPerYear;
   const perBorrower = s.loansPerBorrowerPerYear > 0 ? s.loansPerBorrowerPerYear : 1;
   const distinctBorrowersPerYear = completedLoansPerYear / perBorrower;
-  const defaultsPerYear = loansPerYear * s.defaultRate;
   const conversionPerLoan = 2 * s.conversionFeeUsd;
+  // the co-signer's deposit comes back from what pay-backs leave after the fund's claim
+  const cosignerBack = Math.max(0, split.unpaid * s.paybackRate - (split.unpaid - split.escrow));
   return {
     loansPerYear,
     cyclesPerYear,
     lossPerCycle,
+    principalAtSettlementPerYear: settledPerYear * split.unpaid,
+    escrowRecoveriesPerYear: settledPerYear * split.escrow,
+    laterRecoveriesPerYear: settledPerYear * split.later,
     lossPerYear,
     lossRatePerYear: lossPerYear / s.fund,
     recurringPerYear,
@@ -149,7 +174,8 @@ export function evaluate(s: Scenario): Result {
     cashRunwayYears: cashRunway(s),
     completedLoansPerYear,
     distinctBorrowersPerYear,
-    cosignerDepositsLostPerYear: defaultsPerYear * depositUsedPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault),
+    cosignerDepositsLostPerYear:
+      settledPerYear * Math.max(0, depositUsedPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault) - cosignerBack),
     borrowerConversionPerYear: loansPerYear * conversionPerLoan,
     conversionPerLoan,
     subsidyPerCompletedLoan: completedLoansPerYear > 0 ? donationsNeededPerYear / completedLoansPerYear : Infinity,
@@ -223,7 +249,7 @@ export function balanceSheet(s: Scenario, fund = s.fund) {
     escrowHeld: outstandingPrincipal * s.escrowRate,
     /** Expected to be lost from the open loans at the scenario's default rate. */
     expectedLossOnOpenLoans:
-      (outstandingPrincipal / s.avgLoan) * s.defaultRate * lossPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault),
+      (outstandingPrincipal / s.avgLoan) * s.settlementRate * lossPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault, s.paybackRate),
   };
 }
 
@@ -247,20 +273,24 @@ function evaluateShallow(s: Scenario): { loansPerYear: number; lossPerYear: numb
   const deployed = s.fund * s.utilisation;
   const cyclesPerYear = 365 / s.cycleDays;
   const loansPerCycle = deployed / s.avgLoan;
-  const lossPerYear = loansPerCycle * s.defaultRate * lossPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault) * cyclesPerYear;
+  const lossPerYear =
+    loansPerCycle * s.settlementRate * lossPerDefault(s.avgLoan, s.escrowRate, s.repaidBeforeDefault, s.paybackRate) * cyclesPerYear;
   return { loansPerYear: loansPerCycle * cyclesPerYear, lossPerYear };
 }
 
-/** One cycle at a shock default rate (many people in trouble at once), on top of a normal year. */
-export function correlatedShock(s: Scenario, shockDefaultRate: number): { shockCycleLoss: number; yearLoss: number; shareOfFund: number } {
+/** One cycle at a shock settlement rate (many people in trouble at once), on top of a normal year. */
+export function correlatedShock(s: Scenario, shockRate: number): { shockCycleLoss: number; yearLoss: number; shareOfFund: number } {
   const normal = evaluate(s);
-  const shock = evaluate({ ...s, defaultRate: shockDefaultRate });
+  const shock = evaluate({ ...s, settlementRate: shockRate });
   const yearLoss = normal.lossPerYear - normal.lossPerCycle + shock.lossPerCycle;
   return { shockCycleLoss: shock.lossPerCycle, yearLoss, shareOfFund: yearLoss / s.fund };
 }
 
 /**
- * A compromised identity issuer registering fake people and lending to them: a scenario, not a bound. The inputs are
+ * A compromised identity service (issuer and gatekeeper keys together: joining needs the issuer's signature and a
+ * valid pass, which only the gatekeeper issues) registering fake people and lending to them: a scenario, not
+ * a bound. It assumes no loan settles or is repaid before containment, so nothing frees ceiling capacity meanwhile;
+ * the lifetime lending budget caps the total whatever happens to the ceiling. The inputs are
  * the assumptions: `containmentDays` is the time from the first fake loan to the pause (detection plus reaction),
  * and the disbursement window is a fixed window (gross principal per window from `window_start`), so an attacker who
  * straddles a boundary gets two windows' worth in a short time; the ceiling on outstanding principal caps the total
@@ -279,10 +309,13 @@ export function issuerCompromise(p: {
   outstandingCeiling?: number;
   /** Principal already out on loan when the attack starts. */
   outstandingNow?: number;
+  /** What is left of the lifetime lending budget when the attack starts (undefined: no budget). */
+  budgetLeft?: number;
 }): { maxDisbursed: number; maxLoss: number; fakeLoans: number; windows: number } {
   const perLoanLoss = p.firstLoanCap * (1 - p.escrowRate);
-  const headroom =
+  const ceilingRoom =
     p.outstandingCeiling && p.outstandingCeiling > 0 ? Math.max(0, p.outstandingCeiling - (p.outstandingNow ?? 0)) : Infinity;
+  const headroom = Math.min(ceilingRoom, p.budgetLeft ?? Infinity);
   if (p.disbursementCap <= 0) {
     const fakeLoans = Math.min(Math.floor(p.fakeLoansPerDay * p.containmentDays), Math.floor(headroom / p.firstLoanCap));
     return { maxDisbursed: fakeLoans * p.firstLoanCap, maxLoss: fakeLoans * perLoanLoss, fakeLoans, windows: 0 };
@@ -358,6 +391,49 @@ export function collusionRing(p: { people: number; loanCap: number; escrowRate: 
 }
 
 /**
+ * The launch ramp: new members start on the first-loan cap and grow it by one step per loan repaid on time (held at
+ * least the seasoning period, at most one step per interval); a settlement puts them back on the first cap. Members
+ * join at a steady rate and borrow back to back, one loan per cycle, each loan the smaller of their cap and what they
+ * need (`need`, the mature average loan). Returns, month by month, the average size of the loans opened that month.
+ */
+export function launchRamp(p: {
+  months: number;
+  firstLoanCap: number;
+  step: number;
+  maxLoan: number;
+  need: number;
+  cycleDays: number;
+  settlementRate: number;
+}): { month: number; avgLoan: number }[] {
+  const capAt = (k: number) => Math.min(p.firstLoanCap + p.step * k, p.maxLoan);
+  const maxK = Math.ceil(Math.max(0, p.maxLoan - p.firstLoanCap) / p.step);
+  const cycleMonths = p.cycleDays / 30;
+  const out: { month: number; avgLoan: number }[] = [];
+  for (let month = 1; month <= p.months; month++) {
+    // cohorts joined in each earlier month (equal sizes); a cohort that joined j months ago has had floor(j / cycle) loans close
+    let sum = 0;
+    let count = 0;
+    for (let joined = 0; joined < month; joined++) {
+      const closed = Math.floor((month - 1 - joined) / cycleMonths);
+      // distribution over steps after `closed` loans: each loan on time (+1 step) or settled (back to 0)
+      let dist = [1, ...Array(maxK).fill(0)] as number[];
+      for (let i = 0; i < closed; i++) {
+        const next = Array(maxK + 1).fill(0) as number[];
+        dist.forEach((q, k) => {
+          next[Math.min(k + 1, maxK)]! += q * (1 - p.settlementRate);
+          next[0]! += q * p.settlementRate;
+        });
+        dist = next;
+      }
+      sum += dist.reduce((a, q, k) => a + q * Math.min(capAt(k), p.need), 0);
+      count += 1;
+    }
+    out.push({ month, avgLoan: sum / count });
+  }
+  return out;
+}
+
+/**
  * The assumptions behind the tables. `LAUNCH` is what the fund can do under its launch settings: the ceiling on
  * principal out on loan is $25,000, so with a $100,000 fund at most a quarter is ever lent. `BASE` is the same fund
  * with the ceiling raised to lend 80% of it, which is the scale the design was costed at; `scripts/model.ts` varies
@@ -369,7 +445,8 @@ export const BASE: Scenario = {
   utilisation: 0.8,
   avgLoan: 300,
   cycleDays: 120,
-  defaultRate: 0.05,
+  settlementRate: 0.05,
+  paybackRate: 0,
   escrowRate: 0.25,
   repaidBeforeDefault: 0.2,
   loansPerBorrowerPerYear: 2,
@@ -389,6 +466,23 @@ export const BASE: Scenario = {
 
 /** The launch settings: the $25,000 outstanding-principal ceiling binds, so a quarter of the fund is out at most. */
 export const LAUNCH: Scenario = { ...BASE, name: "launch ($25,000 ceiling)", utilisation: 0.25 };
+
+/** The launch ramp at the launch settings: $150 first loans, +$100 a step, $500 at most, against a $300 need. */
+export const RAMP = {
+  firstLoanCap: 150,
+  step: 100,
+  maxLoan: 500,
+  need: BASE.avgLoan,
+  cycleDays: BASE.cycleDays,
+  settlementRate: BASE.settlementRate,
+};
+
+/** The first year at launch scale, with the ramp's average loan for that year instead of the mature $300. */
+export function launchFirstYear(): Scenario {
+  const ramp = launchRamp({ ...RAMP, months: 12 });
+  const avgLoan = ramp.reduce((a, r) => a + r.avgLoan, 0) / ramp.length;
+  return { ...LAUNCH, name: `launch, first year (average loan ${money(avgLoan)})`, avgLoan };
+}
 
 export const money = (n: number) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString("en-US")}` : "never");
 export const pct = (n: number) => `${(n * 100).toFixed(1)}%`;

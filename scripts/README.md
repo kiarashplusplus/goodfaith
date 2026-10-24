@@ -46,10 +46,10 @@ lift-bar <personAccount> <reason...> | freeze --yes` is everything the pool auth
 required; `--mint` for another pool; `announce-wind-down` also needs `SUCCESSOR_KEYPAIR`, the second key a wind-down
 takes). `lift-bar` puts the hash of the reason on chain, prints it for publication and tells the identity service.
 `e2e.ts` drives pause, schedule, apply, suspend-issuer, lift-bar and freeze through it. `npm run member -- status |
-request | cancel | cosign | repay | pay-back | settle | collect | claim | forgive | close-expired | veto | finalize |
+request | cancel | cosign | repay | pay-back | settle | collect | claim | waive | close-expired | veto | finalize |
 donate | renew` is a member's fallback client (`MEMBER_KEYPAIR`), everything the app offers from a terminal against
-the RPC alone (`pay-back` settles first when nobody has; `forgive` is the co-signer's; `renew` goes through the app at
-`APP_URL`); `kora-e2e` runs its `status`. `npm run recovery -- list | approve <personId> <newWallet> [--force] | reject
+the RPC alone (`pay-back` settles first when nobody has; `waive` gives up the co-signer's own claim, never the fund's; `renew` goes through the app at
+`APP_URL`); `kora-e2e` runs its `status`. `npm run recovery -- list | approve <personId> <newWallet> --checked [--force] | reject
 <personId>` is the operator's recovery CLI: it holds the pool's recovery key (`RECOVERY_KEYPAIR`, required: no default
 path), talks to the identity service (`IDENTITY_URL`, `IDENTITY_ADMIN_KEY`), which never holds that key, and signs a
 proposal only after decoding it and checking it is the one `propose_rebind` for that person and wallet; the service
@@ -117,7 +117,7 @@ kora --config scripts/kora/kora.toml --rpc-url http://127.0.0.1:8899 rpc start -
 - `kora/kora.toml` is the deployable policy; its header lists what to change for mainnet. Kora 2.0.5 answers any
   origin, so never expose its port: the app's `/api/sponsor` route is the origin and auth boundary.
 - `max_allowed_lamports` is the fee payer's outflow per transaction, CPI-created rent included. A first co-sign costs
-  7,342,800 lamports (borrower token account + Loan + escrow with the v5 Loan), hence 8,000,000. `max_signatures = 4`
+  7,676,880 lamports (borrower token account + Loan + escrow with the v6 Loan), hence 8,000,000. `max_signatures = 4`
   fits a registration (wallet + issuer + Kora) with room; the app's proxy only lets extra signers through on Good
   Faith instructions.
 - `[kora.usage_limit]` counts transactions per wallet for ever (no window); keep it off.

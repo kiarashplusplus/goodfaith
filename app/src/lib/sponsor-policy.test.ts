@@ -22,12 +22,14 @@ import {
   getTransferInstruction,
 } from "@solana-program/token";
 import { getTransferSolInstruction } from "@solana-program/system";
+import { REGISTER_MEMBER_DISCRIMINATOR, REPAY_DISCRIMINATOR, SETTLE_DISCRIMINATOR } from "../generated";
 import {
   COMPUTE_BUDGET_PROGRAM,
   budgetFromEnv,
   checkBudget,
   checkCaps,
   inspectTransaction,
+  laneOf,
   limitsFromEnv,
   needsMembership,
   utcDay,
@@ -42,10 +44,10 @@ const ataW = address("Cm8TDDJ7KqqB2oxgsHGcB5iBjdorjrzPrw3dLpEtHR9u");
 const ataO = address("BiJ1fzcq8BcDQrdUDGNaGK9Jq7oxEmXb9iBFJyKMEdw8");
 const pool = address("gatem74V238djXdzWnJf94Wo1DcnuGkfijbf3AuBhfs");
 
-const gf = (accounts: Address[], signer: Address = wallet): Instruction => ({
+const gf = (accounts: Address[], signer: Address = wallet, data: ArrayLike<number> = [1, 2, 3]): Instruction => ({
   programAddress: PROGRAM,
   accounts: [{ address: signer, role: AccountRole.READONLY_SIGNER }, ...accounts.map((a) => ({ address: a, role: AccountRole.WRITABLE }))],
-  data: new Uint8Array([1, 2, 3]),
+  data: new Uint8Array([...Array.from(data), 0, 0]),
 });
 const budget: Instruction = { programAddress: COMPUTE_BUDGET_PROGRAM, data: new Uint8Array([2, 0, 0, 0, 0]) };
 const memo: Instruction = {
@@ -74,7 +76,7 @@ const inspectMint = (ixs: Instruction[]) => inspectTransaction(wire(ixs), { paye
 
 describe("inspectTransaction", () => {
   it("accepts Good Faith instructions, attributed to the first signer after the sponsor", () => {
-    expect(inspect([gf([pool])])).toEqual({ ok: true, wallet, atas: [], goodFaithInstructions: 1 });
+    expect(inspect([gf([pool])])).toEqual({ ok: true, wallet, atas: [], goodFaithInstructions: 1, protectedOnly: false, registers: false });
     expect(inspect([budget, gf([pool]), gf([pool, ataW])])).toMatchObject({ ok: true, goodFaithInstructions: 2 });
     // registrations and recovery proposals carry the issuer's (and the recovery authority's) signature as well
     const registration: Instruction = {
@@ -95,6 +97,8 @@ describe("inspectTransaction", () => {
       wallet,
       atas: [{ ata: ataO, owner: other }],
       goodFaithInstructions: 1,
+      protectedOnly: false,
+      registers: false,
     });
     // the wallet's own account, with a transfer into it
     expect(
@@ -136,21 +140,20 @@ describe("inspectTransaction", () => {
     const withGf = inspectMint([create(ataW, wallet), gf([pool, ataW])]);
     expect(withGf.ok && needsMembership(withGf)).toBe(false);
   });
-  it("accepts the wallet's own token transfers and closes paid back to itself, nothing signed by someone else", () => {
+  it("accepts the wallet's own token transfers, never a close, nothing signed by someone else", () => {
     const transfer = getTransferInstruction({ source: ataW, destination: ataO, authority: createNoopSigner(wallet), amount: 5n });
-    const close = getCloseAccountInstruction({ account: ataW, destination: wallet, owner: createNoopSigner(wallet) });
     expect(inspect([transfer])).toMatchObject({ ok: true, wallet });
-    expect(inspect([close])).toMatchObject({ ok: true });
-    expect(inspect([getCloseAccountInstruction({ account: ataW, destination: other, owner: createNoopSigner(wallet) })])).toMatchObject({
+    // a close would hand the wallet the rent of an account the sponsor paid for: a way to collect the sponsor's money
+    expect(inspect([getCloseAccountInstruction({ account: ataW, destination: wallet, owner: createNoopSigner(wallet) })])).toMatchObject({
       ok: false,
-      reason: /rent to the wallet/,
+      reason: /not sponsored/,
     });
     const foreign = getTransferInstruction({ source: ataO, destination: ataW, authority: createNoopSigner(other), amount: 5n });
     expect(inspect([foreign, gf([pool])])).toMatchObject({ ok: false, reason: /signed by the wallet/ });
     expect(inspect([foreign, transfer])).toMatchObject({ ok: false, reason: /signed by the wallet|Extra signers/ });
     expect(inspect([getCloseAccountInstruction({ account: ataO, destination: other, owner: other })])).toMatchObject({
       ok: false,
-      reason: /signed by the wallet/,
+      reason: /not sponsored/,
     });
   });
   it("refuses other programs, the wrong fee payer, extra signers, lookup tables and empty transactions", () => {
@@ -214,8 +217,33 @@ describe("global budget", () => {
     expect(d.nextTxs).toEqual({ day: "2026-10-25", dayTxs: 1, atasTotal: 0 });
     expect(d.nextWallets.dayTxs).toBe(1);
   });
-  it("reads the budget from the environment with defaults", () => {
-    expect(budgetFromEnv({})).toEqual({ dailyTxs: 2000, dailyNewWallets: 200 });
-    expect(budgetFromEnv({ SPONSOR_DAILY_BUDGET_TX: "10", SPONSOR_DAILY_NEW_WALLETS: "2" })).toEqual({ dailyTxs: 10, dailyNewWallets: 2 });
+  it("reads each lane's budget from the environment with pilot-sized defaults", () => {
+    const d = budgetFromEnv({});
+    expect(d.protected.dailyTxs).toBe(400);
+    expect(d.onboarding).toEqual({ dailyTxs: 60, dailyNewWallets: 20 });
+    expect(d.member).toEqual({ dailyTxs: 300, dailyNewWallets: 0 });
+    const e = budgetFromEnv({ SPONSOR_DAILY_BUDGET_TX: "10", SPONSOR_DAILY_NEW_WALLETS: "2", SPONSOR_PROTECTED_DAILY_TX: "7" });
+    expect(e.member.dailyTxs).toBe(10);
+    expect(e.onboarding.dailyNewWallets).toBe(2);
+    expect(e.protected.dailyTxs).toBe(7);
+  });
+  it("puts protecting yourself in its own lane, strangers in onboarding, the rest in member", () => {
+    const ok = (ixs: Instruction[]) => {
+      const i = inspect(ixs);
+      if (!i.ok) throw new Error(i.reason);
+      return i;
+    };
+    const repay = ok([gf([pool], wallet, REPAY_DISCRIMINATOR)]);
+    expect(repay.protectedOnly).toBe(true);
+    // a friend paying back from a wallet the sponsor has never seen still uses the protected lane
+    expect(laneOf(repay, true)).toBe("protected");
+    expect(laneOf(ok([gf([pool], wallet, SETTLE_DISCRIMINATOR), gf([pool], wallet, REPAY_DISCRIMINATOR)]), false)).toBe("protected");
+    // anything else beside a protected instruction loses the lane
+    expect(laneOf(ok([gf([pool], wallet, REPAY_DISCRIMINATOR), gf([pool])]), false)).toBe("member");
+    const join = ok([gf([pool], wallet, REGISTER_MEMBER_DISCRIMINATOR)]);
+    expect(join.registers).toBe(true);
+    expect(laneOf(join, false)).toBe("onboarding");
+    expect(laneOf(ok([gf([pool])]), true)).toBe("onboarding");
+    expect(laneOf(ok([gf([pool])]), false)).toBe("member");
   });
 });

@@ -84,7 +84,7 @@ const params = (timelockSeconds: bigint) => ({
   recoveryDelaySeconds: 3600n, requestTtlSeconds: 7n * DAY, firstLoanCap: 1000n * USDC, loanCapStep: 100n * USDC, cooldownSeconds: 0n,
   maxExposurePerPerson: 10_000n * USDC, disbursementWindowSeconds: DAY, disbursementCapPerWindow: 0n,
   defaultBanSeconds: PERMANENT, lateBanSeconds: 0n, cosignerBanSeconds: PERMANENT,
-  seasoningSeconds: 0n, capStepIntervalSeconds: 0n, maxOutstandingPrincipal: 0n, successorAuthority: admin.address,
+  seasoningSeconds: 0n, capStepIntervalSeconds: 0n, maxOutstandingPrincipal: 0n, successorAuthority: admin.address, maxTotalLent: 0n,
 });
 
 const [pool] = await gf.findPoolPda({ mint: MINT });
@@ -302,7 +302,7 @@ const paramsOf = (x: Awaited<ReturnType<typeof fetchPool>>) => ({
   issuer: x.issuer, timelockSeconds: x.timelockSeconds, recoveryAuthority: x.recoveryAuthority, pauseAuthority: x.pauseAuthority, recoveryDelaySeconds: x.recoveryDelaySeconds, requestTtlSeconds: x.requestTtlSeconds,
   firstLoanCap: x.firstLoanCap, loanCapStep: x.loanCapStep, cooldownSeconds: x.cooldownSeconds, maxExposurePerPerson: x.maxExposurePerPerson, disbursementWindowSeconds: x.disbursementWindowSeconds,
   disbursementCapPerWindow: x.disbursementCapPerWindow, defaultBanSeconds: x.defaultBanSeconds, lateBanSeconds: x.lateBanSeconds, cosignerBanSeconds: x.cosignerBanSeconds,
-  seasoningSeconds: x.seasoningSeconds, capStepIntervalSeconds: x.capStepIntervalSeconds, maxOutstandingPrincipal: x.maxOutstandingPrincipal, successorAuthority: x.successorAuthority,
+  seasoningSeconds: x.seasoningSeconds, capStepIntervalSeconds: x.capStepIntervalSeconds, maxOutstandingPrincipal: x.maxOutstandingPrincipal, maxTotalLent: x.maxTotalLent, successorAuthority: x.successorAuthority,
 });
 let newGrace = p.graceDays;
 if (frozenAtStart) {
@@ -392,10 +392,12 @@ row('collect_recovery (third party)', `vault +${fmt(recovered)}`, 'escrow closed
   assert.equal(p.totalLost, pre.p.totalLost, 'the loss is made good');
   assert.equal(l.reimbursementPending, 0n, 'nothing for the co-signer yet');
   assert.ok((await getPerson(pB)).ineligibleUntil === barAfter(defaultedAt, l.defaultBanSeconds), 'still barred until the whole shortfall is back');
-  // forgiveness is the co-signer's alone (their current wallet), and only while something is owed
+  // the co-signer's claim is theirs alone to waive (their current wallet), and only while something is owed to them;
+  // the fund's claim is the administrator's alone to forgive
   const cosignerNow = (await getPerson(pC)).wallet;
   const forgiver = [cosigner, cosigner2].find((w) => w.address === cosignerNow)!;
-  const strangerForgive = await expectFail(send([gf.getForgiveInstruction({ cosigner: third, pool, loan: L2.loan, cosignerPerson: pC })], third, 'forgive by stranger'), 'stranger forgive');
+  const strangerForgive = await expectFail(send([gf.getWaiveReimbursementInstruction({ cosigner: third, pool, loan: L2.loan, borrowerPerson: pB, cosignerPerson: pC })], third, 'waive by stranger'), 'stranger waive');
+  const cosignerForgivesFund = await expectFail(send([gf.getForgiveFundClaimInstruction({ authority: forgiver, pool, loan: L2.loan, borrowerPerson: pB, reason: new Uint8Array(32) })], forgiver, 'fund forgiveness by the co-signer'), 'co-signer forgives the fund');
   const c2Before = await tok(ataOf.cosigner2);
   await send([await restituteIx(borrower, ataOf.borrower, L2.loan, recovered)], borrower, 'restitute (rest)');
   p = await fetchPool(pool); l = await loanOf(L2.loan);
@@ -415,8 +417,8 @@ row('collect_recovery (third party)', `vault +${fmt(recovered)}`, 'escrow closed
   assert.equal((await fetchPool(pool)).vaultClaims, 0n);
   assert.equal((await fetchPool(pool)).totalReimbursed, pre.p.totalReimbursed + recovered);
   const nothing = await expectFail(send([await restituteIx(third, ataOf.third, L2.loan, 1n)], third, 'restitute again'), 'restitute a Restituted loan');
-  const lateForgive = await expectFail(send([gf.getForgiveInstruction({ cosigner: forgiver, pool, loan: L2.loan, cosignerPerson: pC })], forgiver, 'forgive a paid loan'), 'forgive a Restituted loan');
-  row('restitute 70 (third 45, borrower 25) + claim', `over-restitute: ${errName(over)}`, `fund whole first, then ${fmt(recovered)} to the co-signer from the vault`, `Restituted: borrower bar -> ${l.lateBanSeconds === 0n ? 'lifted' : `${l.lateBanSeconds / DAY} days from the pay-back`}, co-signer bar lifted`, `again: ${errName(nothing)}`, `forgive: stranger ${errName(strangerForgive)}, once paid ${errName(lateForgive)}`);
+  const lateForgive = await expectFail(send([gf.getWaiveReimbursementInstruction({ cosigner: forgiver, pool, loan: L2.loan, borrowerPerson: pB, cosignerPerson: pC })], forgiver, 'waive a paid loan'), 'waive a Restituted loan');
+  row('restitute 70 (third 45, borrower 25) + claim', `over-restitute: ${errName(over)}`, `fund whole first, then ${fmt(recovered)} to the co-signer from the vault`, `Restituted: borrower bar -> ${l.lateBanSeconds === 0n ? 'lifted' : `${l.lateBanSeconds / DAY} days from the pay-back`}, co-signer bar lifted`, `again: ${errName(nothing)}`, `waive: stranger ${errName(strangerForgive)}, once paid ${errName(lateForgive)}; fund forgiveness by the co-signer ${errName(cosignerForgivesFund)}`);
 }
 // lift_bar: the authority ends a bar early, publicly (the reason's hash is in the event)
 if (!frozenAtStart && (await getPerson(pB)).ineligibleUntil > BigInt(await clockTs())) {

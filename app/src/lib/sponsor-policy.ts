@@ -6,14 +6,19 @@
  *   - an associated-token-account creation, of the pool's mint only, whose account a Good Faith instruction in the
  *     same transaction uses (the borrower's or co-signer's token account) or whose owner signs the transaction (their
  *     own account); on its own (no Good Faith instruction) it is sponsored for members only (the route checks),
- *   - a token transfer signed by the wallet itself, or a close of the wallet's own account paid out to the wallet,
+ *   - a token transfer signed by the wallet itself (never a close: the rent of an account the sponsor created would go
+ *     to the wallet, a repeatable way to collect the sponsor's money),
  * with Kora as the fee payer and the wallet the sponsorship is attributed to as the next signer; further signers (the
  * issuer and the recovery authority co-sign registrations and recovery proposals) are allowed only when a Good Faith
  * instruction is present. Anything else (a system transfer, a memo, an account for a stranger, another mint, a lookup
  * table) is refused before it reaches Kora.
- * Per-wallet caps (sponsored transactions per day, token accounts created in total) bound what one person can cost;
- * a global daily budget (transactions, and wallets sponsored for the first time) bounds what a crowd can. Both are
- * reserved in the store before the transaction is forwarded, so two requests in flight cannot both pass.
+ * Per-wallet caps (sponsored transactions per day, token accounts created in total) bound what one person can cost.
+ * The fund-wide daily budget is split into three lanes, so that exhausting one never blocks another:
+ *   - protected: settling, repaying, paying back, releasing and collecting what is owed, waiving, vetoing or
+ *     finalising a recovery (what a member needs to protect themselves or pay what they owe);
+ *   - onboarding: a wallet's first sponsored transaction, or joining (small: this is where a crowd of strangers lands);
+ *   - member: everything else a known wallet does.
+ * Both caps are reserved in the store before the transaction is forwarded, so two requests in flight cannot both pass.
  * No Next.js imports, so everything here is unit-testable.
  */
 import {
@@ -27,11 +32,47 @@ import {
   type Instruction,
 } from "@solana/kit";
 import { ASSOCIATED_TOKEN_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, TokenInstruction } from "@solana-program/token";
+import {
+  CLAIM_ESCROW_DISCRIMINATOR,
+  COLLECT_RECOVERY_DISCRIMINATOR,
+  FINALIZE_REBIND_DISCRIMINATOR,
+  REGISTER_MEMBER_DISCRIMINATOR,
+  REPAY_DISCRIMINATOR,
+  RESTITUTE_DISCRIMINATOR,
+  SETTLE_DISCRIMINATOR,
+  VETO_REBIND_DISCRIMINATOR,
+  WAIVE_REIMBURSEMENT_DISCRIMINATOR,
+} from "../generated";
 
 export const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111" as Address;
 
 export type CreatedAta = { ata: Address; owner: Address };
-export type Inspection = { ok: true; wallet: Address; atas: CreatedAta[]; goodFaithInstructions: number } | { ok: false; reason: string };
+export type Inspection =
+  | {
+      ok: true;
+      wallet: Address;
+      atas: CreatedAta[];
+      goodFaithInstructions: number;
+      /** Every Good Faith instruction is one a member needs to protect themselves or pay what they owe. */
+      protectedOnly: boolean;
+      /** The transaction registers a membership. */
+      registers: boolean;
+    }
+  | { ok: false; reason: string };
+
+/** Instructions that keep their own budget: nobody exhausting onboarding can stop a member settling up or objecting. */
+const PROTECTED = [
+  SETTLE_DISCRIMINATOR,
+  REPAY_DISCRIMINATOR,
+  RESTITUTE_DISCRIMINATOR,
+  CLAIM_ESCROW_DISCRIMINATOR,
+  COLLECT_RECOVERY_DISCRIMINATOR,
+  WAIVE_REIMBURSEMENT_DISCRIMINATOR,
+  VETO_REBIND_DISCRIMINATOR,
+  FINALIZE_REBIND_DISCRIMINATOR,
+];
+const startsWith = (data: ArrayLike<number>, prefix: ArrayLike<number>) =>
+  data.length >= prefix.length && Array.prototype.every.call(prefix, (b: number, i: number) => data[i] === b);
 export type Policy = {
   payer: Address;
   programId: Address;
@@ -68,12 +109,16 @@ export function inspectTransaction(base64: string, policy: Policy): Inspection {
   const goodFaithAccounts = new Set<Address>();
   const atas: CreatedAta[] = [];
   let goodFaithInstructions = 0;
+  let protectedOnly = true;
+  let registers = false;
   const pending: { ix: Instruction; what: string }[] = [];
   for (const ix of instructions) {
     const accounts = ix.accounts ?? [];
     const data = ix.data ?? new Uint8Array();
     if (ix.programAddress === policy.programId) {
       goodFaithInstructions++;
+      if (!PROTECTED.some((d) => startsWith(data, d))) protectedOnly = false;
+      if (startsWith(data, REGISTER_MEMBER_DISCRIMINATOR)) registers = true;
       for (const a of accounts) goodFaithAccounts.add(a.address);
       continue;
     }
@@ -95,13 +140,14 @@ export function inspectTransaction(base64: string, policy: Policy): Inspection {
       let authority;
       if (kind === TokenInstruction.Transfer) authority = accounts[2];
       else if (kind === TokenInstruction.TransferChecked) authority = accounts[3];
-      else if (kind === TokenInstruction.CloseAccount) authority = accounts[2];
-      else return { ok: false, reason: "Only token transfers and account closes are sponsored on the token program." };
+      else if (kind === TokenInstruction.CloseAccount)
+        return {
+          ok: false,
+          reason: "Closing a token account is not sponsored: its rent would go to the wallet. Close it from your own wallet.",
+        };
+      else return { ok: false, reason: "Only token transfers are sponsored on the token program." };
       if (!authority || !isSignerRole(authority.role) || authority.address !== wallet)
         return { ok: false, reason: "Token instructions must be signed by the wallet itself." };
-      // The rent of a closed account goes back to the wallet, never to a third party.
-      if (kind === TokenInstruction.CloseAccount && accounts[1]?.address !== wallet)
-        return { ok: false, reason: "A sponsored close must return the rent to the wallet itself." };
       continue;
     }
     return { ok: false, reason: "This program is not sponsored." };
@@ -115,7 +161,7 @@ export function inspectTransaction(base64: string, policy: Policy): Inspection {
   if (!goodFaithInstructions && !atas.length && !instructions.some((ix) => ix.programAddress === TOKEN_PROGRAM_ADDRESS)) {
     return { ok: false, reason: "Nothing to sponsor." };
   }
-  return { ok: true, wallet, atas, goodFaithInstructions };
+  return { ok: true, wallet, atas, goodFaithInstructions, protectedOnly: goodFaithInstructions > 0 && protectedOnly, registers };
 }
 
 export type SponsorLimits = { dailyTxs: number; totalAtas: number };
@@ -145,8 +191,20 @@ export function limitsFromEnv(env: Record<string, string | undefined>): SponsorL
   };
 }
 
-/** The fund-wide daily budget: sponsored transactions, and wallets sponsored for the first time. */
+/** The fund-wide daily budget of one lane: sponsored transactions, and wallets sponsored for the first time. */
 export type BudgetLimits = { dailyTxs: number; dailyNewWallets: number };
+export type Lane = "protected" | "onboarding" | "member";
+export const LANES: Lane[] = ["protected", "onboarding", "member"];
+
+/** Which budget a transaction draws on. A protected operation keeps its lane even from a wallet new to the sponsor. */
+export function laneOf(i: Inspection & { ok: true }, newWallet: boolean): Lane {
+  if (i.protectedOnly) return "protected";
+  if (newWallet || i.registers) return "onboarding";
+  return "member";
+}
+
+/** The store key of a lane's counters for a day. */
+export const budgetKey = (day: string, lane: Lane) => `${day}:${lane}`;
 
 /**
  * The budget arithmetic on its own (the stores apply it as one conditional update). A new wallet is one the store
@@ -172,12 +230,24 @@ export function checkBudget(
   };
 }
 
-/** SPONSOR_DAILY_BUDGET_TX (default 2000) and SPONSOR_DAILY_NEW_WALLETS (default 200). */
-export function budgetFromEnv(env: Record<string, string | undefined>): BudgetLimits {
+/**
+ * Each lane's daily budget, sized for the pilot (a few hundred members) rather than for growth:
+ *   protected   SPONSOR_PROTECTED_DAILY_TX (default 400); no limit on new wallets (a friend paying back is welcome)
+ *   onboarding  SPONSOR_ONBOARDING_DAILY_TX (default 60), SPONSOR_DAILY_NEW_WALLETS (default 20)
+ *   member      SPONSOR_DAILY_BUDGET_TX (default 300)
+ * At about 0.0025 SOL of rent and fees for a new wallet's first transaction, the onboarding lane costs at most a few
+ * dollars a day however many strangers arrive.
+ */
+export function budgetFromEnv(env: Record<string, string | undefined>): Record<Lane, BudgetLimits> {
+  const n = (k: string, d: number) => Number(env[k]) || d;
   return {
-    dailyTxs: Number(env.SPONSOR_DAILY_BUDGET_TX) || 2000,
-    dailyNewWallets: Number(env.SPONSOR_DAILY_NEW_WALLETS) || 200,
+    protected: { dailyTxs: n("SPONSOR_PROTECTED_DAILY_TX", 400), dailyNewWallets: Number.MAX_SAFE_INTEGER },
+    onboarding: { dailyTxs: n("SPONSOR_ONBOARDING_DAILY_TX", 60), dailyNewWallets: n("SPONSOR_DAILY_NEW_WALLETS", 20) },
+    member: { dailyTxs: n("SPONSOR_DAILY_BUDGET_TX", 300), dailyNewWallets: 0 },
   };
 }
+
+/** Lanes past this share of their daily transactions are reported by the health route and logged as a warning. */
+export const BUDGET_ALERT_SHARE = 0.8;
 
 export { AccountRole };

@@ -10,7 +10,11 @@ import {
   evaluate,
   issuerCompromise,
   LAUNCH,
+  launchFirstYear,
+  launchRamp,
   lossPerDefault,
+  RAMP,
+  settlementSplit,
   outageAcrossCutoff,
   sponsorAbuse,
   trajectory,
@@ -18,7 +22,7 @@ import {
 
 describe("economic model", () => {
   it("reproduces the reviewer's example: $100k fund, 10% default, 25% escrow, nothing repaid → $7,500 per cycle", () => {
-    const r = evaluate({ ...BASE, fund: 100_000, utilisation: 1, defaultRate: 0.1, escrowRate: 0.25, repaidBeforeDefault: 0 });
+    const r = evaluate({ ...BASE, fund: 100_000, utilisation: 1, settlementRate: 0.1, escrowRate: 0.25, repaidBeforeDefault: 0 });
     expect(r.lossPerCycle).toBeCloseTo(7_500, 6);
     expect(r.collusionPayoff).toBe(225);
   });
@@ -43,7 +47,7 @@ describe("economic model", () => {
     expect(base.oneOffTotal).toBe(65_000);
     expect(base.oneOffPerYear).toBeCloseTo(65_000 / 3);
     expect(base.operatingPerYear).toBeCloseTo(base.recurringPerYear + base.oneOffPerYear);
-    expect(evaluate({ ...BASE, defaultRate: 0 }).yearsToDepletion).toBe(Infinity);
+    expect(evaluate({ ...BASE, settlementRate: 0 }).yearsToDepletion).toBe(Infinity);
     expect(() => evaluate({ ...BASE, fund: 0 })).toThrow();
   });
   it("prices a completed loan and a borrower, and compares like with like against grants", () => {
@@ -83,7 +87,7 @@ describe("economic model", () => {
     expect(
       cashRunway({
         ...BASE,
-        defaultRate: 0,
+        settlementRate: 0,
         costs: {
           ...BASE.costs,
           identityCheck: 0,
@@ -105,12 +109,32 @@ describe("economic model", () => {
     expect(t[2]!.loss).toBeLessThan(t[1]!.loss); // a smaller fund loses less
     expect(evaluate(BASE).yearsToDepletion).toBeCloseTo(100_000 / evaluate(BASE).lossPerYear);
     expect(evaluate(BASE).yearsToHalf).toBeCloseTo(Math.log(2) / -Math.log(1 - evaluate(BASE).lossRatePerYear));
-    expect(evaluate({ ...BASE, defaultRate: 0 }).yearsToHalf).toBe(Infinity);
-    expect(trajectory({ ...BASE, defaultRate: 1, repaidBeforeDefault: 0 }, 50).length).toBeLessThan(10);
+    expect(evaluate({ ...BASE, settlementRate: 0 }).yearsToHalf).toBe(Infinity);
+    expect(trajectory({ ...BASE, settlementRate: 1, repaidBeforeDefault: 0 }, 50).length).toBeLessThan(10);
+  });
+  it("splits a settlement into escrow, later pay-backs and ultimate loss", () => {
+    // $300, a fifth repaid, 25% escrow: $240 unpaid, $75 from the escrow, $165 the fund's claim
+    expect(settlementSplit(300, 0.25, 0.2)).toEqual({ unpaid: 240, escrow: 75, later: 0, ultimateLoss: 165 });
+    // half of what is owed paid back later: the fund's claim is paid first
+    expect(settlementSplit(300, 0.25, 0.2, 0.5)).toEqual({ unpaid: 240, escrow: 75, later: 120, ultimateLoss: 45 });
+    const r = evaluate({ ...BASE, paybackRate: 0.5 });
+    expect(r.principalAtSettlementPerYear).toBeCloseTo(r.escrowRecoveriesPerYear + r.laterRecoveriesPerYear + r.lossPerYear);
+    expect(r.lossPerYear).toBeLessThan(evaluate(BASE).lossPerYear);
+    // pay-backs beyond the fund's claim give the co-signers their deposits back
+    expect(evaluate({ ...BASE, paybackRate: 1 }).cosignerDepositsLostPerYear).toBe(0);
+  });
+  it("ramps the average loan up from the first-loan cap", () => {
+    const ramp = launchRamp({ ...RAMP, months: 24 });
+    expect(ramp[0]!.avgLoan).toBe(150);
+    for (let i = 1; i < ramp.length; i++) expect(ramp[i]!.avgLoan).toBeGreaterThanOrEqual(ramp[i - 1]!.avgLoan - 1e-9);
+    expect(ramp[23]!.avgLoan).toBeLessThan(300);
+    const first = launchFirstYear();
+    expect(first.avgLoan).toBeGreaterThan(150);
+    expect(first.avgLoan).toBeLessThan(BASE.avgLoan);
   });
   it("bounds the attacks", () => {
     const shock = correlatedShock(BASE, 0.3);
-    expect(shock.shockCycleLoss).toBeCloseTo(evaluate({ ...BASE, defaultRate: 0.3 }).lossPerCycle);
+    expect(shock.shockCycleLoss).toBeCloseTo(evaluate({ ...BASE, settlementRate: 0.3 }).lossPerCycle);
     expect(shock.yearLoss).toBeGreaterThan(evaluate(BASE).lossPerYear);
     // three days to contain spans four one-day windows in the worst case (the first one straddled)
     const capped = issuerCompromise({
@@ -128,6 +152,14 @@ describe("economic model", () => {
       outstandingNow: 20_000,
     });
     expect(ceiling.maxDisbursed).toBe(5_000);
+    // a settlement frees ceiling capacity; the lifetime budget is what bounds the total
+    const budget = issuerCompromise({
+      ...{ firstLoanCap: 150, escrowRate: 0.25, disbursementCap: 5_000, windowDays: 1, containmentDays: 7, fakeLoansPerDay: 50 },
+      outstandingCeiling: 25_000,
+      outstandingNow: 0,
+      budgetLeft: 3_000,
+    });
+    expect(budget.maxDisbursed).toBe(3_000);
     const uncapped = issuerCompromise({
       firstLoanCap: 150,
       escrowRate: 0.25,

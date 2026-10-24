@@ -24,7 +24,7 @@ type LaunchFile = {
   mint: string; decimals: number; maxLoan: number; maxTermDays: number; graceDays: number; maxGuaranteesPerMember: number; cosignerEscrowBps: number;
   timelockDays: number; recoveryDelayDays: number; requestTtlDays: number; firstLoanCap: number; loanCapStep: number; cooldownDays: number;
   maxExposurePerPerson: number; disbursementWindowDays: number; disbursementCapPerWindow: number; defaultBanDays: number; lateBanDays: number; cosignerBanDays: number;
-  seasoningDays: number; capStepIntervalDays: number; maxOutstandingPrincipal: number;
+  seasoningDays: number; capStepIntervalDays: number; maxOutstandingPrincipal: number; maxTotalLent: number;
 };
 const file = JSON.parse(fs.readFileSync(flag('params') ?? path.join(here, 'launch.json'), 'utf8')) as LaunchFile;
 const base = (tokens: number) => BigInt(Math.round(tokens * 10 ** file.decimals));
@@ -81,6 +81,7 @@ const params = {
   capStepIntervalSeconds: days(file.capStepIntervalDays),
   maxOutstandingPrincipal: base(file.maxOutstandingPrincipal),
   successorAuthority,
+  maxTotalLent: base(file.maxTotalLent),
 };
 
 const [pool] = await gf.findPoolPda({ mint });
@@ -114,7 +115,7 @@ pause           ${p.pauseAuthority}
 network         ${p.gatekeeperNetwork}
 max loan        ${fmt(p.maxLoan)} (first ${fmt(p.firstLoanCap)}, +${fmt(p.loanCapStep)} per on-time loan held ${d(p.seasoningSeconds)}, at most one step per ${d(p.capStepIntervalSeconds)}, ${d(p.cooldownSeconds)} cooldown)
 term / grace    ${p.maxTermDays} / ${p.graceDays} days, escrow ${p.cosignerEscrowBps / 100}%, ${p.maxGuaranteesPerMember} guarantees
-exposure        ${fmt(p.maxExposurePerPerson)} per person; ${fmt(p.disbursementCapPerWindow)} per ${d(p.disbursementWindowSeconds)}; ${p.maxOutstandingPrincipal === 0n ? 'no ceiling' : `${fmt(p.maxOutstandingPrincipal)} ceiling`} on principal out on loan
+exposure        ${fmt(p.maxExposurePerPerson)} per person; ${fmt(p.disbursementCapPerWindow)} per ${d(p.disbursementWindowSeconds)}; ${p.maxOutstandingPrincipal === 0n ? 'no ceiling' : `${fmt(p.maxOutstandingPrincipal)} ceiling`} on principal out on loan; ${p.maxTotalLent === 0n ? 'no lending budget' : `${fmt(p.maxTotalLent)} lending budget`} in total
 notice          ${d(p.timelockSeconds)}; recovery delay ${d(p.recoveryDelaySeconds)}; request ttl ${d(p.requestTtlSeconds)}
 bars            default ${d(p.defaultBanSeconds)}, late ${d(p.lateBanSeconds)}, co-signer ${d(p.cosignerBanSeconds)}
 paused          ${p.paused}

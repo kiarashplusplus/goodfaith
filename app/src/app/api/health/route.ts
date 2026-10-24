@@ -7,6 +7,8 @@ import { createSolanaRpc } from "@solana/kit";
 import { CONFIG_ERRORS, POOL_MINT, PROGRAM_ID, RPC_URL, CLUSTER } from "@/lib/config";
 import { fetchCanonicalPool, findPoolPda, windingDown } from "@/lib/program";
 import { readServerEnv } from "@/lib/server-env";
+import { openStore } from "@/lib/identity/db";
+import { BUDGET_ALERT_SHARE, LANES, budgetFromEnv, budgetKey, utcDay } from "@/lib/sponsor-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +47,11 @@ export async function GET(): Promise<Response> {
             frozen: pool.authority === null,
             activeLoans: Number(pool.activeLoans),
             outstandingPrincipal: pool.outstandingPrincipal.toString(),
+            // Lifetime lending against its budget, and the recognised loss: open exposure is not the whole story.
+            totalLent: pool.totalLent.toString(),
+            maxTotalLent: pool.maxTotalLent.toString(),
+            totalLost: pool.totalLost.toString(),
+            totalForgiven: pool.totalForgiven.toString(),
             pendingClaims: pool.pendingClaims.toString(),
             recoveriesPending: pool.recoveriesPending.toString(),
             vaultClaims: pool.vaultClaims.toString(),
@@ -64,6 +71,21 @@ export async function GET(): Promise<Response> {
       out.sponsor = { ...env.sponsor, ok: res.ok };
     } catch {
       out.sponsor = { ...env.sponsor, ok: false };
+    }
+  }
+  if (env.sponsor.upstream) {
+    try {
+      const store = openStore();
+      const day = utcDay(Date.now());
+      const caps = budgetFromEnv(process.env);
+      const lanes: Record<string, unknown> = {};
+      for (const lane of LANES) {
+        const used = (await store.getSponsorBudget(budgetKey(day, lane)))?.txs ?? 0;
+        lanes[lane] = { used, cap: caps[lane].dailyTxs, alert: used >= caps[lane].dailyTxs * BUDGET_ALERT_SHARE };
+      }
+      out.sponsorBudget = { day, lanes };
+    } catch (e) {
+      out.sponsorBudget = { error: e instanceof Error ? e.message : String(e) };
     }
   }
   const ok = CONFIG_ERRORS.length === 0 && env.problems.length === 0 && (out.rpc as { ok: boolean }).ok;

@@ -3,14 +3,25 @@
  * credentials (`KORA_URL`, `KORA_API_KEY`, `KORA_HMAC_SECRET`). Kora 2.0.5 accepts any origin and only
  * rate-limits globally, so this is where origin control, auth, per-client limits and the sponsorship policy live:
  * only three methods are forwarded, a transaction is decoded and checked against `sponsor-policy.ts` first, and
- * each wallet has a daily transaction and a lifetime token-account allowance.
+ * each wallet has a daily transaction and a lifetime token-account allowance. The fund-wide daily budget has three
+ * lanes (protected, onboarding, member; see `sponsor-policy.ts`) so that strangers spending one cannot block another.
  */
 import type { NextRequest } from "next/server";
 import { createSolanaRpc, type Address } from "@solana/kit";
 import { POOL_MINT, PROGRAM_ID, RPC_URL } from "@/lib/config";
 import { openStore } from "@/lib/identity/db";
 import { serverKoraPayer } from "@/lib/kora-server";
-import { budgetFromEnv, inspectTransaction, limitsFromEnv, needsMembership, utcDay, type CreatedAta } from "@/lib/sponsor-policy";
+import {
+  BUDGET_ALERT_SHARE,
+  budgetFromEnv,
+  budgetKey,
+  inspectTransaction,
+  laneOf,
+  limitsFromEnv,
+  needsMembership,
+  utcDay,
+  type CreatedAta,
+} from "@/lib/sponsor-policy";
 import { fetchMember, findPoolPda } from "@/lib/program";
 import {
   ALLOWED_METHODS,
@@ -76,6 +87,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     return reply(jsonRpcError(id, PROXY_ERROR.TRANSACTION_REFUSED, "Token accounts are only sponsored for members of the fund."));
   const store = openStore();
   const newAtas = await missing(inspection.atas);
+  // Every account whose rent the sponsor pays belongs to a verified member (the borrower at a co-sign, the co-signer at
+  // a release). A stranger's account would be rent they could close and keep, again and again with new wallets.
+  for (const owner of new Set(newAtas.map((a) => a.owner)))
+    if (!(await isMember(owner)))
+      return reply(jsonRpcError(id, PROXY_ERROR.TRANSACTION_REFUSED, "Token accounts are only sponsored for members of the fund."));
   const day = utcDay(Date.now());
   // Reserve first, forward second: the counters are conditional increments in the store, so two requests in flight
   // cannot both pass the last slot. A definite refusal gives the slot back; a timeout keeps it (the transaction may
@@ -84,16 +100,23 @@ export async function POST(request: NextRequest): Promise<Response> {
   const usage = await store.reserveSponsorUsage(inspection.wallet, day, newAtas.length, limitsFromEnv(process.env));
   if (!usage)
     return reply(jsonRpcError(id, PROXY_ERROR.WALLET_CAP, "This wallet has used today's sponsored transactions or its token accounts."));
-  const budgeted = await store.reserveSponsorBudget(day, newWallet, budgetFromEnv(process.env));
+  const lane = laneOf(inspection, newWallet);
+  const caps = budgetFromEnv(process.env)[lane];
+  const key = budgetKey(day, lane);
+  const budgeted = await store.reserveSponsorBudget(key, newWallet, caps);
   if (!budgeted) {
+    console.warn(`sponsor: the ${lane} lane has used today's budget (${caps.dailyTxs} transactions)`);
     await store.releaseSponsorUsage(inspection.wallet, day, newAtas.length);
     return reply(jsonRpcError(id, PROXY_ERROR.BUDGET_EXHAUSTED, "The fee sponsor has used today's budget."));
   }
+  const used = await store.getSponsorBudget(key);
+  if (used && used.txs === Math.ceil(caps.dailyTxs * BUDGET_ALERT_SHARE))
+    console.warn(`sponsor: the ${lane} lane has used ${used.txs} of ${caps.dailyTxs} sponsored transactions today`);
   const res = await forward(cfg, id, body, ALLOWED_METHODS[method].timeoutMs);
   const outcome = await classify(res.clone());
   if (outcome === "refused") {
     await store.releaseSponsorUsage(inspection.wallet, day, newAtas.length);
-    await store.releaseSponsorBudget(day, newWallet);
+    await store.releaseSponsorBudget(key, newWallet);
   }
   return res;
 }
@@ -122,7 +145,7 @@ async function classify(res: Response): Promise<"sent" | "refused" | "unknown"> 
 }
 
 /** The token accounts in the transaction that do not exist yet (the ones whose rent the sponsor would pay). */
-async function missing(atas: CreatedAta[]): Promise<Address[]> {
+async function missing(atas: CreatedAta[]): Promise<CreatedAta[]> {
   if (!atas.length) return [];
   const rpc = createSolanaRpc(RPC_URL);
   const { value } = await rpc
@@ -131,7 +154,7 @@ async function missing(atas: CreatedAta[]): Promise<Address[]> {
       { encoding: "base64", commitment: "confirmed" },
     )
     .send();
-  return atas.filter((_, i) => value[i] === null).map((a) => a.ata);
+  return atas.filter((_, i) => value[i] === null);
 }
 
 /** Liveness, auth-exempt upstream. */

@@ -7,8 +7,16 @@
 // back so the member is told about the veto window. On chain the old wallet can still veto for the pool's recovery
 // delay; the cranker finalises afterwards.
 //
+// This tool checks *what* it signs. *Whom* to approve rests on evidence the web service does not control, because a
+// compromised service controls its own store, contact records and notice history:
+//   - the verification itself, read here straight from the identity provider with the operator's own API key
+//     (PERSONA_API_KEY in the operator's environment): approved, and for this new wallet;
+//   - the member's contact as it was before the request, from the operator's own export (not the service's store);
+//   - the notice's delivery, from the mail or message relay's own log (not the service's "sent" flag).
+// approve refuses to sign until the operator states, with --checked, that the last two were done.
+//
 //   npm run recovery -- list [--json]
-//   npm run recovery -- approve <personId> <newWallet> [--force]   (--force: a request younger than the minimum age, or whose notice failed)
+//   npm run recovery -- approve <personId> <newWallet> --checked [--force]   (--force: a request younger than the minimum age, or whose notice failed)
 //   npm run recovery -- reject <personId>
 //
 // env: IDENTITY_URL (or APP_URL, default http://127.0.0.1:3000), IDENTITY_ADMIN_KEY, RECOVERY_KEYPAIR (JSON keypair file,
@@ -103,9 +111,16 @@ export async function run(argv: string[], out: (line: string) => void = console.
       const personId = rest[0];
       const newWalletRaw = rest[1];
       if (!personId || !/^[0-9a-f]{64}$/.test(personId) || !newWalletRaw || newWalletRaw.startsWith('--'))
-        throw new Error('usage: approve <personId> <newWallet> [--force]   (both from list; name the wallet you checked)');
+        throw new Error('usage: approve <personId> <newWallet> --checked [--force]   (both from list; name the wallet you checked)');
       const newWallet = address(newWalletRaw);
       const force = rest.includes('--force');
+      const { recoveries } = await api<{ recoveries: RecoveryView[] }>('/api/identity/recoveries');
+      const view = recoveries.find((r) => r.personId === personId);
+      for (const l of await independentChecks(view, newWallet)) out(`  ${l}`);
+      if (!rest.includes('--checked'))
+        throw new Error(
+          "not signed: confirm the member's pre-request contact from your own export and the notice's delivery in the relay's own log, then repeat with --checked",
+        );
       const keyPath = process.env.RECOVERY_KEYPAIR;
       if (!keyPath) throw new Error('RECOVERY_KEYPAIR must be set: the recovery key has a file of its own, never a shared default');
       const signer = await createKeyPairSignerFromBytes(Uint8Array.from(JSON.parse(fs.readFileSync(keyPath, 'utf8'))));
@@ -135,6 +150,30 @@ export async function run(argv: string[], out: (line: string) => void = console.
     default:
       throw new Error(`unknown command "${cmd}"; see the header of scripts/recovery.ts`);
   }
+}
+
+/**
+ * The evidence the operator reads outside the web service. The identity provider is asked directly, with the
+ * operator's own key, whether the new wallet's verification was approved and is bound to that wallet.
+ */
+export async function independentChecks(view: RecoveryView | undefined, newWallet: Address, env = process.env, f: typeof fetch = fetch): Promise<string[]> {
+  const lines: string[] = [];
+  const key = env.PERSONA_API_KEY?.trim();
+  if (!view?.inquiryId) lines.push('verification     the service reports no verification for this wallet: do not approve');
+  else if (!key) lines.push(`verification     PERSONA_API_KEY not set here: look up inquiry ${view.inquiryId} at the provider yourself`);
+  else {
+    const res = await f(`${env.PERSONA_BASE_URL?.trim() || 'https://withpersona.com'}/api/v1/inquiries/${encodeURIComponent(view.inquiryId)}`, {
+      headers: { authorization: `Bearer ${key}`, 'persona-version': '2023-01-05' },
+    });
+    if (!res.ok) throw new Error(`refused: the provider answered HTTP ${res.status} for inquiry ${view.inquiryId}`);
+    const attrs = ((await res.json()) as { data?: { attributes?: Record<string, unknown> } }).data?.attributes ?? {};
+    if (attrs.status !== 'approved') throw new Error(`refused: the provider says inquiry ${view.inquiryId} is ${String(attrs.status)}, not approved`);
+    if (attrs['reference-id'] !== newWallet) throw new Error(`refused: the provider bound inquiry ${view.inquiryId} to ${String(attrs['reference-id'])}, not ${newWallet}`);
+    lines.push(`verification     approved at the provider for ${newWallet} (inquiry ${view.inquiryId}, read directly)`);
+  }
+  lines.push(`contact          the service says ${view?.hasContact ? 'a contact is on file' : 'NO contact on file'}; check it against your own export from before the request`);
+  lines.push(`notice           the service says ${view?.delivery ?? 'not sent'}; check delivery in the relay's own log`);
+  return lines;
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);

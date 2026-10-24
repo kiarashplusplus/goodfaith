@@ -49,10 +49,18 @@ export default function FundPage() {
             />
             <Stat label="Loans made" value={p.loanCount.toString()} />
             <Stat label="Donated" value={formatUsdc(p.totalDonated)} sub="Gifts, never withdrawn" />
-            <Stat label="Lent in total" value={formatUsdc(p.totalLent)} />
+            <Stat
+              label="Lent in total"
+              value={formatUsdc(p.totalLent)}
+              sub={p.maxTotalLent > 0n ? `Budget ${formatUsdc(p.maxTotalLent)}, raised only with notice` : undefined}
+            />
             <Stat label="Paid back" value={formatUsdc(p.totalRepaid)} />
             <Stat label="Recovered from escrow" value={formatUsdc(p.totalRecovered)} />
-            <Stat label="Not repaid" value={formatUsdc(p.totalLost)} sub="Lost on settled loans, not yet paid back" />
+            <Stat
+              label="Not repaid"
+              value={formatUsdc(p.totalLost)}
+              sub={`Lost on settled loans, not yet paid back${p.totalForgiven > 0n ? `; ${formatUsdc(p.totalForgiven)} of it forgiven` : ""}`}
+            />
             <Stat label="Paid back after settlement" value={formatUsdc(p.totalRestituted)} />
             <Stat label="Owed to co-signers" value={formatUsdc(p.pendingClaims + p.vaultClaims)} sub="Waiting to be collected" />
           </div>

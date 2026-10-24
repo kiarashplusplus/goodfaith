@@ -10,7 +10,7 @@
 //   npm run member -- pay-back <loanId> <amount>       (after it: settles the loan first when nobody has, then pays)
 //   npm run member -- settle <loanId> | collect <loanId>
 //   npm run member -- claim <loanId>
-//   npm run member -- forgive <loanId>                 (co-signer: ends the borrower's debt; bars and the fund's loss stay)
+//   npm run member -- waive <loanId>                   (co-signer: gives up your own claim; the fund's claim stays owed)
 //   npm run member -- renew                            (via the app at APP_URL: a fresh year on the pass, no new ID check)
 //   npm run member -- close-expired <borrowerWallet>
 //   npm run member -- veto | finalize
@@ -88,7 +88,9 @@ export async function run(argv: string[], out: (line: string) => void = console.
       for (const l of await prog.fetchLoansFor(txRpc, pool, w)) {
         const role = l.borrowerPerson === m.person ? 'borrowed' : 'co-signed';
         const t = loanTiming(l, now);
-        const owedBack = l.status === 'Defaulted' ? `, ${fmt(prog.owedAfterSettlement(l))} still owed (member pay-back ${l.id} <amount>${role === 'co-signed' ? `, or forgive ${l.id}` : ''})` : l.forgivenAt > 0n ? ', forgiven by the co-signer' : '';
+        const owedBack = l.status === 'Defaulted'
+          ? `, ${fmt(prog.owedAfterSettlement(l))} still owed: ${fmt(prog.fundClaim(l))} to the fund, ${fmt(prog.cosignerClaim(l))} to the co-signer (member pay-back ${l.id} <amount>${role === 'co-signed' && prog.cosignerClaim(l) > 0n ? `, or waive ${l.id}` : ''})`
+          : [l.cosignerWaivedAt > 0n ? ', co-signer waived their claim' : '', l.fundForgivenAt > 0n ? ', fund forgave its claim' : ''].join('');
         const toCosigner = prog.owedToCosigner(l) > 0n ? `, ${fmt(prog.owedToCosigner(l))} owed to the co-signer (member claim ${l.id})` : '';
         const toFund = l.recoveryPending > 0n ? `, ${fmt(l.recoveryPending)} waiting for the fund (member collect ${l.id})` : '';
         out(`loan #${l.id}   ${role} ${fmt(l.principal)}, repaid ${fmt(l.repaid)}, ${l.status} (${t.state})${owedBack}${toCosigner}${toFund}`);
@@ -172,13 +174,14 @@ export async function run(argv: string[], out: (line: string) => void = console.
       out(`released ${fmt(owed)} to ${to}: ${sig}`);
       return;
     }
-    case 'forgive': {
+    case 'waive': {
       const loan = await loanById(args[0] ?? '');
-      if (loan.status !== 'Defaulted') throw new Error(`loan #${loan.id} is ${loan.status}: only a settled loan with something owed can be forgiven`);
+      if (loan.status !== 'Defaulted') throw new Error(`loan #${loan.id} is ${loan.status}: only a settled loan with something owed can be waived`);
       const c = await personOf(me);
       if (loan.cosignerPerson !== c.person) throw new Error(`you are not the co-signer of loan #${loan.id}`);
-      out(`forgiving ${fmt(prog.owedAfterSettlement(loan))}: the borrower owes nothing more; the fund's loss and the bars stay as they are`);
-      out(`forgiven: ${await send([prog.forgiveIx({ cosigner: me, pool, loan })])}`);
+      if (prog.cosignerClaim(loan) === 0n) throw new Error(`loan #${loan.id}: you have no claim left to waive`);
+      out(`waiving your ${fmt(prog.cosignerClaim(loan))}: the fund's claim of ${fmt(prog.fundClaim(loan))} stays owed, and the bars stay as they are`);
+      out(`waived: ${await send([prog.waiveReimbursementIx({ cosigner: me, pool, loan })])}`);
       return;
     }
     case 'renew': {

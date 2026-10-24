@@ -21,7 +21,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const ceilDiv = (a: bigint, b: bigint) => (a + b - 1n) / b;
 
 export function loanTiming(
-  loan: Pick<Loan, "status" | "dueAt" | "graceDays"> & Partial<Pick<Loan, "shortfall" | "restituted" | "forgivenAt">>,
+  loan: Pick<Loan, "status" | "dueAt" | "graceDays"> &
+    Partial<Pick<Loan, "shortfall" | "restituted" | "cosignerWaivedAt" | "fundForgivenAt">>,
   nowSec: bigint,
 ): LoanTiming {
   const deadline = loan.dueAt + BigInt(loan.graceDays) * SECONDS_PER_DAY;
@@ -31,13 +32,14 @@ export function loanTiming(
     return {
       ...base,
       state: "restituted",
-      label: loan.forgivenAt
-        ? "Settled after the deadline; the co-signer forgave the rest."
-        : "Settled after the deadline, then paid back in full.",
+      label: loan.fundForgivenAt
+        ? "Settled after the deadline; the fund forgave its claim."
+        : loan.cosignerWaivedAt
+          ? "Settled after the deadline; the fund was paid back and the co-signer waived the rest."
+          : "Settled after the deadline, then paid back in full.",
     };
   if (loan.status === "Defaulted") {
-    const owed = loan.shortfall !== undefined && loan.restituted !== undefined ? loan.shortfall - loan.restituted : null;
-    const partly = owed !== null && loan.restituted! > 0n ? " Partly paid back." : "";
+    const partly = loan.restituted !== undefined && loan.restituted > 0n ? " Partly paid back." : "";
     return { ...base, state: "defaulted", label: `Settled as defaulted.${partly}` };
   }
   if (nowSec <= 0n) return { ...base, state: "open", label: "" };

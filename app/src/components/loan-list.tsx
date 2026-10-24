@@ -9,8 +9,9 @@ import {
   claimEscrowIx,
   collectRecoveryIx,
   cosignerWalletOf,
-  forgiveIx,
-  lossOutstanding,
+  waiveReimbursementIx,
+  fundClaim,
+  cosignerClaim,
   owedAfterSettlement,
   owedToCosigner,
   settleIx,
@@ -78,7 +79,7 @@ function LoanRow({
 }) {
   const { rpc, signer } = useApp();
   const { run, busy, error, result } = useRun();
-  const [confirming, setConfirming] = useState<false | "settle" | "forgive">(false);
+  const [confirming, setConfirming] = useState<false | "settle" | "waive">(false);
   const t = loanTiming(loan, now);
   const iAmCosigner = loan.cosigner === wallet;
   const chip = CHIP[t.state];
@@ -102,10 +103,12 @@ function LoanRow({
           {settled && (
             <div className="text-xs text-stone-500">
               {loan.recovered > 0n && <>Escrow covered {formatUsdc(loan.recovered)}. </>}
-              {lossOutstanding(loan) > 0n && <>The fund is still short {formatUsdc(lossOutstanding(loan))}. </>}
+              {fundClaim(loan) > 0n && <>The fund is owed {formatUsdc(fundClaim(loan))}. </>}
+              {cosignerClaim(loan) > 0n && <>The co-signer is owed {formatUsdc(cosignerClaim(loan))} back. </>}
               {loan.recoveryPending > 0n && <>{formatUsdc(loan.recoveryPending)} waits in escrow for the fund. </>}
               {toCosigner > 0n && <>{formatUsdc(toCosigner)} waits for the co-signer. </>}
-              {loan.forgivenAt > 0n && <>The co-signer forgave the rest on {date(loan.forgivenAt)}. </>}
+              {loan.cosignerWaivedAt > 0n && <>The co-signer waived their claim on {date(loan.cosignerWaivedAt)}. </>}
+              {loan.fundForgivenAt > 0n && <>The fund forgave its claim on {date(loan.fundForgivenAt)}. </>}
             </div>
           )}
         </div>
@@ -161,31 +164,31 @@ function LoanRow({
               Settle
             </GhostButton>
           )}
-          {loan.status === "Defaulted" && iAmCosigner && stillOwed > 0n && !result && (
-            <GhostButton onClick={() => setConfirming((c) => (c ? false : "forgive"))} aria-expanded={confirming === "forgive"}>
-              Forgive
+          {loan.status === "Defaulted" && iAmCosigner && cosignerClaim(loan) > 0n && !result && (
+            <GhostButton onClick={() => setConfirming((c) => (c ? false : "waive"))} aria-expanded={confirming === "waive"}>
+              Waive my claim
             </GhostButton>
           )}
         </div>
       </div>
-      {confirming === "forgive" && !result && (
+      {confirming === "waive" && !result && (
         <div className="mt-3">
           <Notice tone="warn">
-            <strong>Forgiving ends the borrower&apos;s debt of {formatUsdc(stillOwed)}; nothing else changes.</strong> The fund&apos;s loss
-            stays a loss, your bar (if any) runs its course, since it lifts only when the fund is made whole, and the borrower&apos;s bar is
-            untouched. Nobody can pay this loan back afterwards.
+            <strong>Waiving gives up the {formatUsdc(cosignerClaim(loan))} the borrower would still pay back to you.</strong> It is your
+            claim only: the fund&apos;s claim{fundClaim(loan) > 0n ? ` of ${formatUsdc(fundClaim(loan))}` : ""} stays owed, your bar (if
+            any) still lifts only when the fund is paid back or at its end date, and you cannot undo the waiver.
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 disabled={busy || !signer}
                 onClick={() =>
                   run(async () => {
-                    const sig = await sendInstructions(rpc, signer!, [forgiveIx({ cosigner: wallet, pool, loan })]);
+                    const sig = await sendInstructions(rpc, signer!, [waiveReimbursementIx({ cosigner: wallet, pool, loan })]);
                     onChanged();
                     return sig;
                   })
                 }
               >
-                {busy ? "Working..." : "Forgive the rest"}
+                {busy ? "Working..." : "Waive my claim"}
               </Button>
               <GhostButton disabled={busy} onClick={() => setConfirming(false)}>
                 Keep it owed

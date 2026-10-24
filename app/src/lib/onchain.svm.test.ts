@@ -28,7 +28,10 @@ import {
   fetchLoanById,
   fetchLoansFor,
   fetchMember,
-  forgiveIx,
+  waiveReimbursementIx,
+  forgiveFundClaimIx,
+  fundClaim,
+  cosignerClaim,
   owedAfterSettlement,
   fetchPerson,
   fetchPool,
@@ -143,6 +146,7 @@ beforeAll(async () => {
     seasoningSeconds: 0n,
     capStepIntervalSeconds: 0n,
     maxOutstandingPrincipal: 0n,
+    maxTotalLent: 0n,
   };
   donor = await actor(svm, { usdc: 5000n * USDC, mint: POOL_MINT, gateway: false });
   await plantAta(svm, donor.address, MINT_B, 5000n * USDC);
@@ -565,7 +569,7 @@ describe("settlement", () => {
     await expectCode(collect(stranger, poolA, loanA1), 3012); // the escrow account is gone
   });
 
-  it("restitution pays the fund back first, then the co-signer; the borrower's own pay-back relaxes their bar", async () => {
+  it("restitution pays the fund back first, then the co-signer; a full pay-back relaxes the borrower's bar", async () => {
     const restitute = async (payer: KeyPairSigner, amount: bigint) =>
       sendInstructions(rpc, payer, [await restituteIx({ payer: payer.address, pool: poolA, loan: loanA1, amount })]);
     expect(await expectCode(restitute(third, 101n * USDC), 6009)).toBe("That is more than what is still owed.");
@@ -580,7 +584,7 @@ describe("settlement", () => {
     // The fund is whole, so the co-signer's bar lifts now, whoever paid; the borrower's does not.
     expect(await fetchMember(rpc, poolA.address, cosigner.address)).toMatchObject({ ineligible: false, ineligibleUntil: 0n });
     expect(await fetchMember(rpc, poolA.address, borrower2.address)).toMatchObject({ ineligible: true, ineligibleUntil: PERMANENT });
-    // The last 25, paid by the borrower, reimburse the co-signer (claimable from the vault); the loan is
+    // The last 25 (whoever pays; here the borrower) reimburse the co-signer (claimable from the vault); the loan is
     // Restituted and the borrower's bar relaxes to the late bar counted from today.
     await restitute(borrower2, 25n * USDC);
     loanA1 = (await fetchLoanById(rpc, poolA.address, 1n))!;
@@ -619,23 +623,39 @@ describe("settlement", () => {
     expect(loanTiming((await fetchLoanById(rpc, poolB.address, 0n))!, deadline + 1n).state).toBe("defaulted");
   });
 
-  it("the co-signer may forgive the unpaid rest; nobody else can, and the bars and the loss stay", async () => {
+  it("the co-signer waives only their own claim; the fund's claim is forgiven only by the administrator", async () => {
     loanB0 = (await fetchLoanById(rpc, poolB.address, 0n))!;
-    const owed = loanB0.shortfall - loanB0.restituted;
-    expect(owed).toBeGreaterThan(0n);
-    const forgive = (who: KeyPairSigner) => sendInstructions(rpc, who, [forgiveIx({ cosigner: who.address, pool: poolB, loan: loanB0 })]);
-    expect(await expectCode(forgive(stranger), 6012)).toBe("You're not allowed to do that.");
+    const fundOwed = fundClaim(loanB0);
+    expect(cosignerClaim(loanB0)).toBeGreaterThan(0n);
+    const waive = (who: KeyPairSigner) =>
+      sendInstructions(rpc, who, [waiveReimbursementIx({ cosigner: who.address, pool: poolB, loan: loanB0 })]);
+    expect(await expectCode(waive(stranger), 6012)).toBe("You're not allowed to do that.");
     const lostBefore = (await fetchPool(rpc, poolB.address))!.totalLost;
-    await forgive(cosigner);
+    await waive(cosigner);
     loanB0 = (await fetchLoanById(rpc, poolB.address, 0n))!;
+    expect(loanB0.cosignerWaivedAt).toBe(svm.getClock().unixTimestamp);
+    expect(cosignerClaim(loanB0)).toBe(0n);
+    expect(await expectCode(waive(cosigner), 6048)).toBe("There is nothing left for you to waive on this loan.");
+    if (fundOwed > 0n) {
+      // The fund's claim is untouched by the waiver; only the administrator can forgive it, with a reason.
+      expect(loanB0.status).toBe("Defaulted");
+      expect(owedAfterSettlement(loanB0)).toBe(fundOwed);
+      const forgive = (who: KeyPairSigner) =>
+        sendInstructions(rpc, who, [
+          forgiveFundClaimIx({ authority: who.address, pool: poolB, loan: loanB0, reason: new Uint8Array(32).fill(3) }),
+        ]);
+      expect(await expectCode(forgive(cosigner), 6012)).toBe("You're not allowed to do that.");
+      await forgive(adm);
+      loanB0 = (await fetchLoanById(rpc, poolB.address, 0n))!;
+      expect((await fetchPool(rpc, poolB.address))!.totalForgiven).toBe(fundOwed);
+    }
     expect(loanB0.status).toBe("Restituted");
-    expect(loanB0.forgivenAt).toBe(svm.getClock().unixTimestamp);
     expect(owedAfterSettlement(loanB0)).toBe(0n);
-    expect(loanTiming(loanB0, svm.getClock().unixTimestamp).label).toMatch(/forgave/);
+    // The recognised loss stays, and no bar moves.
     expect((await fetchPool(rpc, poolB.address))!.totalLost).toBe(lostBefore);
     expect(await fetchMember(rpc, poolB.address, borrower.address)).toMatchObject({ ineligible: true });
     expect(await fetchMember(rpc, poolB.address, cosigner.address)).toMatchObject({ ineligible: true });
-    expect(await expectCode(forgive(cosigner), 6043)).toBe("This loan hasn't been settled yet.");
+    expect(await expectCode(waive(cosigner), 6043)).toBe("This loan hasn't been settled yet.");
   });
 });
 

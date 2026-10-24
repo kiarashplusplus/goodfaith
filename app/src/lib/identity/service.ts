@@ -113,6 +113,8 @@ export type RecoveryReview = { kind: "review"; requestedAt: number };
 export type RecoveryView = {
   personId: string;
   newWallet: Address;
+  /** The new wallet's verification, so the operator can look it up at the provider directly. */
+  inquiryId: string | null;
   requestedAt: number;
   hasContact: boolean;
   /** Whether the notice about the request reached the configured channel (null: nothing to notify, or not yet). */
@@ -652,6 +654,7 @@ export class IdentityService {
       out.push({
         personId: r.personId,
         newWallet: r.newWallet as Address,
+        inquiryId: (await this.d.store.getWallet(r.newWallet as Address))?.inquiryId ?? null,
         requestedAt: Math.floor(r.openedAt / 1000),
         hasContact: !!stored?.contact,
         delivery: r.delivery ?? null,

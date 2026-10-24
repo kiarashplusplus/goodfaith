@@ -162,7 +162,8 @@ export async function runOnce(opts: { dryRun?: boolean } = {}): Promise<Report> 
     }
   }
 
-  // 7. wind-down sweep: everything in the vault except what co-signers are owed from it
+  // 7. wind-down sweep: everything in the vault except what co-signers are owed from it. Runs on every pass, so a
+  // pay-back or collection that lands in the old vault after the first sweep is forwarded to the successor too.
   if (!dryRun) pool = await reload();
   if (prog.windingDown(pool, nowB) && pool.activeLoans === 0n && pool.successor) {
     try {
