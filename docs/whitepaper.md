@@ -93,7 +93,7 @@ All bars are for a set time, set by the fund with notice and fixed into each loa
 
 The app includes a plain **wallet** view: your own digital wallet, holding USDC under a private key only you control. Good Faith cannot move it. If our website disappeared tomorrow, your wallet and your USDC would still be there, and every action in this paper can be done without our website (section 6).
 
-Two kinds of money are held by the program, not by you: the donated fund, and co-signer escrows while a loan is open or until they are released. Both are governed by the program's rules, which the fund's operator can change only as section 5 describes. And one privileged action exists over your membership: a wallet recovery (section 4), which needs two of our keys, waits three days, and which you can cancel.
+Two kinds of money are held by the program, not by you: the donated fund, and co-signer escrows while a loan is open or until they are released. Both are governed by the program's rules, which the fund's operator can change only as section 5 describes. And one privileged action exists over your membership: a wallet recovery (section 4), which needs two of our keys held in different places, waits three days, and which you can cancel.
 
 Two things that are true of every USDC wallet, including this one:
 
