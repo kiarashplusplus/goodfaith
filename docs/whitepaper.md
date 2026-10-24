@@ -2,7 +2,7 @@
 
 **Interest-free, fee-free loans, funded by gifts. goodfaith.fi**
 
-*Status: version 6 of the design, running on a test network with play money. The source is published. The program has been through an internal security review and automated testing; an independent audit is still ahead. Nothing here is financial or legal advice.*
+*Status: version 6 of the design, running on a test network with play money. The source is proprietary and not public. The program has been through an internal security review and automated testing; an independent audit is still ahead. Nothing here is financial or legal advice.*
 
 ---
 
@@ -176,7 +176,7 @@ An administrator that turned against its members could, with notice, replace the
 
 ## 6. Operations
 
-Five pieces of software run beside the program, all published and replaceable:
+Five pieces of software run beside the program, each replaceable:
 
 - **The identity service** (section 4; [`docs/identity.md`](./identity.md)): checks, passes, memberships, recovery requests and notices, and a mirror of the chain's bars.
 - **The recovery tool** (`scripts/recovery.ts`): the operator's command line, holding the recovery key, reading the verification directly from the provider and refusing to sign without the operator's confirmed checks.
@@ -190,7 +190,7 @@ Five pieces of software run beside the program, all published and replaceable:
 
 ## 7. Security and testing
 
-- **Public source**, under the Apache License 2.0, and a deployed program checkable against a tagged build (appendix).
+- **Proprietary source**, not public; every transaction is still public on chain, and the deployed program can be checked against a tagged build by anyone given access to the source (appendix).
 - **Checked math** everywhere; no fee or interest fields exist in the code.
 - **Security review.** An internal review is published in [`docs/audit.md`](./audit.md), findings GF-01 to GF-42. Version 6 closes these:
   - a co-signer could forgive the fund's claim (GF-37), now two claims, each given up only by its owner;
@@ -277,7 +277,7 @@ Good Faith is a small, early experiment. Only donate what you can afford to give
 
 Everything below is meant to be checked, not believed. Items marked *to be filled at deploy* are empty until the deployment they describe exists.
 
-- **Source:** the project repository, Apache License 2.0; the paper, the specification ([`docs/spec.md`](./spec.md)), the review ([`docs/audit.md`](./audit.md)), the identity note ([`docs/identity.md`](./identity.md)), the operations note ([`docs/operations.md`](./operations.md)) and the economics ([`docs/economics.md`](./economics.md)) live beside the code and change with it.
+- **Source:** the project repository, proprietary (all rights reserved) and private; the paper, the specification ([`docs/spec.md`](./spec.md)), the review ([`docs/audit.md`](./audit.md)), the identity note ([`docs/identity.md`](./identity.md)), the operations note ([`docs/operations.md`](./operations.md)) and the economics ([`docs/economics.md`](./economics.md)) live beside the code and change with it.
 - **Deployment status:** no public deployment yet. The program runs on a local fork of the test network in automated tests. *Devnet program id, pool account and keys: to be filled at deploy.* The id declared in the source is `BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd`; the devnet deployment will use a fresh keypair and the id will be published here.
 - **Release tag and build hash:** *to be filled at deploy.* The program is built with `anchor build --arch v2` from a tagged commit; the SHA-256 of `target/deploy/goodfaith.so` is published with the tag, and `solana program dump` of the deployed account must hash to the same value.
 - **Upgrade authority:** *to be filled at deploy*: the upgrade multisig and its delay during the pilot; "none" once the program is made permanent (`solana program show` prints "Upgrade authority: none").
