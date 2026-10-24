@@ -2,7 +2,7 @@
 
 **Interest-free, fee-free loans, funded by gifts. goodfaith.fi**
 
-*Status: version 3 of the design, running on a test network with play money. The source is published. The program has been through an internal security review and automated testing; an independent audit is still ahead. Nothing here is financial or legal advice.*
+*Status: version 4 of the design, running on a test network with play money. The source is published. The program has been through an internal security review and automated testing; an independent audit is still ahead. Nothing here is financial or legal advice.*
 
 ---
 
@@ -27,9 +27,10 @@ The fund holds digital dollars (USDC, a "stablecoin" designed to always be worth
 ### Borrowing
 
 - **Repay exactly what you borrow.** Borrow $300, repay $300. No interest, no fees, no penalties.
-- **Caps that grow with you.** A new member can borrow up to the first-loan cap ($150 at launch) for the first month. Every loan repaid on time raises your personal cap by $100, up to the fund's maximum ($500).
-- **One loan at a time, per person.** A person can have only one open loan, whichever wallet they use, and the total of what they borrow and what they guarantee for others is capped ($1,000 at launch).
-- **Set term and grace period.** Each loan has a repayment deadline (up to a maximum number of days), followed by a grace period. The last second of the grace period is the cutoff.
+- **Caps that grow with you, slowly.** A new member can borrow up to the first-loan cap ($150 at launch) for the first month. A loan repaid by its deadline raises your personal cap by $100, up to the fund's maximum ($500), but only if the loan ran for at least 30 days, and at most once every 30 days. Borrowing and repaying the same hour does not count; a loan settled after its deadline never counts, even once it is paid back.
+- **One loan at a time, per person.** A person can have only one open loan, whichever wallet they use, and the total of what they borrow and what they guarantee for others is capped ($1,000 at launch). That cap counts the whole amount you guarantee, not only the deposit you put up: it limits how concentrated the fund's risk is in one person, while the deposit is what covers a loss.
+- **The fund has a ceiling too.** No more than a set amount of principal is out on loan at once ($25,000 at launch), and no more than a set amount goes out per day ($5,000 at launch).
+- **Set term and grace period.** Each loan has a repayment deadline (up to a maximum number of days), followed by a grace period. The last second of the grace period is the cutoff. The term, the grace period, the deposit rate and the three bar durations are written into the loan when it opens; a later settings change never touches them.
 
 ### The co-signer
 
@@ -56,30 +57,37 @@ Every loan needs a **co-signer**: a different person who vouches for you and put
     +-- Repaid by the cutoff:  the $75 is owed back to the co-signer,
     |                          who releases it to their wallet. Done.
     |
-    +-- Repaid after the cutoff: same money, but the loan is recorded
-    |                          as late and the borrower is barred for a while.
-    |
-    +-- Still unpaid after the cutoff (default):
-          the escrow pays the unpaid balance to the fund, up to the
-          amount held. Anything left over is owed back to the co-signer.
-          The borrower is barred for a long time. The co-signer is barred
-          too, for a shorter time, only if the fund lost money.
+    +-- Not repaid by the cutoff: repayment closes. The loan is SETTLED
+          (by anyone, the borrower included): what is owed is set aside
+          from the escrow, up to the amount held; anything left over is
+          owed back to the co-signer. The borrower is barred for a long
+          time; the co-signer too, for a shorter time, only if the fund
+          lost money.
+            |
+            +-- The borrower PAYS BACK what was owed, in one go or over
+                time: first the fund's loss, then the co-signer's deposit.
+                Once everything is back, the borrower's bar shrinks to the
+                late bar and the co-signer's is lifted. Paying back the same
+                minute as settling is the same as paying back a month later.
 ```
 
 ### What a default means
 
-The cutoff is the end of the grace period, to the second. What happens after it does not depend on who moves first:
+The cutoff is the end of the grace period, to the second. Before it, a loan is **open** and any repayment is accepted. After it, no repayment is accepted at all; the loan is **settled**, and what happens next is the same whoever moves first, because there is only one path:
 
-| what happens after the cutoff | the money | the borrower | the co-signer |
-|---|---|---|---|
-| the loan is repaid in full | the fund is made whole; the escrow is owed back to the co-signer | loan recorded as **repaid late**; barred for 90 days (launch setting); it does not count towards a higher cap | keeps their standing |
-| anyone triggers the default (the fund's scheduled job does within minutes) | the unpaid balance is taken from the escrow into the fund; anything left over is owed back to the co-signer; if the escrow is smaller than the unpaid balance, the fund absorbs the loss | barred for 2 years (launch setting) | barred for 1 year, **only if the fund lost money** |
+| state | how a loan gets there | the money | the borrower | the co-signer |
+|---|---|---|---|---|
+| **repaid** | paid in full by the cutoff | the fund is whole; the escrow is owed back to the co-signer, who releases it | the loan counts towards a higher cap if it ran 30 days | keeps their standing |
+| **settled** | anyone settles it after the cutoff: the fund's scheduled job within minutes, or the borrower themselves as the first half of "settle and pay back" | no money moves at settlement. What is owed is set aside from the escrow, up to the amount held (for the fund to collect); anything left over is owed back to the co-signer; if the escrow is smaller than what is owed, the difference is the fund's loss | barred for 2 years (launch setting) | barred for 1 year, **only if the fund lost money** |
+| **paid back** | the borrower, or anyone for them, pays back what the settlement left unpaid, in any instalments | the fund's loss is made good first; the rest reimburses the co-signer's used deposit, which they collect from the fund | the bar shrinks to 90 days from the settlement (launch setting); the loan still does not raise the cap | the bar is lifted once none of the loans they guaranteed has an unpaid loss |
 
-Whichever of the two lands first, the fund receives the same money and the co-signer is owed the same escrow. There are no collection agencies, no late fees and no added charges. The default step ends the debt as far as the program is concerned: nothing more is owed on chain.
+Worked example, a $300 loan with a $75 deposit and nothing repaid by the cutoff. Settlement: $75 of the deposit is set aside for the fund, the fund's loss is $225, the borrower is barred two years and the co-signer one year. The borrower pays back $300 the same day or a year later: $225 goes to the fund, $75 to the co-signer, the borrower's bar becomes 90 days from the settlement, the co-signer's bar ends. A borrower who tries to pay a second after the cutoff is shown exactly this: "settle and pay back", one transaction, the same outcome as if the scheduled job had settled first. There is no quicker or kinder route, so there is nothing to race for.
 
-All bars are for a set time, set by the fund with notice; they can be made permanent but are not at launch. A bar is never shortened by a later, lighter one.
+There are no collection agencies, no late fees and no added charges. What a settled loan still owes is recorded on chain and can be paid back at any time; nothing forces it.
 
-**If the network or our servers are down across a cutoff**, nobody can repay or trigger a default until they are back; the money works out the same either way, but a borrower who tried to pay on time may be recorded as late. The grace period exists partly to soften this, and section 6 says how the operator handles it.
+All bars are for a set time, set by the fund with notice and fixed into each loan when it opens; they can be made permanent but are not at launch. A bar is never shortened by a later, lighter one. The fund's administrator can lift a bar early (section 5), in public, with a written reason.
+
+**If the network or our servers are down across a cutoff**, nobody can repay or settle until they are back; afterwards the loans whose cutoff fell inside the outage are settled like any other, and their borrowers are barred until they pay back. The money works out the same; the fairness does not, which is why the administrator can lift those bars and section 6 says how.
 
 ### Your money, and ours
 
@@ -89,7 +97,7 @@ Two kinds of money are held by the program, not by you: the donated fund, and co
 
 Two things that are true of every USDC wallet, including this one:
 
-- **The stablecoin issuer can freeze USDC.** USDC is issued by Circle, and the token on Solana has a "freeze authority": Circle can freeze any USDC account, which it does under legal orders. That applies to your wallet, to the loan fund and to escrows alike. Good Faith has no such power and cannot undo a freeze. A frozen escrow or wallet no longer blocks a loan from closing (version 3 made every refund a claim the co-signer collects when they can), but it does block that money until the freeze is lifted. On the test network the play-money USDC has the same property.
+- **The stablecoin issuer can freeze USDC.** USDC is issued by Circle, and the token on Solana has a "freeze authority": Circle can freeze any USDC account, which it does under legal orders. That applies to your wallet, to the loan fund and to escrows alike. Good Faith has no such power and cannot undo a freeze. The program is built so that a freeze delays money without changing who it belongs to: settlement moves nothing and only records what each side is owed; the fund collects its share and the co-signer collects theirs when the account can be moved; a frozen escrow blocks exactly that escrow's two collections and nothing else, and nothing is written off because an account could not be touched. A frozen loan fund stops everything until it thaws. On the test network the play-money USDC has the same property.
 - **Creating an account costs a little.** Sending USDC to a wallet that has never held it creates a small account on the blockchain, which costs the sender about 0.002 SOL (a few cents). The fee sponsor (section 3) covers Good Faith's own transactions, not accounts created for other people.
 
 ### What to expect as a borrower
@@ -98,7 +106,7 @@ This is what the journey looks like today. These are the current options, not pr
 
 1. **Verify once.** A one-time identity check (section 4) from a phone or computer, a few minutes.
 2. **Ask a friend.** You enter the amount, the term and your co-signer's wallet address; they get a link, review the exact terms and approve within a week. The moment they do, the USDC is in your wallet.
-3. **Spend it.** USDC in a wallet is not yet dollars in a bank account. Today you can send it to anyone with a Solana wallet, spend it where USDC is accepted, or convert it through a crypto exchange or an "off-ramp" service that pays out to a bank account. Those services charge their own fees (typically well under 1%) and take minutes to a few days, and they have their own identity checks. We are working on a bank partner so that this step disappears (section 8).
+3. **Spend it.** USDC in a wallet is not yet dollars in a bank account. Today you can send it to anyone with a Solana wallet, spend it where USDC is accepted, or convert it through a crypto exchange or an "off-ramp" service that pays out to a bank account. Those services set their own fees, which vary by service, amount and payout method and often include a fixed minimum that matters on a $150 loan; they take minutes to a few days, and they have their own identity checks. We do not quote a rate because we do not control one. We are working on a bank partner so that this step disappears (section 8).
 4. **Repay.** Any amount, any time, from any wallet, including a friend's. The app shows the due date, the grace days left and exactly what is still owed.
 
 ## 3. Why Solana, and what the fee sponsor does
@@ -117,25 +125,27 @@ On most blockchains you must hold a separate coin just to pay network fees. That
 
 A wallet is not a person. Someone barred for a default could otherwise come back with a new wallet, and someone with two wallets could borrow twice. So the fund keeps track of people.
 
-- **The check.** Our verification partner (Persona) checks your government ID, that it is issued in Texas, and your age, in a hosted flow on your phone or computer. Good Faith's server learns the outcome and a few fields of the ID, never your selfie or your documents.
+- **The check.** Our verification partner (Persona) checks your government ID and your age in a hosted flow on your phone or computer, and that the ID was issued in Texas. A Texas ID is what we check; it is a proxy for residency, not proof of it, and someone who has moved away or holds another state's ID is not caught or wrongly caught by it. Good Faith's server learns the outcome and a few fields of the ID, never your selfie or your documents.
 - **The fingerprint, kept off chain.** From the ID number, the issuing state and the birth date, the server computes a keyed fingerprint: the same every time the same document is verified, and not reversible into the document. It is stored on our server, keyed with a secret we can rotate, and it never goes on the blockchain.
-- **The person id, on chain.** What goes on chain is a random identifier the server draws for you the first time. The program keeps one **person** record per id and one wallet per person. Eligibility, the open loan, the guarantees and your personal cap live on the person, not the wallet. Nothing on the public chain can be traced back to your ID.
+- **The person id, on chain.** What goes on chain is a random identifier the server draws for you the first time. The program keeps one **person** record per id and one wallet per person. Eligibility, the open loan, the guarantees and your personal cap live on the person, not the wallet. The id itself says nothing about your ID document. The public chain still shows what the id did: which wallets it used, which loans it took and guaranteed and with whom, when, and whether it was barred. Anyone who learns which wallet is yours (you told them, or an exchange knows) can read that history, and our server can always link the id to your record. "Private" here means the document and the fingerprint stay off chain, not that the chain is anonymous.
 - **The pass.** The server issues a pass to your wallet on the fund's own gatekeeper network. The program checks the pass on every request and co-sign.
 - **The membership.** Joining is a transaction signed by you *and* by the fund's identity issuer, which vouches on chain that your wallet belongs to your person id.
 
 A renewed or second document can be added to your membership by verifying again from your wallet. We say this plainly: the fingerprint catches people who come back with the same document; it does not prove that two different documents are two different people. The caps in section 2 bound what that is worth.
 
+You may leave an email when you verify. It is used for one thing: to tell you when something happens to your membership that you might not see in the app, such as a request to move it to another wallet, or a bar being set or lifted. We never show it or pass it on.
+
 ### Lost keys: recovery you can stop
 
-If you lose your wallet, you verify again from a new one. The server recognises you and, after a review period, proposes a move of your membership to the new wallet. Three things make that safe:
+If you lose your wallet, you verify again from a new one. The server recognises you and records a **request** to move your membership to the new wallet. From there:
 
-1. **Two of our keys must agree.** The proposal is signed by the identity issuer *and* by a separate recovery key. Neither alone can move a membership.
-2. **Nothing moves for three days.** During the delay your old wallet keeps working, and the app shows it that a move is pending.
+1. **A person decides, with a key the website does not have.** The request waits for the fund's operator, who checks it (the notice reached your contact, your old wallet has not objected, the story adds up) and then proposes the move with the **recovery key**, which lives on the operator's own machine, not in the web service. The proposal also carries the identity issuer's signature, which the web service adds. Neither key can move a membership alone, and they are held in different places by different people.
+2. **Nothing moves for three days.** During the delay your old wallet keeps working, the app shows it that a move is pending, and the notice goes to your contact if you gave one.
 3. **Your old wallet can say no.** If you still have it, one click cancels the move. The fund's administrator can cancel it too.
 
-After the delay, anyone (you, or the fund's scheduled job) finalises the move: the old wallet is retired for good, the new wallet takes over your membership, open loans and guarantees, and any escrow you are owed is released to the new wallet when claimed. A recovered membership sits on the first-loan cap for a month, like a new one.
+After the delay, anyone (you, or the fund's scheduled job) finalises the move: the old wallet is retired for good, the new wallet takes over your membership, open loans and guarantees, and anything you are owed is released to the new wallet when claimed. A recovered membership sits on the first-loan cap for a month, like a new one. A barred person can recover a wallet too: the bar follows the person, and the new wallet is how they reach what they are owed and pay back what they owe.
 
-The same machinery is what makes a bar stick: a barred person who verifies again, from any wallet, is recognised and refused before anything reaches the chain, and their passes are revoked at the moment of the default.
+A bar sticks because it is on the person, on chain: a barred person who verifies again from a new wallet is recognised, and the program refuses their loans and guarantees whichever wallet they use. A person barred for good is also refused by the identity service before anything reaches the chain.
 
 ### Borrower and co-signer are different people
 
@@ -143,15 +153,23 @@ The program checks that the two people behind a loan are different person record
 
 ### What we trust, and how much
 
-Our identity service holds three keys with different jobs, and the program limits what each can do:
+Four keys touch membership, and they do not live in one place:
 
-| key | can | cannot |
-|---|---|---|
-| **issuer** | vouch for a new membership; co-sign a recovery proposal | move money; move a membership alone; skip the delay or the veto |
-| **recovery** | co-sign a recovery proposal | anything alone |
-| **gatekeeper** | issue and revoke passes | register anyone (that needs the issuer too) |
+| key | lives | can | cannot |
+|---|---|---|---|
+| **issuer** | the web service | vouch for a new membership; co-sign a recovery proposal | move money; move a membership alone; skip the delay or the veto |
+| **gatekeeper** | the web service | issue and revoke passes | register anyone (that needs the issuer too) |
+| **recovery** | the operator's own machine (a command-line tool), never the web service | co-sign a recovery proposal the service prepared | anything alone |
+| **administrator** | a multisig of independent people | section 5 | move money to anyone but an announced successor |
 
-The worst a compromised issuer can do is register fake people and lend to them. The program bounds that: each fake membership starts on the first-loan cap, every fake loan still forfeits a 25% escrow, each person's exposure is capped, and the fund lends at most a fixed amount per day ($5,000 at launch). The administrator can pause all new lending instantly and suspend the issuer instantly. Section 9 puts a dollar figure on that scenario. The security review (section 7) lists the residual risks.
+What a compromise of each can do, stated separately, because they differ:
+
+- **The issuer key alone.** Register fake people and lend to them (the money is bounded: each fake membership starts on the first-loan cap, every fake loan forfeits a 25% escrow, each person's exposure is capped, the fund lends at most $5,000 a day and holds at most $25,000 out at once at launch), and co-sign recovery proposals that still need the recovery key. It cannot move a membership.
+- **The recovery key alone.** Nothing: every proposal needs the issuer's signature too, and a proposal the operator did not ask for is visible to the member and to anyone watching the chain for three days before it lands.
+- **The whole web service** (issuer and gatekeeper keys, the store). Everything the issuer key can do, plus issuing passes to anyone and reading the identity store. It still cannot propose a move of a membership without the recovery key, which is why that key is kept elsewhere. It can prepare a proposal and wait for the operator to sign it, so the operator's check (section 6) is the control.
+- **The gatekeeper key alone.** Issue passes to wallets that were never checked. A pass is only useful with a membership, which needs the issuer, or to a member who already has one.
+
+The administrator can pause all new lending instantly and suspend the issuer instantly. Section 9 puts dollar figures on the issuer scenario under stated containment times. The security review (section 7) lists the residual risks.
 
 ### The legal approach
 
@@ -169,43 +187,49 @@ Several keys run the fund, each with a job, and the program limits each one. The
 
 | who | may | how fast |
 |---|---|---|
-| **administrator** (a multisig of independent people) | change the settings; hand over the role; suspend the issuer; pause and resume new lending; cancel a recovery; announce a wind-down; give up the role for good | settings and wind-down after the notice period (7 days at launch, never below 2); the rest at once |
+| **administrator** (a multisig of independent people) | change the settings; hand over the role; suspend the issuer; pause and resume new lending; cancel a recovery; lift a bar, in public, with a reason; announce a wind-down; give up the role for good | settings and wind-down after the notice period (7 days at launch, never below 2); the rest at once |
 | **pause key** (held separately) | pause new lending | at once |
 | **identity issuer and recovery key** | section 4 | a recovery waits 3 days and can be vetoed |
 | **program upgrade key** (a separate multisig, with its own delay) | replace the program's code during the pilot | see "Upgrades" |
-| **anyone** | apply an announced change once its time has passed; finalise a due recovery; close an expired request; repay; trigger a default; release an escrow; move the balance to the successor after a wind-down | by the rules above |
+| **anyone** | apply an announced change once its time has passed; finalise a due recovery; close an expired request; repay; settle a loan past its cutoff; collect what the fund is owed; pay back a settled loan; release what a co-signer is owed; move the balance to the successor after a wind-down | by the rules above |
 
-The settings are: the loan cap, the first-loan cap and how it grows, the cooldown, the longest term, the grace period, the co-signer deposit rate, how many loans one co-signer may back, the exposure cap, the daily lending cap, the request lifetime, the recovery delay, the three bar durations, which gatekeeper network, issuer, recovery key and pause key are accepted, and the length of the notice period itself. No setting adds a fee or interest; the code has no field for one. The administrator cannot move money, except in the announced wind-down case below. Donations can only leave the fund as loans, repayments only flow back into it, and an escrow can only go to the co-signer or to the fund.
+**Upgrades come first**, because during the pilot they override everything below. The program's code can be replaced by a separate multisig of independent people, through a delay of its own, so that a code change is visible before it lands and no one person can make one. Until that key is removed, "the rules are the program's rules" means the program as it stands and as that multisig may change it, within the delay. Concretely: the upgrade key is held by a multisig distinct from the administrator's, with a published membership and threshold; every upgrade is queued on chain for the delay (we intend seven days, matching the notice period) where anyone can see the new program hash, and can be cancelled by the same multisig before it lands; the deployed hash is published with each release so anyone can check what is running. The key is removed when the exit criteria are met: an independent audit published with its findings closed, two full loan cycles of the pilot without a program change forced by a bug, and the open legal questions answered. Until then the guarantees in this section hold "unless the upgrade multisig changes the code, with seven days' notice", and we would rather say so than claim immutability we do not yet have.
+
+The settings are: the loan cap, the first-loan cap and how it grows (the step, the 30-day seasoning, the 30-day interval between steps), the cooldown, the longest term, the grace period, the co-signer deposit rate, how many loans one co-signer may back, the exposure cap, the daily lending cap and the ceiling on money out on loan, the request lifetime, the recovery delay, the three bar durations, which gatekeeper network, issuer, recovery key and pause key are accepted, and the length of the notice period itself. No setting adds a fee or interest; the code has no field for one. The administrator cannot move money, except in the announced wind-down case below. Donations can only leave the fund as loans, repayments and pay-backs only flow back into it, and an escrow can only go to the co-signer or to the fund.
 
 - **Every change has a notice period.** A settings change is announced first and takes effect only after the fund's notice period, measured with the notice period in force when it was announced, so shortening the notice period itself waits the old delay, and once a fund runs with two days or more of notice, no change can ever take it below two days. Anyone can apply the change once the time has passed; the administrator can withdraw it before then. Nothing applies silently.
-- **Open loans are never changed.** A settings change applies to future loans only. Each loan keeps the grace period it was opened with.
+- **Open loans are never changed.** A settings change applies to future loans only. Each loan keeps the term, the grace period, the deposit rate and the three bar durations it was opened with.
+- **Bars can be lifted, not set.** The administrator can end a person's bar early, by a public action that carries the hash of a written reason, which the operator publishes. That is the remedy for a settlement an outage caused and for an appeal upheld. No key can bar anyone: only a settlement does that, and paying back shortens it.
 - **Handing over the role takes two steps.** The current administrator names the next key, and that key has to accept.
 - **Two instant brakes.** Pausing new lending (new requests and co-signs stop; repayments, defaults, releases and recoveries continue) and suspending the issuer (no new memberships or recovery proposals until a new issuer is announced and applied). Neither touches money or existing members.
-- **Winding down, with a successor.** The administrator can announce that the fund is closing and name a successor: a token account of the same currency that is not controlled by the fund itself. After the notice period, the fund stops taking new loans and donations; open loans run their course, repayments still come in, defaults still settle, escrows are still released, members can still recover a wallet. Once no loan is open, anyone can move the remaining balance to the successor. The announcement can be withdrawn before it takes effect, not after.
+- **Winding down, with a successor.** The administrator can announce that the fund is closing and name a successor: a token account of the same currency that is not controlled by the fund itself. After the notice period, the fund stops taking new loans and donations; open loans run their course, repayments still come in, loans past their cutoff still settle, members can still recover a wallet. Once no loan is open, anyone can move the balance to the successor, less what co-signers are owed from it, which stays until they collect it; what settled loans owe the fund and what co-signers are owed from escrows sit in the escrow accounts and are collected whenever they can be, before or after the move. A wind-down never writes anyone's entitlement off. The announcement can be withdrawn before it takes effect, not after.
 - **Giving up the role is possible, not planned.** The administrator can permanently give up the role, which also discards any announced change. We expect to keep a live, multi-signature administrator for as long as the fund runs, because a fund with no administrator cannot pause, cannot resume, and cannot be wound down unless that was announced first.
 - **Everything is announced.** Every action, from a loan opening to a settings change, a recovery proposal, a pause or a wind-down, is recorded as a public event on the blockchain.
 
 ### Upgrades
 
-The program is upgradeable during the pilot. A separate multisig of independent people holds the upgrade key behind its own delay, so a code change is visible before it lands and no single person can make one. Once the pilot has run long enough to trust the code, the upgrade key is removed and the program becomes permanent; from then on fixing a bug means launching a new version and winding this one down into it. Until that day, "the rules are the program's rules" means the program as it stands and as that multisig may change it; we say so rather than claim immutability we do not yet have.
+See the top of this section: the upgrade multisig, its delay, what is observable, how an upgrade is cancelled, and the criteria for removing the key. Once it is removed the program is permanent, and fixing a bug means launching a new version and winding this one down into it.
 
 ## 6. Operations
 
 Four pieces of software run beside the program, all published and all replaceable:
 
-- **The identity service** (section 4): opens checks, receives the partner's results, issues and revokes passes, co-signs memberships and recovery proposals, and holds recovery requests for review. It stores the fingerprints (keyed, versioned), the person ids, the wallets, the inquiry ids and statuses. [`docs/identity.md`](./identity.md) describes it, including what happens when a key is rotated, lost or leaked.
+- **The identity service** (section 4): opens checks, receives the partner's results, issues and revokes passes, co-signs memberships, records recovery requests for the operator and prepares the proposals the recovery key signs, mirrors the chain's bars (with their end dates) so a barred person is handled the same on every wallet, and sends the notices. It stores the fingerprints (keyed, versioned), the person ids, the wallets, the contacts people chose to give, the inquiry ids and statuses. [`docs/identity.md`](./identity.md) describes it, including what happens when a key is rotated, lost or leaked.
+- **The recovery tool** (`scripts/recovery.ts`): the operator's command line that holds the recovery key, lists the requests, approves one (signing and sending the proposal the service prepared) or rejects it. It is deliberately not part of the website.
 - **The fee sponsor** (section 3): a Kora server behind the app's own proxy, which holds the credentials, forwards only three operations, reads every transaction against the sponsorship policy, and limits each client and each wallet.
-- **The cranker**: a scheduled job that does, on time, what anyone is allowed to do: it marks loans past the cutoff as defaulted, releases escrows owed to co-signers (creating their token account at the fund's expense when needed), closes expired requests, finalises recoveries whose delay has passed, applies settings changes whose notice period has passed, moves the balance to the successor once a wind-down is complete, and tells the identity service which people were barred so their passes are revoked. If the cranker stops, nothing is lost.
-- **The member command line** (`scripts/member.ts`): everything a member can do in the app (see their standing, request, co-sign, repay, release an escrow, close an expired request, veto or finalise a recovery, donate), from a terminal, against the blockchain alone, paying the small network fee themselves. It is the supported path when our website or the sponsor is down. Joining and recovering still need the identity service, because they need its signatures.
+- **The cranker**: a scheduled job that does, on time, what anyone is allowed to do: it settles loans past the cutoff, collects what settled loans owe the fund from their escrows, releases what co-signers are owed (from escrows and from the fund, creating their token account at the fund's expense when needed), closes expired requests, finalises recoveries whose delay has passed, applies settings changes whose notice period has passed, moves the balance to the successor once a wind-down is complete, and tells the identity service who is barred and until when. If the cranker stops, nothing is lost: every step can be done by anyone.
+- **The member command line** (`scripts/member.ts`): everything a member can do in the app (see their standing, request, co-sign, repay, settle and pay back, collect, release what a co-signer is owed, close an expired request, veto or finalise a recovery, donate), from a terminal, against the blockchain alone, paying the small network fee themselves. It is the supported path when our website or the sponsor is down. Joining and recovering still need the identity service, because they need its signatures.
 
-**Outages across a cutoff.** When our servers or the network were down across a loan's cutoff, the operator can see which loans were affected and the bar on a borrower who was recorded late through no fault of theirs is a matter of the operator's judgement, not the program's: the program cannot lift a bar, so the remedy is to say so publicly and to take it into account for that person's future caps. We would rather state this limit than pretend the code handles fairness.
+**Outages across a cutoff.** When our servers or the network were down across a loan's cutoff, the money is unaffected: a borrower who pays back right after the outage lands exactly where a borrower who paid before it would have, less the cap credit. What differs is the bar. The operator publishes which cutoffs the outage covered, and for each affected borrower who pays back promptly, lifts the bar with that reason, in public. The cost of an outage is that review, not money, and section 9 counts it.
+
+**Appeals.** A member who thinks a bar is wrong writes to the operator. The operator's decision is one of: do nothing, lift the bar (public, with the reason), or, where a pattern shows the durations are wrong, schedule different ones for future loans. The operator keeps a written log; the hashes on chain point into it. While barred, a member keeps every right that is not a new loan or guarantee: they can repay, pay back, collect what they are owed, recover a lost wallet and donate.
 
 ## 7. Security and testing
 
 - **Public source, verifiable on chain.** The program, the app, the identity service, the sponsor policy and every script are published under the Apache License 2.0 in the project repository, and the deployed program can be checked against a tagged build (appendix). Every loan, repayment, release and donation is recorded on the blockchain for anyone to check.
 - **Checked math.** Every calculation uses overflow-safe arithmetic. If a number would go out of range, the transaction fails instead of producing a wrong result. The code contains no fee or interest fields at all.
-- **Security review.** An internal review of the program is published in [`docs/audit.md`](./audit.md), findings GF-01 to GF-20. The version 3 findings are the ones this paper is built around: the default race (fixed by deadline-based lateness), pushed refunds that a frozen account could block (fixed by claims), unbounded collusion and exposure (fixed by the caps), no emergency stop (fixed by the pause and the minimum notice), requests that never expired, the issuer as a financial authority (now two keys, a delay and a veto), and a credential-derived identifier on chain (now a random id). An independent audit is planned before any real-money launch.
-- **What the tests check**, rather than how many there are: that the money in the fund always equals gifts plus repayments plus recovered escrow minus loans out minus anything moved to the successor; that every token ever handed out is in the fund, an escrow, a wallet or the successor; that while a loan is open its escrow holds exactly the deposit, and once closed it holds exactly what is owed back until claimed; that eligibility, caps, exposure and guarantees always sit with the right person and never exceed their limits; that no two open loans guarantee each other; that nothing is lent while paused; that a late repayment is recorded as late exactly when it landed after the cutoff; that settings change only through an announced and applied change and never below the minimum notice; and that a wind-down, once in effect, never reverses. These are checked after every step of thousands of random sequences of operations, with clock jumps across deadlines, in the program's property test, and in the scenario tests of the program, the web app's own transaction code, the identity service and the sponsorship policy. On a local copy of Solana's test network the whole system runs end to end on every change: a fund is created, passes are issued by the real gateway program, the loan cycle runs with a cancellation, a late repayment, a recovery with a veto and a finalisation, an expired request, a pause, a settings change across a time jump, a default with a claim to a replaced wallet, a wind-down with a sweep; the sponsored flows run against a real sponsor, directly and through the policy, checking that users paid nothing, the sponsor paid exactly what it should, and that the policy refused what it should; the identity flow runs from the wallet's signed proof to a sponsored join, a linked document, a recovery, a declined and an out-of-state check and a ban; and the cranker does its rounds.
+- **Security review.** An internal review of the program is published in [`docs/audit.md`](./audit.md), findings GF-01 to GF-26. The version 4 findings are the ones this paper is built around: the default race that version 3 had only narrowed (closed: no repayment after the cutoff, one settlement path, pay-back afterwards), settlement that pushed money and so could be blocked by a frozen escrow (now entitlements, collected when they can be), the issuer and recovery keys in one service (the recovery key moved out), a cap that grew on any repayment (seasoned and spaced), bars with no remedy (lift, restitution, access to what you are owed while barred), and a wind-down that could strand entitlements (it leaves them in place). An independent audit is planned before any real-money launch.
+- **What the tests check**, rather than how many there are: that the money in the fund always equals gifts plus repayments plus collected escrow plus pay-backs minus loans out minus anything moved to the successor minus reimbursements paid; that the fund always holds at least what co-signers are owed from it; that every token ever handed out is in the fund, an escrow, a wallet or the successor; that while a loan is open its escrow holds exactly the deposit, and once settled it holds exactly what the fund and the co-signer are owed from it until each collects; that the three entitlement totals always equal the sums over the loans; that the principal out on loan equals the sum over open loans and never exceeds the ceiling; that eligibility, caps, exposure and guarantees always sit with the right person and never exceed their limits; that no two open loans guarantee each other; that nothing is lent while paused; that no loan is repaid after its cutoff and every settled loan was settled after it; that a loan is "paid back" exactly when its whole shortfall is; that every loan carries the bar durations the pool had when it opened; that settings change only through an announced and applied change and never below the minimum notice; and that a wind-down, once in effect, never reverses. These are checked after every step of thousands of random sequences of operations, with clock jumps across deadlines, in the program's property test, and in the scenario tests of the program (including a frozen escrow, the settle-and-pay-back table against the scheduled job, partial pay-backs and the order in which they reach the fund and the co-signer, the bar relaxation rules, seasoning, the ceiling, the lift), the web app's own transaction code, the identity service and the sponsorship policy. On a local copy of Solana's test network the whole system runs end to end on every change: a fund is created, passes are issued by the real gateway program, the loan cycle runs with a cancellation, a refused late repayment, a settlement, a collection, a pay-back in two instalments with the bars relaxing, a lifted bar, a recovery proposed by the operator's tool with a veto and a finalisation, an expired request, a pause, a settings change across a time jump, a wind-down with a sweep; the sponsored flows run against a real sponsor, directly and through the policy, checking that users paid nothing, the sponsor paid exactly what it should, and that the policy refused what it should; the identity flow runs from the wallet's signed proof to a sponsored join, a linked document, a recovery through the operator's tool, a declined and an out-of-state check, a permanent and a temporary bar; and the cranker does its rounds.
 
 ## 8. Roadmap
 
@@ -222,18 +246,20 @@ Four pieces of software run beside the program, all published and all replaceabl
 
 Good Faith has no revenue. Capital lost to defaults and the cost of running the fund are both paid from gifts. [`docs/economics.md`](./economics.md) has the model, the definitions, and every table; the headline numbers at our launch assumptions (a $100,000 fund, 80% out on loan, $300 average loan, a 120-day cycle, a fifth of the principal repaid before a default, 25% escrow, where the "default rate" is the share of loans made in a cycle that end in default):
 
-| default rate | capital lost per year | gifts needed per year, all costs in | cost to donors per completed loan | years for the fund to halve with no gifts |
-|---|---|---|---|---|
-| 2% | $2,700 | $39,500 | $50 | 25 |
-| 5% (base) | $6,700 | $43,500 | $57 | 10 |
-| 10% | $13,400 | $50,200 | $69 | 5 |
-| 15% | $20,100 | $56,900 | $83 | 3 |
+| default rate | capital lost per year | gifts needed per year, all costs in | cost to donors per completed loan | per person (two loans a year) | years for the fund to halve, capital only | years the fund lasts paying its own way |
+|---|---|---|---|---|---|---|
+| 2% | $2,700 | $39,500 | $50 | $99 | 25 | 2.1 |
+| 5% (base) | $6,700 | $43,500 | $57 | $113 | 10 | 1.8 |
+| 10% | $13,400 | $50,200 | $69 | $138 | 5 | 1.4 |
+| 15% | $20,100 | $56,900 | $83 | $165 | 3 | 1.0 |
 
-Running costs are about $36,900 a year at those assumptions, five times the capital loss: identity checks, the sponsor's unrecoverable rent and fees, hosting, support, disputes, fraud response and bookkeeping recur ($15,200 a year); the audit, legal work and development are paid once and spread over three years ($21,700 a year). A completed $300 loan costs the donors about $57. The same yearly gifts handed out as $300 grants would reach 145 people; as loans they reach about 770 completed borrowers a year, because the money comes back. That ratio is the case for lending rather than giving, and the default rate is what decides it.
+Two columns need reading together. "Years to halve" counts only the capital lost to defaults, as if someone else paid the running costs; "paying its own way" has the fund pay both, and that is the honest figure for a fund with no backer: under two years at the base assumptions. Running costs are the reason, about $36,900 a year when the one-off items are spread over three years, five times the capital loss: identity checks, the sponsor's unrecoverable rent and fees, hosting, support, disputes, fraud response and bookkeeping recur ($15,200 a year); the audit, legal work and development are paid once ($65,000). In cash, the first year needs about $86,900 and each later year about $21,900.
 
-**Bounded bad cases**, from the same model: one cycle at a 30% default rate (a local shock) costs about $13,200; a compromised issuer found after three days can lend at most $15,000 to fake members and lose at most $11,250 under the launch caps ($22,500 and $16,875 without the daily cap); a thousand abusive wallets cost the sponsor about $3,600 a day; an outage across cutoffs costs no money, only fairness to the two or so members whose deadline fell inside it.
+A completed $300 loan costs the donors about $57, a person about $113 (we assume two loans a year per borrower; the model turns loans into people rather than counting a person twice). Lending against giving, with the same money on both sides: over ten years the endowment plus the gifts the fund needs come to about $535,000; as $300 grants that reaches about 1,800 people once; as loans it reaches about 3,900 people (7,700 completed loans), and the $100,000 fund is still there at the end. Two caveats: a grant needs no co-signer, no deposit and no bar, so the two reach different people, not only different numbers; and a loan's benefit is the use of the money for a few months, a grant's is the money itself. The default rate is what decides the ratio.
 
-**Collusion.** A borrower and co-signer who never intend to repay walk away with the loan minus the escrow: $225 on a $300 loan at 25% escrow, and $113 while the borrower is on the $150 first-loan cap. It costs both of them their eligibility for years, a verified ID on record, and the exposure limits keep any one pair from scaling it. The default rate and the share repaid before default are the two numbers we most need to measure after launch.
+**Stress scenarios**, from the same model, with their assumptions, because they are scenarios and not bounds: one cycle at a 30% default rate (a local shock) costs about $13,200; a compromised issuer contained within three days can lend up to $20,000 to fake members and lose up to $15,000 under the launch caps (the daily cap is a fixed window, so three days can span four of them; a week to notice it reaches the $25,000 ceiling on money out, $18,750 lost; $22,500 and $16,875 with no daily cap at all), and the figure that decides it is how fast the pause is pulled, which is the operator's, not the program's; a thousand abusive wallets in a day cost the sponsor about $720, because the fund-wide daily budget lets 200 new wallets in (about $3,600 with the per-wallet caps alone); an outage across cutoffs costs no money, only the review of the two or so settlements it caused.
+
+**Collusion is limited, not prevented.** Two people cannot guarantee each other, but three can form a ring with no reciprocal pair: each borrows once with the next as co-signer. On the first-loan cap that takes $338 ($113 each); if all three had grown to the $500 cap, $1,125. Each person's one loan and one guarantee fit the $1,000 exposure limit. It costs each of them their eligibility for years, a verified ID on record, and the ring cannot repeat with the same people. The default rate, the share repaid before a settlement and the share paid back after one are the numbers we most need to measure after launch.
 
 ## 10. Risks
 
@@ -244,8 +270,9 @@ Please read these before donating, borrowing or co-signing.
 - **Regulatory change.** Laws and regulator views can change. Our reading of Texas law could be wrong or could be overtaken by new rules, which might force changes or a shutdown. The wind-down path exists so that a shutdown is orderly.
 - **Stablecoin risk.** USDC could lose its $1 value, and its issuer can freeze any USDC account, including yours, the fund's and an escrow, under legal orders. A frozen escrow no longer blocks a loan from closing, but the money in it stays frozen.
 - **Identity risk.** The identity partner could decline people wrongly, change terms or go away; our keys could be compromised (section 4 says what each can and cannot do, and section 9 what it could cost). A stored fingerprint, though keyed and off chain, is still data about you that could be lost in a breach of our server. Duplicate detection is not proof of uniqueness.
-- **Recovery risk.** A recovery proposal you do not notice within the delay cannot be vetoed. The app shows pending recoveries and the service holds requests for review first, but the protection depends on someone looking.
-- **Network, operator and sponsor risk.** Solana, Good Faith's servers (identity service, cranker, proxy) or the fee sponsor could go down, pausing joining, borrowing or sponsorship. Repayment, default, releases and vetoes never depend on our servers: they can always be done directly on chain with the member command line, and if only the sponsor is down you can act by paying the small network fee yourself. An outage across your cutoff can record you as late.
+- **Recovery risk.** A recovery proposal you do not notice within the delay cannot be vetoed. The app shows pending recoveries, the operator reviews every request before signing, and a notice goes to the contact you gave; but the protection depends on someone looking, and a member who gave no contact and never opens the app has only the operator's check.
+- **Network, operator and sponsor risk.** Solana, Good Faith's servers (identity service, cranker, proxy) or the fee sponsor could go down, pausing joining, borrowing or sponsorship. Repayment, settlement, pay-back, releases and vetoes never depend on our servers: they can always be done directly on chain with the member command line, and if only the sponsor is down you can act by paying the small network fee yourself. An outage across your cutoff means your loan is settled and you are barred until you pay back and the operator lifts the bar.
+- **Upgrade risk.** During the pilot the upgrade multisig can change the program, with seven days' notice. Every guarantee in this paper is subject to that until the key is removed (section 5).
 - **Fee-sponsor funding.** The sponsor is a wallet we keep topped up. If it runs dry, users pay their own network fees until it is refilled.
 - **No deposit insurance.** Wallets and the loan fund are not covered by FDIC insurance.
 
@@ -259,7 +286,9 @@ Everything below is meant to be checked, not believed. Items marked *to be fille
 - **Deployment status:** no public deployment yet. The program runs on a local fork of the test network in automated tests. *Devnet program id, pool account and keys: to be filled at deploy.* The id declared in the source is `BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd`; the devnet deployment will use a fresh keypair and the id will be published here.
 - **Release tag and build hash:** *to be filled at deploy.* The program is built with `anchor build --arch v2` from a tagged commit; the SHA-256 of `target/deploy/goodfaith.so` is published with the tag, and `solana program dump` of the deployed account must hash to the same value.
 - **Upgrade authority:** *to be filled at deploy*: the upgrade multisig and its delay during the pilot; "none" once the program is made permanent (`solana program show` prints "Upgrade authority: none").
-- **Pool account, mint, administrator, pause key, issuer, recovery key, every setting:** read from the pool account on chain (`Pool` layout in the specification); the app pins the pool address, the mint, the gatekeeper network and the administrator in its configuration and refuses anything else. The member command line reads the same account.
+- **Pool account, mint, administrator, pause key, issuer, recovery key, every setting:** read from the pool account on chain (`Pool` layout in the specification); the app pins the pool address, the mint, the gatekeeper network and the administrator in its configuration and refuses anything else. The member command line reads the same account. Every loan carries its own term, grace period, deposit rate and bar durations, so what applies to a loan is read from the loan, not from today's settings.
+- **Bar lifts:** every `BarLifted` event carries the hash of the operator's written reason; the operator publishes the reasons so the hashes can be checked.
 - **Gatekeeper network and keys:** the network's public key and the issuer, recovery and pause keys are published with the deployment; passes can be looked up on chain for any wallet.
-- **Audit scope and status:** internal review published in [`docs/audit.md`](./audit.md) (findings GF-01 to GF-20); *independent audit: to be filled when complete.*
+- **Audit scope and status:** internal review published in [`docs/audit.md`](./audit.md) (findings GF-01 to GF-26); *independent audit: to be filled when complete.*
+- **Upgrade multisig:** *to be filled at deploy*: its members, threshold and delay, where queued upgrades can be seen, and the published exit criteria (section 5).
 - **Tests:** the program's scenario and property tests (`cargo test -p goodfaith`), the app's unit tests and simulator scenarios (`npm test`, `npm run test:svm` in `app/`), and the end-to-end scripts in `scripts/`, all run by the repository's continuous integration on every change; what they check is listed in section 7.

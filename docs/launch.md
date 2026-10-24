@@ -22,7 +22,7 @@ custodians where the deployment allows). The fork and CI use one key for everyth
 | deploy / upgrade | the program keypair (`target/deploy/goodfaith-keypair.json`) and the upgrade authority | `anchor deploy`; later a multisig with a timelock, then removed |
 | pool authority | the administrator | `scripts/launch.ts` (payer, first authority), `scripts/admin.ts`; hand to a multisig with `propose-authority` |
 | issuer | `ISSUER_SECRET` in the identity service | co-signs registrations and recovery proposals |
-| recovery | `RECOVERY_SECRET` in the identity service | co-signs recovery proposals |
+| recovery | `RECOVERY_KEYPAIR` on the operator's machine for `npm run recovery`; never the web service | co-signs recovery proposals the service prepared |
 | pause | `pause_authority` | the one person who can stop new lending at once |
 | gatekeeper | `GATEKEEPER_SECRET` in the identity service | issues and revokes passes on the fund's network |
 | sponsor | `KORA_PRIVATE_KEY` for Kora | pays fees and rent; a Turnkey or Privy signer in hosting |

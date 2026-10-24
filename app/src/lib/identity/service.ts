@@ -350,6 +350,21 @@ export class IdentityService {
     if (member) {
       view.next = member.retired ? "blocked" : "done";
       if (member.retired) view.reason = "This wallet was replaced. Use the wallet now linked to your membership.";
+      // A member sees their own standing: a bar (and its end) and any move of the membership in flight.
+      const p = await fetchPerson(this.d.rpc, member.person);
+      if (p) {
+        const now = await this.chainNow();
+        view.person = {
+          onChain: true,
+          currentWallet: p.wallet,
+          isThisWallet: p.wallet === wallet,
+          ineligible: !eligibleAt(p, now),
+          barredUntil: !eligibleAt(p, now) ? Number(p.ineligibleUntil) : 0,
+          pendingWallet: p.pendingWallet,
+          pendingWalletAt: Number(p.pendingWalletAt),
+          requestedAt: null,
+        };
+      }
       return view;
     }
     if (rec?.status === "pending" || rec?.status === "review") view.next = "wait";

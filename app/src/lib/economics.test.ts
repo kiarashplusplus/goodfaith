@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   balanceSheet,
   BASE,
+  cashRunway,
+  collusionRing,
+  compareWithGrants,
   correlatedShock,
   evaluate,
   issuerCompromise,
@@ -35,12 +38,41 @@ describe("economic model", () => {
     expect(evaluate({ ...BASE, defaultRate: 0 }).yearsToDepletion).toBe(Infinity);
     expect(() => evaluate({ ...BASE, fund: 0 })).toThrow();
   });
-  it("prices a completed loan and compares with grants", () => {
+  it("prices a completed loan and a borrower, and compares like with like against grants", () => {
     const r = evaluate(BASE);
     expect(r.completedLoansPerYear).toBeCloseTo(r.loansPerYear * 0.95);
+    expect(r.distinctBorrowersPerYear).toBeCloseTo(r.completedLoansPerYear / 2);
     expect(r.subsidyPerCompletedLoan).toBeCloseTo(r.donationsNeededPerYear / r.completedLoansPerYear);
+    expect(r.subsidyPerBorrower).toBeCloseTo(2 * r.subsidyPerCompletedLoan);
     expect(r.grantsInsteadPerYear).toBeCloseTo(r.donationsNeededPerYear / 300);
-    expect(r.completedLoansPerYear).toBeGreaterThan(r.grantsInsteadPerYear); // loans reach more people than grants of the same money
+    // year one pays the one-off items in full; later years only the recurring ones
+    expect(r.cashYearOne).toBeCloseTo(r.lossPerYear + r.recurringPerYear + 65_000);
+    expect(r.cashLaterYears).toBeCloseTo(r.lossPerYear + r.recurringPerYear);
+    expect(r.cashYearOne).toBeGreaterThan(r.donationsNeededPerYear);
+    // over a horizon, the same endowment and gifts as grants versus as loans (people, not loans)
+    const c = compareWithGrants(BASE, 10);
+    expect(c.moneyIn).toBeCloseTo(100_000 + 10 * r.donationsNeededPerYear);
+    expect(c.grants).toBeCloseTo(c.moneyIn / 300);
+    expect(c.borrowers).toBeCloseTo(10 * r.distinctBorrowersPerYear);
+    expect(c.fundLeft).toBe(100_000);
+    expect(c.borrowers).toBeGreaterThan(c.grants);
+    // the fund paying its own way runs out, and sooner than the capital-only half-life suggests
+    expect(r.cashRunwayYears).toBeLessThan(r.yearsToHalf);
+    expect(cashRunway({ ...BASE, fund: 1_000_000 })).toBeGreaterThan(cashRunway(BASE));
+    expect(
+      cashRunway({
+        ...BASE,
+        defaultRate: 0,
+        costs: {
+          ...BASE.costs,
+          identityCheck: 0,
+          newMembersPerYear: 0,
+          sponsorPerLoan: 0,
+          recurring: { hosting: 0, support: 0, disputes: 0, fraudResponse: 0, bookkeeping: 0 },
+          oneOff: { audit: 0, legal: 0, development: 0 },
+        },
+      }),
+    ).toBe(50);
   });
   it("balance sheet and trajectory", () => {
     const b = balanceSheet(BASE);
@@ -59,27 +91,53 @@ describe("economic model", () => {
     const shock = correlatedShock(BASE, 0.3);
     expect(shock.shockCycleLoss).toBeCloseTo(evaluate({ ...BASE, defaultRate: 0.3 }).lossPerCycle);
     expect(shock.yearLoss).toBeGreaterThan(evaluate(BASE).lossPerYear);
+    // three days to contain spans four one-day windows in the worst case (the first one straddled)
     const capped = issuerCompromise({
       firstLoanCap: 150,
       escrowRate: 0.25,
       disbursementCap: 5_000,
       windowDays: 1,
-      detectionDays: 3,
+      containmentDays: 3,
       fakeLoansPerDay: 50,
     });
-    expect(capped).toEqual({ maxDisbursed: 15_000, maxLoss: 11_250, fakeLoans: 100 });
+    expect(capped).toEqual({ maxDisbursed: 20_000, maxLoss: 15_000, fakeLoans: 133, windows: 4 });
+    const ceiling = issuerCompromise({
+      ...{ firstLoanCap: 150, escrowRate: 0.25, disbursementCap: 5_000, windowDays: 1, containmentDays: 3, fakeLoansPerDay: 50 },
+      outstandingCeiling: 25_000,
+      outstandingNow: 20_000,
+    });
+    expect(ceiling.maxDisbursed).toBe(5_000);
     const uncapped = issuerCompromise({
       firstLoanCap: 150,
       escrowRate: 0.25,
       disbursementCap: 0,
       windowDays: 1,
-      detectionDays: 3,
+      containmentDays: 3,
       fakeLoansPerDay: 50,
     });
     expect(uncapped.maxLoss).toBeGreaterThan(capped.maxLoss);
     const abuse = sponsorAbuse({ wallets: 1_000, days: 1, dailyTxsPerWallet: 40, atasPerWallet: 12, txCost: 0.001, ataRent: 0.3 });
     expect(abuse.perWallet).toBeCloseTo(40 * 0.001 + 12 * 0.3);
     expect(abuse.maxCost).toBeCloseTo(abuse.perWallet * 1_000);
-    expect(outageAcrossCutoff(BASE, 24).loansWithDeadlineInside).toBeCloseTo(evaluate(BASE).loansPerYear / 365);
+    const budgeted = sponsorAbuse({
+      wallets: 1_000,
+      days: 1,
+      dailyTxsPerWallet: 40,
+      atasPerWallet: 12,
+      txCost: 0.001,
+      ataRent: 0.3,
+      dailyBudgetTx: 2_000,
+      dailyNewWallets: 200,
+    });
+    expect(budgeted.newWallets).toBe(200);
+    expect(budgeted.txs).toBe(2_000);
+    expect(budgeted.maxCost).toBeCloseTo(2_000 * 0.001 + 200 * 12 * 0.3);
+    const outage = outageAcrossCutoff(BASE, 24);
+    expect(outage.loansWithDeadlineInside).toBeCloseTo(evaluate(BASE).loansPerYear / 365);
+    expect(outage.reviewCost).toBeCloseTo(outage.loansWithDeadlineInside * 0.5 * 40);
+    const ring = collusionRing({ people: 3, loanCap: 150, escrowRate: 0.25, exposure: 1_000 });
+    expect(ring).toEqual({ feasible: true, loans: 3, payoff: 337.5, fundLoss: 337.5, perPerson: 112.5 });
+    expect(collusionRing({ people: 2, loanCap: 150, escrowRate: 0.25, exposure: 1_000 }).feasible).toBe(false);
+    expect(collusionRing({ people: 3, loanCap: 600, escrowRate: 0.25, exposure: 1_000 }).feasible).toBe(false);
   });
 });

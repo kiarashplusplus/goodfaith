@@ -66,21 +66,27 @@ proposal also needs the pool's recovery authority). The app's `/api/identity/*` 
   the wallet on our network with `GATEKEEPER_SECRET`. Only the opaque id goes on chain; the fingerprint, the wallets,
   the inquiry id and a status stay in the store (`IDENTITY_DB_PATH`, Node's built-in SQLite; `memory` for throwaway
   runs).
-- `status`: where a wallet stands and what comes next (`verify`, `wait`, `join`, `recover`, `pending`, `finalize`,
-  `done`, `blocked`).
+- `status`: where a wallet stands and what comes next (`verify`, `wait`, `join`, `recover`, `review`, `pending`,
+  `finalize`, `done`, `blocked`), with the person's bar and its end when there is one.
 - `join`: the `register_member` transaction, built for the fee sponsor when one is configured and signed with
   `ISSUER_SECRET`; the browser adds the wallet's signature and sends it (`sendPrepared` in `lib/tx.ts`).
-- `rebind`: wallet recovery in three steps. A person who verifies again from a new wallet gets `recover`: the first
-  call records the request (202 with `readyAt` while `RECOVERY_REVIEW_SECONDS` run; DELETE withdraws it), then the
-  route returns `propose_rebind` signed by the issuer and the recovery authority (`RECOVERY_SECRET`; without it the
-  service refuses to propose). The old wallet may veto during `pool.recoveryDelaySeconds`; once the delay has passed
-  the same route returns `finalize_rebind`, paid by the new wallet (the cranker finalises due recoveries too). The old
-  wallet is retired on chain and open loans, guarantees, eligibility and escrow claims follow the person.
+- `rebind`: wallet recovery. A person who verifies again from a new wallet gets `recover`: the call records a request
+  for the operator (202 with `requestedAt`; DELETE withdraws it) and a notice goes to the member's contact. The
+  operator's recovery CLI (`scripts/recovery.ts`, the only holder of the recovery key) reads the queue
+  (`GET /api/identity/recoveries`, admin key), asks for the issuer-signed `propose_rebind` built for the recovery key
+  as fee payer (`POST /api/identity/recoveries/:personId`), signs, sends and reports it (the member is told about the
+  veto window), or rejects it (DELETE). The old wallet may veto during `pool.recoveryDelaySeconds`; once the delay
+  has passed `rebind` returns `finalize_rebind`, paid by the new wallet (the cranker finalises due recoveries too).
+  The old wallet is retired on chain and open loans, guarantees, eligibility and claims follow the person. A barred
+  person may recover too.
 - `link`: a verified wallet re-checks with a renewed or second document; the new fingerprint joins the same person
   (refused when it already belongs to another membership). Fingerprint keys are versioned (`PERSON_HASH_SECRETS`)
   so a rotation re-links people on their next check instead of orphaning them. `docs/identity.md` has the details.
-- `ban` (operator, `IDENTITY_ADMIN_KEY`, by `personId` or `wallet`): after a default, revokes the passes of every
-  wallet the person verified with and refuses future checks. Eligibility itself is on chain (`ineligible_until`).
+- `ban` (operator, `IDENTITY_ADMIN_KEY`, by `personId` or `wallet`, with `until` as the chain has it): mirrors a bar
+  the chain set. A time-bounded bar is recorded and lapses by itself; a permanent one revokes the passes of every
+  wallet the person verified with and refuses future checks; `until` in the past lifts the record (the admin CLI
+  sends it after `lift-bar`). Each change notifies the member (`notify.ts`: the log, or `NOTIFY_WEBHOOK_URL`).
+  Eligibility itself is on chain (`ineligible_until`).
 
 All of it is behind `lib/identity/provider.ts`; `persona.ts` is the production provider (inquiry creation with a
 one-time link, `Persona-Signature` HMAC over `t.body`, configurable field keys), `mock.ts` the test one. Unit tests

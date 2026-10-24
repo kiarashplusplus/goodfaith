@@ -1,4 +1,4 @@
-# Good Faith — Program Spec (v3, devnet)
+# Good Faith — Program Spec (v4, devnet)
 
 Interest-free, fee-free loans from a donated loan fund. Borrowers repay exactly what they borrowed. Each loan needs a co-signer who puts part of the loan amount in escrow. Texas residents only, verified by the fund's own identity issuer, which vouches for one person per wallet on chain.
 
@@ -21,7 +21,7 @@ Plain English everywhere: no religious or non-English finance terms in code, UI 
 | max_guarantees_per_member | u8 | per person |
 | cosigner_escrow_bps | u16 | 0..=10000, default 2500 |
 | loan_count | u64 | next loan id |
-| total_donated, total_lent, total_repaid, total_recovered, total_lost | u64 | stats |
+| total_donated, total_lent, total_repaid, total_recovered, total_lost | u64 | stats; `total_lost` falls again as restitution comes in |
 | bump, vault_bump | u8 | |
 | pending_authority | Option<Pubkey> | key named by `propose_authority`, cleared on accept, cancel or freeze |
 | issuer | Pubkey | key that co-signs `register_member` and `propose_rebind`; the zero key means suspended |
@@ -37,6 +37,10 @@ Plain English everywhere: no religious or non-English finance terms in code, UI 
 | paused | bool | no new requests or co-signs while true |
 | window_start, window_disbursed | i64, u64 | the current disbursement window and what was lent in it |
 | pending_claims | u64 | Σ `refund_pending` over closed loans: escrow owed to co-signers, waiting in escrow accounts |
+| recoveries_pending | u64 | Σ `recovery_pending` over settled loans: escrow owed to the fund, waiting in escrow accounts for `collect_recovery` |
+| vault_claims | u64 | Σ `reimbursement_pending`: owed to co-signers out of the vault after a restitution; a sweep leaves it behind |
+| outstanding_principal | u64 | Σ (principal − repaid) over Active loans |
+| total_restituted, total_reimbursed | u64 | paid back after settlements; reimbursements paid to co-signers from the vault |
 | recovery_delay_seconds | i64 | 0..=30 days; veto window of a wallet recovery |
 | request_ttl_seconds | i64 | 1 s..=90 days; a request expires after this |
 | first_loan_cap | u64 | the cap for a new or recovered membership during the cooldown, and the base of the graduated cap |
@@ -45,9 +49,14 @@ Plain English everywhere: no religious or non-English finance terms in code, UI 
 | max_exposure_per_person | u64 | open principal borrowed plus principal guaranteed, per person |
 | disbursement_window_seconds | i64 | 1 s..=30 days |
 | disbursement_cap_per_window | u64 | principal the pool lends per window; 0 = no cap |
-| default_ban_seconds, late_ban_seconds, cosigner_ban_seconds | i64 | ≥ 0; `i64::MAX` = for good; 0 = no bar |
+| default_ban_seconds, late_ban_seconds, cosigner_ban_seconds | i64 | ≥ 0; `i64::MAX` = for good; 0 = no bar; copied onto each loan at opening |
+| seasoning_seconds | i64 | 0..=365 days; a repaid loan raises the cap only if it ran at least this long |
+| cap_step_interval_seconds | i64 | 0..=365 days; at most one cap step per person per this interval |
+| max_outstanding_principal | u64 | ceiling on `outstanding_principal`; 0 = none |
 
-**PoolParams** (argument of `initialize_pool` and `schedule_params`): every settings field above from `gatekeeper_network` to `cosigner_ban_seconds` (twenty-one fields). `validate()`: bps ≤ 10000; max_loan, max_term_days, max_guarantees_per_member, first_loan_cap, max_exposure_per_person > 0; max_term_days ≤ 3650; grace_days ≤ 365; timelock 0..=90 d; recovery delay 0..=30 d; request TTL 1 s..=90 d; cooldown 0..=365 d; window 1 s..=30 d; the three bans ≥ 0.
+**PoolParams** (argument of `initialize_pool` and `schedule_params`): every settings field above from `gatekeeper_network` to `max_outstanding_principal` (twenty-four fields). `validate()`: bps ≤ 10000; max_loan, max_term_days, max_guarantees_per_member, first_loan_cap, max_exposure_per_person > 0; max_term_days ≤ 3650; grace_days ≤ 365; timelock 0..=90 d; recovery delay 0..=30 d; request TTL 1 s..=90 d; cooldown 0..=365 d; window 1 s..=30 d; the three bans ≥ 0; seasoning and step interval 0..=365 d.
+
+**Vault equation**: `vault = total_donated + total_repaid + total_recovered + total_restituted − total_lent − total_swept − total_reimbursed`, and `vault ≥ vault_claims` always.
 
 **Person** — PDA `["person", pool, person_id]`. One verified human. Eligibility, the open loan, the guarantees and the loan cap live here, so they follow the person across wallets.
 | person_id | [u8; 32] | opaque id drawn at random by the issuer service; the credential behind it never reaches the chain |
@@ -55,14 +64,16 @@ Plain English everywhere: no religious or non-English finance terms in code, UI 
 | active_loan | Option<Pubkey> |
 | active_guarantees | u8 |
 | active_guarantee_amount | u64 | principal of the Active loans this person co-signs |
-| completed_loans | u16 | loans repaid on time (RepaidLate does not count) |
+| completed_loans | u16 | loans repaid by the deadline that ran at least `seasoning_seconds`, counted at most once per `cap_step_interval_seconds`; settled loans never count |
 | ineligible_until | i64 | 0 eligible; `i64::MAX` barred for good; else barred until this time. `eligible(now) = now ≥ ineligible_until` |
 | restricted_until | i64 | until this time the person is on `first_loan_cap` |
 | pending_wallet | Option<Pubkey> | a recovery in flight: the wallet the person moves to |
 | pending_wallet_at | i64 | when `finalize_rebind` may run |
 | bump | u8 |
+| last_cap_step_at | i64 | when `completed_loans` last went up |
+| unrestituted_losses | u8 | settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts only at 0 |
 
-`loan_cap(pool, now) = min(max_loan, first_loan_cap)` while `now < restricted_until`, else `min(max_loan, first_loan_cap + completed_loans × loan_cap_step)`. `bar(now, seconds)` sets `ineligible_until = max(ineligible_until, now + seconds)` and is a no-op for 0: a bar is never shortened by a later, lighter one.
+`loan_cap(pool, now) = min(max_loan, first_loan_cap)` while `now < restricted_until`, else `min(max_loan, first_loan_cap + completed_loans × loan_cap_step)`. `bar(now, seconds)` sets `ineligible_until = max(ineligible_until, now + seconds)` and is a no-op for 0: a bar is never shortened by a later, lighter one. `relax_bar(from, to)` replaces `ineligible_until` by `to` only when it equals `from` (the bar a particular loan set); `lift_bar` is the one instruction that ends a bar outright.
 
 **Member** — PDA `["member", pool, wallet]`. Wallet → person link. Never closed, so a wallet can never be bound to a second person.
 | wallet | Pubkey |
@@ -70,20 +81,27 @@ Plain English everywhere: no religious or non-English finance terms in code, UI 
 | retired | bool | true once the wallet was replaced |
 | bump | u8 |
 
-**Loan** — PDA `["loan", pool, loan_id.to_le_bytes()]`, 237 bytes
+**Loan** — PDA `["loan", pool, loan_id.to_le_bytes()]`, 317 bytes
 | id | u64 |
 | borrower, cosigner | Pubkey | the wallets at opening |
 | rent_payer | Pubkey (gets rent back when escrow closes) |
 | principal, repaid, escrowed | u64 |
 | opened_at, due_at | i64 (unix seconds) |
 | grace_days | u16 | fixed at opening |
-| status | enum { Active, Repaid, Defaulted, RepaidLate } |
+| status | enum { Active, Repaid, Defaulted, Restituted } |
 | bump, escrow_bump | u8 |
 | borrower_person, cosigner_person | Pubkey | the people behind the wallets (memcmp offsets 157 and 189) |
 | closed_at | i64 | when the loan left Active (0 while open) |
 | refund_pending | u64 | escrow owed to the co-signer, still in the escrow account until `claim_escrow` |
+| shortfall | u64 | principal unpaid at settlement |
+| recovered | u64 | escrow applied to the shortfall at settlement (fixed then); `lost = shortfall − recovered` |
+| recovery_pending | u64 | of `recovered`, still in the escrow account until `collect_recovery` |
+| restituted | u64 | paid back after settlement, by or for the borrower |
+| reimbursement_pending | u64 | owed to the co-signer out of the vault (their used escrow, paid back by restitution) |
+| borrower_bar_until, cosigner_bar_until | i64 | the bars this loan set at settlement (0 none); relaxed when the loan is restituted |
+| default_ban_seconds, late_ban_seconds, cosigner_ban_seconds | i64 | copied from the pool at opening; later settings changes do not apply |
 
-`deadline = due_at + grace_days × 86400`: the last second at which a repayment is on time.
+`deadline = due_at + grace_days × 86400`: the last second at which a repayment is accepted. The state machine is `Active → Repaid` (repaid in full by the deadline) or `Active → Defaulted` (settled after it) `→ Restituted` (the whole shortfall paid back). While the escrow account exists it holds exactly `refund_pending + recovery_pending` for a settled loan (`escrowed` for an open one, `refund_pending` for a repaid one); it is closed to `rent_payer` when nothing waits in it.
 
 **LoanRequest** — PDA `["request", pool, borrower]`
 | borrower, cosigner | Pubkey |
@@ -106,13 +124,13 @@ Fund setup and governance
 5. `suspend_issuer()` — authority only, instant: `issuer = zero key`. No registrations or recovery proposals until a new issuer is applied through `schedule_params`. Existing members are unaffected.
 6. `pause_lending()` — `pause_authority` or authority, instant: `paused = true`; `request_loan` and `cosign_loan` refuse with `Paused`; everything else (repay, default, claims, cancel, expiry, recovery, donate, governance) continues. `resume_lending()` — authority only.
 7. `announce_wind_down()` — authority only; account `successor_vault` must hold the pool mint and must not be owned by the pool PDA (so not the vault or an escrow). Sets `wind_down_at = now + timelock_seconds`, `successor`. Refused while one is already announced. `cancel_wind_down()` — authority only, only before `wind_down_at`.
-8. `sweep_to_successor()` — anyone; requires the wind-down to be in effect (`NotWindingDown`), `active_loans == 0` (`LoansOutstanding`), a vault balance > 0 and `successor_vault == pool.successor`. Moves the whole vault balance; `total_swept += amount`; repeatable. Pending claims sit in escrow accounts, not the vault, so they never hold a sweep up and stay claimable afterwards.
+8. `sweep_to_successor()` — anyone; requires the wind-down to be in effect (`NotWindingDown`), `active_loans == 0` (`LoansOutstanding`), `vault balance − vault_claims > 0` and `successor_vault == pool.successor`. Moves `vault − vault_claims`; `total_swept += amount`; repeatable: a recovery collected after a sweep lands in the vault and a further sweep moves it. Entitlements never hold a wind-down up: escrow claims and recoveries sit in escrow accounts, and reimbursements owed from the vault are left behind for their co-signers.
 
 Once a wind-down is in effect: `donate`, `request_loan` and `cosign_loan` refuse with `WindingDown`; everything else continues.
 
 Membership and recovery
 9. `register_member(person_id)` — signers: wallet, payer (rent; fee sponsor, may equal wallet), issuer (`== pool.issuer`, else `Unauthorized`). Requires a valid gateway token for the wallet. Creates Person (`init`, so a second wallet for the same id fails) and Member (`init`, so a second person for the same wallet fails). `restricted_until = now + cooldown_seconds`.
-10. `propose_rebind()` — signers: new_wallet, issuer, recovery_authority (`== pool.recovery_authority`). The old wallet does not sign (lost keys). `person` is self-seeded; `pending_wallet` must be None (`RecoveryPending`); `new_wallet ≠ person.wallet`; a valid gateway token for the new wallet. Records `pending_wallet = new_wallet`, `pending_wallet_at = now + recovery_delay_seconds`. Nothing else changes: the old wallet keeps working.
+10. `propose_rebind()` — signers: issuer, recovery_authority (`== pool.recovery_authority`). Neither the old wallet (lost keys) nor the new one signs; the new wallet must hold a valid gateway token, which only the issuer service grants after a fresh check. `person` is self-seeded; `pending_wallet` must be None (`RecoveryPending`); `new_wallet ≠ person.wallet`. Records `pending_wallet = new_wallet`, `pending_wallet_at = now + recovery_delay_seconds`. Nothing else changes: the old wallet keeps working. Because the new wallet need not sign, the recovery key can be held by an operator away from the web service (`scripts/recovery.ts`).
 11. `veto_rebind()` — signer: `person.wallet` (the old wallet) or the authority; requires a pending recovery (`RecoveryNotPending`). Clears it.
 12. `finalize_rebind()` — anyone (payer covers the new Member's rent), once `now ≥ pending_wallet_at` (`RecoveryDelayNotElapsed`). `old_member` is the Member of `person.wallet` and must not be retired; `new_member` is created for `pending_wallet` (`init`: a wallet that already belongs to anyone, retired or not, is refused). Retires the old Member, `person.wallet = pending_wallet`, clears the pending fields, `restricted_until = now + cooldown_seconds`. Open loans, guarantees and eligibility stay with the person; escrow claims go to the person's current wallet.
 
@@ -120,37 +138,43 @@ Money
 13. `donate(amount)` — any signer; donor token account → vault. Non-refundable. amount > 0. Refused while winding down.
 14. `request_loan(amount, term_days, cosigner)` — signers: borrower, payer. Refused when `paused` or winding down. `borrower_person` (self-seeded, `wallet == borrower`, else `WalletNotBound`) eligible now (`Ineligible`), no active loan, gateway token valid. `cosigner_member` (PDA of `cosigner`) must exist, not be retired (`WalletRetired`) and belong to a different person (`SelfCosign`). 0 < amount ≤ `loan_cap` (`OverPersonalCap`) ≤ max_loan; `amount + active_guarantee_amount ≤ max_exposure_per_person` (`OverExposure`); 0 < term_days ≤ max_term_days. Creates LoanRequest with `expires_at` (one open request per borrower). No funds move.
 15. `cosign_loan(expected_amount, expected_term_days, max_escrow)` — signers: the named co-signer, payer. Refused when paused, winding down or `now > expires_at` (`RequestExpired`). Both Persons (self-seeded; `wallet` must match the request's borrower and the signing co-signer), distinct, eligible now, gateway tokens valid, borrower has no active loan and is within `loan_cap` and exposure, co-signer below `max_guarantees_per_member` and within exposure (`active loan principal + active_guarantee_amount + amount ≤ max_exposure_per_person`); no direct reciprocity: when `cosigner_person.active_loan` is Some, that loan must be passed as `cosigner_active_loan` (`MissingCosignerLoan`) and its `cosigner_person` must not be this borrower (`ReciprocalGuarantee`); request must still match the approved terms (`RequestMismatch`) and the escrow may not exceed `max_escrow` (`EscrowTooHigh`); amount/term within current limits; vault ≥ amount; disbursement window: when `now ≥ window_start + disbursement_window_seconds` the window rolls (`window_start = now`, `window_disbursed = 0`), then `window_disbursed + amount ≤ disbursement_cap_per_window` unless the cap is 0 (`OverDisbursementCap`).
-   - escrow = ceil(amount × bps / 10000) moved co-signer → escrow; vault → borrower `amount`. Loan created with id = loan_count (grace_days copied from the pool, persons recorded, `closed_at = 0`, `refund_pending = 0`), loan_count += 1, `active_loans += 1`, `window_disbursed += amount`, co-signer `active_guarantees += 1`, `active_guarantee_amount += amount`. LoanRequest closed to its rent_payer.
+   - The fund's ceiling: `outstanding_principal + amount ≤ max_outstanding_principal` unless that is 0 (`OverOutstandingCeiling`).
+   - escrow = ceil(amount × bps / 10000) moved co-signer → escrow; vault → borrower `amount`. Loan created with id = loan_count (grace_days and the three ban durations copied from the pool, persons recorded, `closed_at = 0`, every entitlement field 0), loan_count += 1, `active_loans += 1`, `outstanding_principal += amount`, `window_disbursed += amount`, co-signer `active_guarantees += 1`, `active_guarantee_amount += amount`. LoanRequest closed to its rent_payer. Exposure counts the full guaranteed principal (a concentration limit); the escrow is the collateral.
 16. `cancel_request()` — borrower or the named co-signer signs; closes LoanRequest to its rent_payer. `close_expired_request()` — anyone, once `now > expires_at` (`RequestNotExpired`); closes it to its rent_payer.
-17. `repay(amount)` — any signer pays from own token account → vault; 0 < amount ≤ principal − repaid; loan Active. Persons pinned by `loan.borrower_person` / `loan.cosigner_person`. No co-signer token account is touched. When fully repaid: `late = now > deadline`; status `Repaid` (and borrower `completed_loans += 1`) or `RepaidLate` (and borrower barred for `late_ban_seconds`); `closed_at = now`; `active_loan = None`; co-signer `active_guarantees −= 1`, `active_guarantee_amount −= principal`; `active_loans −= 1`; the whole escrow balance becomes `refund_pending` (`pending_claims += it`); when the escrow is empty it is closed to `rent_payer` at once.
-18. `mark_default()` — anyone, only when Active and `now > deadline`.
-    - shortfall = principal − repaid; recovered = min(escrow balance, shortfall) → vault; the rest stays in the escrow as `refund_pending` (`pending_claims += it`), or the escrow is closed to `rent_payer` when nothing is left.
-    - Defaulted; `closed_at = now`; borrower barred for `default_ban_seconds`; co-signer barred for `cosigner_ban_seconds` only if `lost = shortfall − recovered > 0`; guarantees and amount decremented; `active_loans −= 1`; `total_recovered += recovered`; `total_lost += lost`. `LoanDefaulted` carries both `ineligible_until` values and `cosigner_barred`.
-    - A late repayment and a default give the same financial result whichever lands first: the fund gets what is owed either way, the escrow leftover is owed to the co-signer either way; the only difference is the borrower's bar (late versus default) and the `completed_loans` count.
-19. `claim_escrow()` — anyone; loan not Active (`LoanNotActive`), `refund_pending > 0` (`NothingToClaim`); `cosigner_token` must be owned by `cosigner_person.wallet` (the current wallet) and hold the pool mint. Transfers `refund_pending`, closes the escrow to `rent_payer`, `pending_claims −= it`, `refund_pending = 0`. A frozen or closed co-signer token account therefore never blocks a loan from closing; the claim simply waits until an account exists.
+17. `repay(amount)` — any signer pays from own token account → vault; only while `now ≤ deadline` (`LoanPastDeadline` after it, whole or in part); 0 < amount ≤ principal − repaid; loan Active. Persons pinned by `loan.borrower_person` / `loan.cosigner_person`. No co-signer token account is touched. `outstanding_principal −= amount`. When fully repaid: status `Repaid`; `closed_at = now`; `active_loan = None`; the borrower's `completed_loans += 1` and `last_cap_step_at = now` only if `now − opened_at ≥ seasoning_seconds` and `now − last_cap_step_at ≥ cap_step_interval_seconds` (`Repaid.cap_credited`); co-signer `active_guarantees −= 1`, `active_guarantee_amount −= principal`; `active_loans −= 1`; the whole escrow balance becomes `refund_pending` (`pending_claims += it`); when the escrow is empty it is closed to `rent_payer` at once.
+18. `settle()` — anyone, only when Active and `now > deadline` (`NotYetDefaultable` before). **Moves no tokens.**
+    - shortfall = principal − repaid; recovered = min(escrow balance, shortfall); returned = escrow balance − recovered; lost = shortfall − recovered. Records `shortfall`, `recovered`, `recovery_pending = recovered`, `refund_pending = returned`, `restituted = 0`, `closed_at = now`; pool `recoveries_pending += recovered`, `pending_claims += returned`, `total_lost += lost`, `outstanding_principal −= shortfall`, `active_loans −= 1`. An empty escrow is closed to `rent_payer` at once unless it is frozen (then it simply stays).
+    - Defaulted; borrower barred for the loan's own `default_ban_seconds` (`borrower_bar_until`); co-signer barred for the loan's `cosigner_ban_seconds` only if `lost > 0` (`cosigner_bar_until`, `unrestituted_losses += 1`); guarantees and amount decremented. `LoanSettled` carries the amounts, both `ineligible_until` values, `cosigner_barred` and `escrow_closed`.
+    - Whoever moves first after the deadline, the outcome is the same: a borrower who wants to pay sends `settle` + `restitute` in one transaction and lands exactly where the cranker's settlement followed by a later restitution lands (same money to the fund and the co-signer, same bars, same relaxation). There is no path that closes a loan after the deadline with a lighter consequence.
+19. `collect_recovery()` — anyone; `recovery_pending > 0` (`NothingToCollect`); escrow → vault for `recovery_pending`; `total_recovered += it`; `recoveries_pending −= it`; `recovery_pending = 0`; the escrow is closed to `rent_payer` when `refund_pending == 0`. A frozen escrow makes this fail until it thaws; the entitlement stays recorded and nothing is written off.
+20. `restitute(amount)` — anyone pays from own token account → vault; loan Defaulted (`LoanNotSettled`); 0 < amount ≤ shortfall − restituted (`NothingOwed` when nothing is left, `OverRepay` above it). The fund's loss is made good first: `to_fund = min(amount, lost − min(restituted, lost))`, `total_lost −= to_fund`; the rest reimburses the co-signer's used escrow: `reimbursement_pending += rest`, `vault_claims += rest`. `restituted += amount`, `total_restituted += amount`. When `restituted == shortfall`: status `Restituted` (`completed_loans` unchanged); the borrower's bar is relaxed to `closed_at + late_ban_seconds` (0 when that is 0) if `ineligible_until == borrower_bar_until`; the co-signer's `unrestituted_losses −= 1` when the loan had a loss, and their bar is lifted if that reaches 0 and `ineligible_until == cosigner_bar_until`. A longer bar from another loan or an operator is never shortened.
+21. `claim_escrow()` — anyone; loan not Active (`LoanNotActive`), `refund_pending + reimbursement_pending > 0` (`NothingToClaim`); `cosigner_token` must be owned by `cosigner_person.wallet` (the current wallet) and hold the pool mint; `escrow` is optional. With the escrow passed: `refund_pending` escrow → co-signer (`pending_claims −= it`), and the escrow is closed to `rent_payer` once `recovery_pending == 0`. Always: `reimbursement_pending` vault → co-signer (`vault_claims −= it`, `total_reimbursed += it`). Leaving a frozen escrow out claims the vault part alone. A frozen or closed co-signer token account never blocks a loan from closing; the claim waits until an account exists.
+22. `lift_bar(reason: [u8; 32])` — authority only, instant; `person.ineligible_until > now` (`NotBarred`); sets `ineligible_until = now`; `BarLifted` carries the reason hash (the operator publishes the reason). The remedy for an outage across a deadline or an appeal upheld.
 
-Rules: checked math only; every token account constrained by mint and owner; no fee, interest or penalty fields anywhere. One event per instruction: `PoolInitialized`, `ParamsScheduled`, `ParamsCancelled`, `PoolUpdated`, `PoolFrozen`, `AuthorityProposed`, `AuthorityProposalCancelled`, `AuthorityChanged`, `IssuerSuspended`, `LendingPaused`, `LendingResumed`, `WindDownAnnounced`, `WindDownCancelled`, `SweptToSuccessor`, `Donated`, `MemberRegistered` (wallet, person), `RebindProposed` (old wallet, new wallet, effective_at), `RebindVetoed` (by), `WalletRebound`, `LoanRequested` (expires_at), `RequestCancelled`, `RequestExpiredClosed`, `LoanOpened` (wallets and persons), `Repaid` (late, refund_pending), `LoanDefaulted` (both bars), `EscrowClaimed`.
+Rules: checked math only; every token account constrained by mint and owner; no fee, interest or penalty fields anywhere. One event per instruction: `PoolInitialized`, `ParamsScheduled`, `ParamsCancelled`, `PoolUpdated`, `PoolFrozen`, `AuthorityProposed`, `AuthorityProposalCancelled`, `AuthorityChanged`, `IssuerSuspended`, `LendingPaused`, `LendingResumed`, `WindDownAnnounced`, `WindDownCancelled`, `SweptToSuccessor`, `Donated`, `MemberRegistered` (wallet, person), `RebindProposed` (old wallet, new wallet, effective_at), `RebindVetoed` (by), `WalletRebound`, `LoanRequested` (expires_at), `RequestCancelled`, `RequestExpiredClosed`, `LoanOpened` (wallets and persons), `Repaid` (cap_credited, refund_pending), `LoanSettled` (shortfall, recovered, escrow_returned, lost, both bars, escrow_closed), `RecoveryCollected`, `Restituted` (to_fund, to_cosigner, complete, both bars), `EscrowClaimed` (from_escrow, from_vault), `BarLifted` (reason hash, previous bar).
 
-Who pays rent and who gets it back: the request's rent to whoever made it (borrower, or the sponsor when sponsored), returned on co-sign, cancel or expiry close; the Loan account's rent to the co-sign payer, never returned (loans are permanent records); the escrow's rent to the co-sign payer, returned when the escrow closes (at settlement if nothing is owed, else at the claim); Person and Member rent to the registration payer, never returned; a token account created for a borrower or co-signer by a sponsored transaction belongs to its owner, who can close it.
+Who pays rent and who gets it back: the request's rent to whoever made it (borrower, or the sponsor when sponsored), returned on co-sign, cancel or expiry close; the Loan account's rent to the co-sign payer, never returned (loans are permanent records); the escrow's rent to the co-sign payer, returned when the escrow closes (at settlement if it is empty, else at the last of collect and claim); Person and Member rent to the registration payer, never returned; a token account created for a borrower or co-signer by a sponsored transaction belongs to its owner, who can close it.
+
+**Frozen accounts.** The mint's freeze authority can freeze any token account. A frozen co-signer wallet delays only that co-signer's claim. A frozen escrow delays `collect_recovery` and the escrow part of `claim_escrow` for that loan; settlement, restitution, the reimbursement from the vault and the wind-down are unaffected, and both entitlements stay recorded until the account thaws. A frozen vault stops lending, repayment, restitution, reimbursement and sweeps alike; nothing the program does can undo a freeze.
 
 ### Gateway token check (`gateway.rs`)
 The fund runs its own gatekeeper network on the Identity.com gateway program (`gatem74V238djXdzWnJf94Wo1DcnuGkfijbf3AuBhfs`); the issuer service is the gatekeeper and issues a token to a wallet after a successful identity check. The program parses the token account (Borsh: version, parent, owner_wallet, owner_identity, gatekeeper_network, issuing_gatekeeper, state, expire_time): owner program = gateway program, `owner_wallet` = the wallet, `gatekeeper_network` = `pool.gatekeeper_network`, state Active, expiry None or > now. Tests plant such accounts in LiteSVM and on the fork.
 
 ### Errors (in order, Anchor codes from 6000)
-AmountZero, OverLoanCap, TermTooLong, SelfCosign, BorrowerHasLoan, CosignerLimit, Ineligible, InvalidGatewayToken, InsufficientFund, OverRepay, LoanNotActive, NotYetDefaultable, Unauthorized, InvalidBps, MathOverflow, RequestMismatch, EscrowTooHigh, InvalidParams, WalletNotBound, WalletRetired, WindingDown, NotWindingDown, TimelockNotElapsed, NothingPending, LoansOutstanding, InvalidSuccessor (6025), Paused (6026), RequestExpired, RequestNotExpired, OverPersonalCap, OverExposure, OverDisbursementCap, ReciprocalGuarantee, RecoveryPending, RecoveryNotPending, RecoveryDelayNotElapsed, NothingToClaim, TimelockBelowMinimum, MissingCosignerLoan (6038).
+AmountZero, OverLoanCap, TermTooLong, SelfCosign, BorrowerHasLoan, CosignerLimit, Ineligible, InvalidGatewayToken, InsufficientFund, OverRepay, LoanNotActive, NotYetDefaultable, Unauthorized, InvalidBps, MathOverflow, RequestMismatch, EscrowTooHigh, InvalidParams, WalletNotBound, WalletRetired, WindingDown, NotWindingDown, TimelockNotElapsed, NothingPending, LoansOutstanding, InvalidSuccessor (6025), Paused (6026), RequestExpired, RequestNotExpired, OverPersonalCap, OverExposure, OverDisbursementCap, ReciprocalGuarantee, RecoveryPending, RecoveryNotPending, RecoveryDelayNotElapsed, NothingToClaim, TimelockBelowMinimum, MissingCosignerLoan (6038), LoanPastDeadline (6039), NothingOwed, NothingToCollect, OverOutstandingCeiling, LoanNotSettled, NotBarred (6044).
 
 ### Authority table
 | key | may | delay | cannot |
 |---|---|---|---|
-| authority (operator multisig) | schedule, cancel and (anyone) apply settings; propose a handover; suspend the issuer; pause and resume lending; announce or cancel a wind-down; veto a recovery; freeze | settings and wind-down: `timelock_seconds` (≥ 2 days once above it); the rest instant | move funds (except the vault to the announced successor after the notice period with no open loan); touch an open loan; shorten a notice period below the minimum |
+| authority (operator multisig) | schedule, cancel and (anyone) apply settings; propose a handover; suspend the issuer; pause and resume lending; announce or cancel a wind-down; veto a recovery; lift a bar (public, with a reason); freeze | settings and wind-down: `timelock_seconds` (≥ 2 days once above it); the rest instant | move funds (except the vault, less what co-signers are owed, to the announced successor after the notice period with no open loan); touch an open loan; set a bar; shorten a notice period below the minimum |
 | pause_authority | pause lending | instant | resume; anything else |
 | issuer | co-sign registrations and recovery proposals | none, but a proposal waits `recovery_delay_seconds` and needs the recovery authority too | move funds; move a membership alone; skip the veto window |
-| recovery_authority | co-sign recovery proposals | as above | anything alone |
-| upgrade authority (program) | replace the program code | none on chain during the pilot; to be a separate multisig behind its own timelock; removed later | — |
-| anyone | apply a due change; finalize a due recovery; close an expired request; repay; mark a default; claim an escrow; sweep after a wind-down | by the rules above | — |
+| recovery_authority (an operator's key, outside the web service) | co-sign recovery proposals | as above | anything alone |
+| upgrade authority (program) | replace the program code | none on chain during the pilot; a separate multisig behind its own timelock, with the exit criteria published; removed later | — |
+| anyone | apply a due change; finalize a due recovery; close an expired request; repay; settle a loan past its deadline; collect a recovery; pay back a settled loan; claim what a co-signer is owed; sweep after a wind-down | by the rules above | — |
 
 ## Web app `app/` (Next.js, TypeScript)
-Uses the Codama client generated from `target/idl/goodfaith.json` (`npm run codegen`). Pages: wallet (balance, send/receive with Solana Pay QR, history), Borrow (identity check → join → request → co-signer link → submit), Co-sign, Repay (with "Release escrow" for closed loans), Donate, Fund stats. Kora as fee payer behind the app's own proxy and policy so users pay $0. Registration and recovery are prepared server-side by the identity issuer (`docs/identity.md`) and finished by the wallet. `scripts/member.ts` is the fallback client; `scripts/cranker.ts` the operator's scheduled job (defaults, claims, expired requests, due recoveries, due settings, sweep, bans).
+Uses the Codama client generated from `target/idl/goodfaith.json` (`npm run codegen`). Pages: wallet (balance, send/receive with Solana Pay QR, history), Borrow (identity check → join → request → co-signer link → submit), Co-sign, Repay (a repayment by the deadline; "Settle and pay back" after it, one transaction; "Pay back" on a settled loan; release and collect buttons and the entitlement lines on each loan), Donate, Fund stats (outstanding principal and the ceiling, restitution, what co-signers are owed). Kora as fee payer behind the app's own proxy and policy so users pay $0. Registration is prepared server-side by the identity issuer (`docs/identity.md`) and finished by the wallet; a recovery is requested in the app, proposed by the operator's recovery CLI and finalised by the wallet or the cranker. `scripts/member.ts` is the fallback client; `scripts/cranker.ts` the operator's scheduled job (settlements, collections, claims, expired requests, due recoveries, due settings, sweep, bars mirrored to the identity service); `scripts/admin.ts` the authority's CLI (settings, brakes, handover, wind-down, `lift-bar`); `scripts/recovery.ts` the recovery key's CLI.
 
 ## Launch parameters (decided; owner may change at review)
 - Loan token: USDC (6 decimals).
@@ -158,8 +182,9 @@ Uses the Codama client generated from `target/idl/goodfaith.json` (`npm run code
 - `timelock_seconds` 7 days; `recovery_delay_seconds` 3 days; `request_ttl_seconds` 7 days.
 - `first_loan_cap` $150, `loan_cap_step` $100, `cooldown_seconds` 30 days, `max_exposure_per_person` $1,000.
 - `disbursement_window_seconds` 1 day, `disbursement_cap_per_window` $5,000.
-- `default_ban_seconds` 2 years, `late_ban_seconds` 90 days, `cosigner_ban_seconds` 1 year.
-- Keys: authority = a multisig of independent people; `pause_authority`, `issuer`, `recovery_authority`, the gatekeeper and the program upgrade authority are separate keys held by different people where the deployment allows.
-- Release: a capped pilot, upgradeable under the multisig with a timelock; immutability later, once the pilot has run.
+- `default_ban_seconds` 2 years, `late_ban_seconds` 90 days, `cosigner_ban_seconds` 1 year; a settled loan paid back in full relaxes them (borrower to the late bar from the settlement, co-signer lifted).
+- `seasoning_seconds` 30 days, `cap_step_interval_seconds` 30 days, `max_outstanding_principal` $25,000.
+- Keys: authority = a multisig of independent people; `pause_authority`, `issuer`, `recovery_authority` (the operator's recovery CLI, never the web service), the gatekeeper and the program upgrade authority are separate keys held by different people where the deployment allows.
+- Release: a capped pilot, upgradeable under a separate multisig with a timelock; immutability later, once the pilot has run and the published exit criteria are met (`docs/operations.md`).
 - Presentation: neutral. Defaults: no collections, no credit reporting, no legal action. Identity: the fund's own gatekeeper network; government ID and Texas residency checked by the issuer service's provider (Persona).
 - Funding: owner seeds the fund.

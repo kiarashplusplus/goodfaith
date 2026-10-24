@@ -169,7 +169,8 @@ const claimIx = async (claimer: any, loan: Address) => {
   const l = await loanOf(loan);
   const cosignerWallet = (await getPerson(l.cosignerPerson)).wallet;
   const [escrowAddr] = await gf.findEscrowPda({ loan });
-  return gf.getClaimEscrowInstructionAsync({ claimer, mint: MINT, vault, loan, escrow: l.refundPending > 0n ? escrowAddr : undefined, cosignerPerson: l.cosignerPerson, cosignerToken: await ata(cosignerWallet), rentPayer: l.rentPayer });
+  // The sync builder leaves an omitted optional account out (the async one would fill in the PDA of a closed escrow).
+  return gf.getClaimEscrowInstruction({ claimer, pool, mint: MINT, vault, loan, escrow: l.refundPending > 0n ? escrowAddr : undefined, cosignerPerson: l.cosignerPerson, cosignerToken: await ata(cosignerWallet), rentPayer: l.rentPayer, tokenProgram: TOKEN_PROGRAM });
 };
 const settleIx = async (caller: any, loan: Address) => {
   const l = await loanOf(loan);
@@ -215,14 +216,16 @@ assert.equal(await tok(ataOf.borrower), 40n * USDC);
 assert.equal(await tok(L1.escrow), L1.escrowAmt, 'escrow still holds the deposit');
 l = await loanOf(L1.loan); assert.equal(l.status, gf.LoanStatus.Repaid); assert.equal(l.refundPending, L1.escrowAmt); assert.ok(l.closedAt > 0n);
 assert.equal((await getPerson(pB)).activeLoan.__option, 'None');
-assert.equal((await getPerson(pB)).completedLoans, 1);
+// the cap grows only on loans held for the pool's seasoning period (30 days at launch): an instant repayment does not count
+const credited = p0.seasoningSeconds === 0n ? 1 : 0;
+assert.equal((await getPerson(pB)).completedLoans, credited);
 assert.equal((await getPerson(pC)).activeGuarantees, 0);
 assert.equal((await getPerson(pC)).activeGuaranteeAmount, 0n);
 p = await fetchPool(pool);
 assert.equal(p.totalRepaid, p0.totalRepaid + 100n * USDC);
 assert.equal(p.activeLoans, 0n);
 assert.equal(p.pendingClaims, p0.pendingClaims + L1.escrowAmt);
-row('full repay 60', `Repaid, refund_pending ${fmt(l.refundPending)} waits in the escrow`, `completed_loans 1`, `vault ${fmt(await tok(vault))}`, `totalRepaid +${fmt(p.totalRepaid - p0.totalRepaid)}`);
+row('full repay 60', `Repaid, refund_pending ${fmt(l.refundPending)} waits in the escrow`, `completed_loans ${credited} (seasoning ${p0.seasoningSeconds / DAY}d)`, `vault ${fmt(await tok(vault))}`, `totalRepaid +${fmt(p.totalRepaid - p0.totalRepaid)}`);
 // claim_escrow: anyone releases the deposit to the co-signer's current wallet and the escrow rent goes back to its payer
 await send([await claimIx(third, L1.loan)], third, 'claim_escrow');
 assert.equal(await tok(ataOf.cosigner), cBefore + L1.escrowAmt);

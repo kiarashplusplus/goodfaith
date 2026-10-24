@@ -23,6 +23,8 @@ export type Scenario = {
   escrowRate: number;
   /** Average share of principal repaid before a default (0..1). Zero is the worst case. */
   repaidBeforeDefault: number;
+  /** Loans one borrower takes in a year, so loans can be turned into people (default 2). */
+  loansPerBorrowerPerYear: number;
   costs: Costs;
 };
 
@@ -55,14 +57,28 @@ export type Result = {
   donationsNeededPerYear: number;
   /** Years until the fund is gone with no donations at all, at today's loss (a straight line). */
   yearsToDepletion: number;
-  /** Years until the fund has halved with no donations (each year the smaller fund loses proportionally less). */
+  /**
+   * Years until the fund has halved with no donations, counting capital losses only (operating costs paid from
+   * elsewhere; each year the smaller fund loses proportionally less). See `cashRunwayYears` for the fund paying its
+   * own way.
+   */
   yearsToHalf: number;
+  /** Years the fund lasts with no donations when it pays both the capital losses and the operating costs. */
+  cashRunwayYears: number;
   /** Loans repaid in full per year. */
   completedLoansPerYear: number;
+  /** People who completed a loan in the year: loans divided by loans per borrower (not one person per loan). */
+  distinctBorrowersPerYear: number;
   /** Gifts spent per completed loan: capital lost plus operating cost, divided by the loans that worked. */
   subsidyPerCompletedLoan: number;
-  /** How many people the same yearly gifts would reach as outright grants of one average loan each. */
+  /** Gifts spent per person helped in the year. */
+  subsidyPerBorrower: number;
+  /** How many people the same yearly gifts would reach as outright grants of one average loan each (endowment excluded). */
   grantsInsteadPerYear: number;
+  /** Cash the fund needs in its first year: capital lost, recurring costs and the one-off items paid in full. */
+  cashYearOne: number;
+  /** Cash each later year: capital lost plus recurring costs (the one-offs are behind). */
+  cashLaterYears: number;
   /** What a borrower and co-signer who collude walk away with on one loan (before losing eligibility). */
   collusionPayoff: number;
   /** Escrow rate at which a lone default costs the fund nothing (given repaidBeforeDefault). */
@@ -94,6 +110,8 @@ export function evaluate(s: Scenario): Result {
   const operatingPerYear = recurringPerYear + oneOffPerYear;
   const completedLoansPerYear = loansPerYear * (1 - s.defaultRate);
   const donationsNeededPerYear = lossPerYear + operatingPerYear;
+  const perBorrower = s.loansPerBorrowerPerYear > 0 ? s.loansPerBorrowerPerYear : 1;
+  const distinctBorrowersPerYear = completedLoansPerYear / perBorrower;
   return {
     loansPerYear,
     cyclesPerYear,
@@ -108,11 +126,51 @@ export function evaluate(s: Scenario): Result {
     yearsToDepletion: lossPerYear > 0 ? s.fund / lossPerYear : Infinity,
     yearsToHalf:
       lossPerYear > 0 && lossPerYear < s.fund ? Math.log(2) / -Math.log(1 - lossPerYear / s.fund) : lossPerYear >= s.fund ? 1 : Infinity,
+    cashRunwayYears: cashRunway(s),
     completedLoansPerYear,
+    distinctBorrowersPerYear,
     subsidyPerCompletedLoan: completedLoansPerYear > 0 ? donationsNeededPerYear / completedLoansPerYear : Infinity,
+    subsidyPerBorrower: distinctBorrowersPerYear > 0 ? donationsNeededPerYear / distinctBorrowersPerYear : Infinity,
     grantsInsteadPerYear: donationsNeededPerYear / s.avgLoan,
+    cashYearOne: lossPerYear + recurringPerYear + oneOff,
+    cashLaterYears: lossPerYear + recurringPerYear,
     collusionPayoff: s.avgLoan - s.avgLoan * s.escrowRate,
     breakEvenEscrowRate: Math.min(1, 1 - s.repaidBeforeDefault),
+  };
+}
+
+/**
+ * The fund paying its own way with no gifts at all: each year it loses capital on what it lends and pays the
+ * operating costs (one-offs in the first year, then the recurring ones) out of the vault. Returns the years until
+ * it cannot cover the next year's costs, as a fraction; 50 means "longer than the model looks".
+ */
+export function cashRunway(s: Scenario): number {
+  let fund = s.fund;
+  for (let year = 0; year < 50; year++) {
+    const r = evaluateShallow({ ...s, fund });
+    const recurring = s.costs.identityCheck * s.costs.newMembersPerYear + s.costs.sponsorPerLoan * r.loansPerYear + recurringTotal(s.costs);
+    const spend = r.lossPerYear + recurring + (year === 0 ? oneOffTotal(s.costs) : 0);
+    if (spend >= fund) return year + (spend > 0 ? fund / spend : 0);
+    fund -= spend;
+  }
+  return 50;
+}
+
+/**
+ * Lending against giving over `years`, with the same money on both sides: the endowment and the yearly gifts.
+ * Grants: everything is handed out as one average loan each. Loans: the gifts keep the fund level (they cover
+ * the losses and the costs), and the endowment keeps turning over; the fund is still there at the end.
+ */
+export function compareWithGrants(s: Scenario, years: number) {
+  const r = evaluate(s);
+  const money = s.fund + r.donationsNeededPerYear * years;
+  return {
+    years,
+    moneyIn: money,
+    grants: money / s.avgLoan,
+    loansCompleted: r.completedLoansPerYear * years,
+    borrowers: r.distinctBorrowersPerYear * years,
+    fundLeft: s.fund,
   };
 }
 
@@ -165,32 +223,44 @@ export function correlatedShock(s: Scenario, shockDefaultRate: number): { shockC
 }
 
 /**
- * A compromised identity issuer registering fake people and lending to them. The on-chain bounds: each fake loan is at
- * most the first-loan cap (new memberships stay on it for the cooldown), every fake loan needs an escrow the attacker
- * forfeits, and the pool disburses at most `disbursementCap` per window. Loss = windows until detection x cap x
- * (1 - escrow), or the per-loan route when the cap is off (0).
+ * A compromised identity issuer registering fake people and lending to them: a scenario, not a bound. The inputs are
+ * the assumptions: `containmentDays` is the time from the first fake loan to the pause (detection plus reaction),
+ * and the disbursement window is a fixed window (gross principal per window from `window_start`), so an attacker who
+ * straddles a boundary gets two windows' worth in a short time; the ceiling on outstanding principal caps the total
+ * whatever the timing. Each fake loan is at most the first-loan cap (new memberships stay on it for the cooldown) and
+ * forfeits its escrow. Loss = disbursed x (1 - escrow); with the window cap off (0), the per-loan route applies.
  */
 export function issuerCompromise(p: {
   firstLoanCap: number;
   escrowRate: number;
   disbursementCap: number;
   windowDays: number;
-  detectionDays: number;
+  containmentDays: number;
   /** Fake memberships the attacker can register and fund per day when there is no disbursement cap. */
   fakeLoansPerDay: number;
-}): { maxDisbursed: number; maxLoss: number; fakeLoans: number } {
+  /** Ceiling on principal out on loan (0: none); the attacker gets at most the headroom under it. */
+  outstandingCeiling?: number;
+  /** Principal already out on loan when the attack starts. */
+  outstandingNow?: number;
+}): { maxDisbursed: number; maxLoss: number; fakeLoans: number; windows: number } {
   const perLoanLoss = p.firstLoanCap * (1 - p.escrowRate);
+  const headroom =
+    p.outstandingCeiling && p.outstandingCeiling > 0 ? Math.max(0, p.outstandingCeiling - (p.outstandingNow ?? 0)) : Infinity;
   if (p.disbursementCap <= 0) {
-    const fakeLoans = Math.floor(p.fakeLoansPerDay * p.detectionDays);
-    return { maxDisbursed: fakeLoans * p.firstLoanCap, maxLoss: fakeLoans * perLoanLoss, fakeLoans };
+    const fakeLoans = Math.min(Math.floor(p.fakeLoansPerDay * p.containmentDays), Math.floor(headroom / p.firstLoanCap));
+    return { maxDisbursed: fakeLoans * p.firstLoanCap, maxLoss: fakeLoans * perLoanLoss, fakeLoans, windows: 0 };
   }
-  const windows = Math.ceil(p.detectionDays / p.windowDays);
-  const maxDisbursed = windows * p.disbursementCap;
+  // A fixed window can be straddled: the containment time spans ceil(days / window) + 1 windows in the worst case.
+  const windows = Math.ceil(p.containmentDays / p.windowDays) + 1;
+  const maxDisbursed = Math.min(windows * p.disbursementCap, headroom);
   const fakeLoans = Math.floor(maxDisbursed / p.firstLoanCap);
-  return { maxDisbursed, maxLoss: maxDisbursed * (1 - p.escrowRate), fakeLoans };
+  return { maxDisbursed, maxLoss: maxDisbursed * (1 - p.escrowRate), fakeLoans, windows };
 }
 
-/** What `wallets` abusive wallets can cost the fee sponsor under the proxy's per-wallet caps over `days`. */
+/**
+ * What abusive wallets can cost the fee sponsor over `days`: each wallet is held to the per-wallet caps, and the
+ * whole crowd to the fund-wide daily budget (transactions, and wallets sponsored for the first time).
+ */
 export function sponsorAbuse(p: {
   wallets: number;
   days: number;
@@ -200,19 +270,53 @@ export function sponsorAbuse(p: {
   txCost: number;
   /** Rent of one token account, dollars (about 0.002 SOL). */
   ataRent: number;
-}): { maxCost: number; perWallet: number } {
+  /** Fund-wide daily budget: sponsored transactions, and wallets sponsored for the first time (0: no budget). */
+  dailyBudgetTx?: number;
+  dailyNewWallets?: number;
+}): { maxCost: number; perWallet: number; txs: number; newWallets: number } {
   const perWallet = p.dailyTxsPerWallet * p.days * p.txCost + p.atasPerWallet * p.ataRent;
-  return { maxCost: perWallet * p.wallets, perWallet };
+  const budgetTx = p.dailyBudgetTx && p.dailyBudgetTx > 0 ? p.dailyBudgetTx : Infinity;
+  const budgetWallets = p.dailyNewWallets && p.dailyNewWallets > 0 ? p.dailyNewWallets : Infinity;
+  const newWallets = Math.min(p.wallets, budgetWallets * p.days);
+  const txs = Math.min(newWallets * p.dailyTxsPerWallet * p.days, budgetTx * p.days);
+  return { maxCost: txs * p.txCost + newWallets * p.atasPerWallet * p.ataRent, perWallet, txs, newWallets };
 }
 
 /**
- * A network or operator outage of `outageHours` that spans some loans' deadlines. Money is unaffected (a late
- * repayment and a default give the same result in either order); the cost is the members whose deadline fell inside
- * the window and who are marked late through no fault of their own.
+ * A network or operator outage of `outageHours` that spans some loans' deadlines. The money works out the same
+ * either way (a late payer settles and pays back exactly like the cranker's settlement), but every loan whose
+ * deadline fell inside the window is settled and its borrower barred until they pay back; each is a case for the
+ * operator to review and, where the outage was the cause, to lift. That review is the cost.
  */
-export function outageAcrossCutoff(s: Scenario, outageHours: number): { loansWithDeadlineInside: number } {
+export function outageAcrossCutoff(
+  s: Scenario,
+  outageHours: number,
+  review: { hoursPerCase: number; hourlyRate: number } = { hoursPerCase: 0.5, hourlyRate: 40 },
+): { loansWithDeadlineInside: number; reviewHours: number; reviewCost: number } {
   const r = evaluate(s);
-  return { loansWithDeadlineInside: (r.loansPerYear * outageHours) / (365 * 24) };
+  const cases = (r.loansPerYear * outageHours) / (365 * 24);
+  const reviewHours = cases * review.hoursPerCase;
+  return { loansWithDeadlineInside: cases, reviewHours, reviewCost: reviewHours * review.hourlyRate };
+}
+
+/**
+ * A ring of `people` who never mean to repay: each borrows once with the next as co-signer (so a ring of three or
+ * more needs no reciprocal guarantee, which the program refuses). Each loan pays out the cap minus the escrow; the
+ * exposure limit must fit one loan and one guarantee per person. Collusion is limited, not prevented: it costs each
+ * person their eligibility for the configured durations and an ID on record, and the ring cannot repeat with the
+ * same people. Returns the payoff and what it costs the fund (the escrow stays with the fund).
+ */
+export function collusionRing(p: { people: number; loanCap: number; escrowRate: number; exposure: number }): {
+  feasible: boolean;
+  loans: number;
+  payoff: number;
+  fundLoss: number;
+  perPerson: number;
+} {
+  const feasible = p.people >= 3 && 2 * p.loanCap <= p.exposure;
+  const loans = feasible ? p.people : 0;
+  const perLoan = p.loanCap * (1 - p.escrowRate);
+  return { feasible, loans, payoff: loans * perLoan, fundLoss: loans * perLoan, perPerson: perLoan };
 }
 
 /** The launch assumptions; `scripts/model.ts` varies them one at a time. */
@@ -225,6 +329,7 @@ export const BASE: Scenario = {
   defaultRate: 0.05,
   escrowRate: 0.25,
   repaidBeforeDefault: 0.2,
+  loansPerBorrowerPerYear: 2,
   costs: {
     identityCheck: 2.5,
     newMembersPerYear: 600,

@@ -1,6 +1,6 @@
 # Good Faith
 
-Interest-free, fee-free community loans on Solana, funded by gifts. Texas residents only. Version 3 of the design,
+Interest-free, fee-free community loans on Solana, funded by gifts. Texas residents only. Version 4 of the design,
 running on a test network.
 
 Source is published under the [Apache License 2.0](LICENSE) so that anyone can inspect what the program and the
@@ -36,7 +36,8 @@ npm run dev
 Members are people, not wallets: the app's identity issuer (see `app/README.md` and `docs/identity.md`) verifies a
 government ID with a provider, keeps a keyed fingerprint per credential and an opaque random id per person, issues a
 pass on the fund's own gatekeeper network and co-signs the on-chain registration. One person, one wallet; a lost
-wallet is recovered through a proposal the old wallet can veto during a delay, without losing the membership.
+wallet is recovered through a proposal the operator signs with a key the web service never holds and the old wallet
+can veto during a delay, without losing the membership.
 
 ## Continuous integration
 `.github/workflows/ci.yml`: program format and clippy; Anchor build with the Rust and app-side LiteSVM test suites;

@@ -35,36 +35,43 @@ directly, so neither needs a keypair or a running fork.
 `gatekeeper-network.json`, kept out of git) and adds the admin key as its gatekeeper through the Identity.com gateway
 program; it writes `gatekeeper.json` (public). With that file present, `e2e` and `kora-e2e` issue real gateway tokens
 for their wallets instead of planting cloned Civic bytes, and `identity-e2e` drives the app's identity routes
-(`IDENTITY_PROVIDER=mock`) from the wallet's proof of control to the issuer-signed join, a wallet replacement and a ban.
+(`IDENTITY_PROVIDER=mock`) from the wallet's proof of control to the issuer-signed join, a wallet recovery through the
+operator's recovery CLI, a permanent ban and a temporary bar.
 
 ## Operator and member command lines
 
 `npm run admin -- show | schedule --set field=value | cancel-params | apply | propose-authority <key> | cancel-proposal |
-accept-authority | suspend-issuer | pause | resume | announce-wind-down <account> | cancel-wind-down | sweep | freeze --yes`
-is everything the pool authority can do (`ADMIN_KEYPAIR`, default `~/.config/solana/id.json`; `--mint` for another
-pool). `e2e.ts` drives pause, schedule, apply, suspend-issuer and freeze through it. `npm run member -- status |
-request | cancel | cosign | repay | claim | close-expired | veto | finalize | donate` is a member's fallback client
-(`MEMBER_KEYPAIR`), everything the app offers from a terminal against the RPC alone; `kora-e2e` runs its `status`.
+accept-authority | suspend-issuer | pause | resume | announce-wind-down <account> | cancel-wind-down | sweep |
+lift-bar <personAccount> <reason...> | freeze --yes` is everything the pool authority can do (`ADMIN_KEYPAIR`, default
+`~/.config/solana/id.json`; `--mint` for another pool). `lift-bar` puts the hash of the reason on chain, prints it for
+publication and tells the identity service. `e2e.ts` drives pause, schedule, apply, suspend-issuer, lift-bar and
+freeze through it. `npm run member -- status | request | cancel | cosign | repay | pay-back | settle | collect | claim |
+close-expired | veto | finalize | donate` is a member's fallback client (`MEMBER_KEYPAIR`), everything the app offers
+from a terminal against the RPC alone (`pay-back` settles first when nobody has); `kora-e2e` runs its `status`.
+`npm run recovery -- list | approve <personId> | reject <personId>` is the operator's recovery CLI: it holds the pool's
+recovery key (`RECOVERY_KEYPAIR`, default `~/.config/solana/id.json`) and talks to the identity service
+(`IDENTITY_URL`, `IDENTITY_ADMIN_KEY`), which never holds that key; `identity-e2e` drives it.
 
 ## Cranker and model
 
 `npm run cranker -- --once` (or `--interval 300` to loop, `--dry-run` to only report) is the operator's scheduled
-job: it applies settings whose timelock has elapsed, marks loans past the cutoff as defaulted, releases escrow owed to
-co-signers of closed loans, closes expired requests, finalises recoveries whose delay has passed, sweeps the vault to
-the successor once a wind-down is in effect with no loan open, and posts the barred people to the identity service
-(`APP_URL`/`IDENTITY_URL` + `IDENTITY_ADMIN_KEY`) so their passes are revoked. It pays with `CRANKER_KEYPAIR`
+job: it applies settings whose timelock has elapsed, settles loans past the cutoff, collects what settled loans owe
+the fund from their escrows, releases what co-signers are owed (from escrows and the vault), closes expired requests,
+finalises recoveries whose delay has passed, sweeps the vault (less what co-signers are owed from it) to the
+successor once a wind-down is in effect with no loan open, and posts the barred people, with the end of their bar,
+to the identity service (`APP_URL`/`IDENTITY_URL` + `IDENTITY_ADMIN_KEY`). It pays with `CRANKER_KEYPAIR`
 (default `~/.config/solana/id.json`) or through Kora when `KORA_URL` is set. `cranker-e2e` proves it on the fork with
 a one-day loan from the member `identity-e2e` created, a pending recovery and an expiring request. `npm run model`
 prints the economic tables behind `docs/economics.md`.
 
 ## Run
 - `npm run e2e` - full loan cycle with users paying fees: register, request, co-sign, partial and full repay, the
-  escrow claim, cancel (borrower, co-signer, stranger rejected), recovery with a veto and a finalisation,
-  `schedule_params` + `apply_params` after the timelock (an open loan keeps its own grace period), default after time
+  escrow claim, cancel (borrower, co-signer, stranger rejected), recovery (issuer + recovery signatures, no new-wallet signature) with a veto and a finalisation,
+  `schedule_params` + `apply_params` after the timelock (an open loan keeps its own grace period and bans), a refused late repayment, settle + collect + a two-step restitution with the bars relaxing, lift-bar, after time
   travel, pause and resume, request expiry, the authority handover, `suspend_issuer`, a wind-down with
   `sweep_to_successor` on a second pool, `freeze_pool` (irreversible; re-runs on the same fork skip the update/freeze
   rows, restart Surfpool for a fresh one).
-- `npm run kora-e2e` - register, request, co-sign, repay, claim, default and the policy's refusals with Kora as fee
+- `npm run kora-e2e` - register, request, co-sign, repay, claim, settle, collect and the policy's refusals with Kora as fee
   and rent payer; asserts user SOL is unchanged. Needs Kora running (below) and a pool created by `launch`/`e2e`.
 - `npm run smoke` - Playwright page load check of all 7 routes; fails on any console or page error (including hydration
   errors). Needs `cd app && npm run build && PORT=3100 npm start`. Override the URL with `APP_URL`; set `CHROMIUM_PATH` if no
@@ -91,7 +98,7 @@ kora --config scripts/kora/kora.toml config validate          # offline policy c
 kora --config scripts/kora/kora.toml --rpc-url http://127.0.0.1:8899 rpc start --signers-config scripts/kora/signers.toml
 ```
 - `npm run kora-e2e` drives the web app's own sponsored path (`app/src/lib/tx.ts`, `kora.ts`, `program.ts`) through a
-  running Kora: register, request, co-sign for a borrower with no token account, repay, donate, cancel, mark default,
+  running Kora: register, request, co-sign for a borrower with no token account, repay, donate, cancel, settle and collect,
   the Checking-page send (sender pays when the recipient has no token account), a Memo instruction refused by Kora,
   and a check that users paid nothing while Kora's spend matches the rent it should have paid. Set
   `KORA_URL=http://localhost:3000/api/sponsor` to go through the app's proxy instead (start the app with `KORA_URL`
@@ -104,8 +111,8 @@ kora --config scripts/kora/kora.toml --rpc-url http://127.0.0.1:8899 rpc start -
 - `kora/kora.toml` is the deployable policy; its header lists what to change for mainnet. Kora 2.0.5 answers any
   origin, so never expose its port: the app's `/api/sponsor` route is the origin and auth boundary.
 - `max_allowed_lamports` is the fee payer's outflow per transaction, CPI-created rent included. A first co-sign costs
-  6,618,960 lamports (borrower token account + Loan + escrow), hence 8,000,000. `max_signatures = 4` fits a recovery
-  proposal (wallet + issuer + recovery authority + Kora); the app's proxy only lets extra signers through on Good
+  7,175,760 lamports (borrower token account + Loan + escrow with the v4 Loan), hence 8,000,000. `max_signatures = 4`
+  fits a registration (wallet + issuer + Kora) with room; the app's proxy only lets extra signers through on Good
   Faith instructions.
 - `[kora.usage_limit]` counts transactions per wallet for ever (no window); keep it off.
 - Auth: Kora reads `KORA_API_KEY` / `KORA_HMAC_SECRET` from its environment; the proxy sends them. `config validate`
