@@ -22,7 +22,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return json({ error: "personId (64 hex characters) or wallet is required." }, 400);
   return guarded(async () => {
     const { service, store } = await identity();
-    const p = typeof id === "string" && id ? id : store.getWallet(wallet!)?.personId;
+    const p = typeof id === "string" && id ? id : (await store.getWallet(wallet!))?.personId;
     if (!p) return json({ banned: false, revoked: [], error: "No verified person for that wallet." }, 404);
     return json(await service.ban(p));
   });

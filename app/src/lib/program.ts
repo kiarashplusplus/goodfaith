@@ -998,6 +998,10 @@ export function sponsorErrorCopy(e: KoraError): string {
     case KORA_CODES.NOT_CONFIGURED:
     case KORA_CODES.AUTH:
       return "The fee sponsor isn't set up correctly.";
+    case KORA_CODES.REFUSED:
+      return "The fee sponsor doesn't cover this kind of transaction.";
+    case KORA_CODES.WALLET_CAP:
+      return "This wallet has used its sponsored transactions for now. Try again tomorrow or pay the network fee yourself.";
   }
   const m = e.message;
   if (/not (in the )?allow|disallowed|not allowed/i.test(m)) return "The fee sponsor doesn't cover this kind of transaction.";

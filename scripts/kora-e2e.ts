@@ -7,8 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { AccountRole, address, createKeyPairSignerFromBytes, createNoopSigner, partiallySignTransaction, type Address, type Instruction } from '@solana/kit';
 import { getCloseAccountInstruction, getCreateAssociatedTokenIdempotentInstruction } from '@solana-program/token';
+import { getTransferSolInstruction } from '@solana-program/system';
 import { ata, cheat, clockTs, rpc, RPC_URL, send, setSol, setUsdc, sol, tok, USDC, wallet } from './lib.ts';
 
 process.env.NEXT_PUBLIC_KORA_URL = process.env.KORA_URL ?? 'http://127.0.0.1:8080';
@@ -74,7 +76,7 @@ for (const w of [borrower, cosigner, borrower2, cosigner2]) {
   await tx.submit(txRpc, signed, true, payer!);
   sponsoredTxs++;
 }
-row('register_member x4', 'Kora paid the Person + Member rent; wallet + issuer + Kora signatures (3 = max_signatures)');
+row('register_member x4', 'Kora paid the Person + Member rent; wallet + issuer + Kora signatures (a recovery proposal adds the recovery authority: max_signatures = 4)');
 const personOf = async (w: Address) => (await prog.fetchMember(txRpc, pool.address, w))!.person;
 
 // ---------- request + cosign for a borrower with no token account ----------
@@ -176,15 +178,41 @@ row('send to a new wallet', 'first transfer: sender pays rent', 'second transfer
 
 // ---------- negative: a program outside the allow-list ----------
 const memo: Instruction = { programAddress: address('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'), accounts: [{ address: third.address, role: AccountRole.READONLY_SIGNER }], data: new TextEncoder().encode('hi') };
-let rejected: unknown = null;
-try { await sponsored(third, [memo]); } catch (e) { rejected = e; }
-assert.ok(rejected instanceof kora.KoraError, `expected a KoraError, got ${String(rejected)}`);
-console.log('kora rejection:', (rejected as Error).message);
+const refusal = async (p: Promise<unknown>): Promise<InstanceType<typeof kora.KoraError>> => {
+  try { await p; } catch (e) { if (e instanceof kora.KoraError) return e; throw new Error(`expected a KoraError, got ${String(e)}`); }
+  throw new Error('expected the sponsor to refuse');
+};
+const rejected = await refusal(sponsored(third, [memo]));
+console.log('sponsor rejection:', rejected.code, rejected.message);
 assert.equal(prog.friendlyError(rejected), "The fee sponsor doesn't cover this kind of transaction.");
-row('memo instruction', 'rejected by Kora', prog.friendlyError(rejected));
+const viaProxy = /\/api\/sponsor$/.test(process.env.NEXT_PUBLIC_KORA_URL!);
+row('memo instruction', viaProxy ? `refused by the proxy policy (${rejected.code})` : 'rejected by Kora', prog.friendlyError(rejected));
+
+// ---------- the proxy's sponsorship policy (only when KORA_URL is the app's /api/sponsor) ----------
+if (viaProxy) {
+  const stranger = await wallet();
+  // a token account for a stranger smuggled next to an unrelated Good Faith instruction: rent farming
+  const farm = await refusal(sponsored(third, async (feePayer) => [ataCreate(feePayer, await ata(stranger.address), stranger.address, pool.mint), await prog.donateIx({ donor: third.address, pool, amount: 1n * USDC })]));
+  assert.equal(farm.code, kora.KORA_CODES.REFUSED, farm.message);
+  assert.match(farm.message, /someone else/);
+  // a plain SOL transfer from the wallet
+  const solMove = await refusal(sponsored(third, [getTransferSolInstruction({ source: third as never, destination: donor.address, amount: 1_000n }) as Instruction]));
+  assert.equal(solMove.code, kora.KORA_CODES.REFUSED, solMove.message);
+  // a transaction whose fee payer is not the sponsor
+  const built = await tx.buildTransaction(txRpc, third.address, [await prog.donateIx({ donor: third.address, pool, amount: 1n * USDC })]);
+  const signedByThird = await partiallySignTransaction([(third as unknown as { keyPair: CryptoKeyPair }).keyPair], built);
+  const wrongPayer = await refusal(kora.kora!.signAndSendTransaction({ transaction: tx.toBase64(signedByThird) }));
+  assert.equal(wrongPayer.code, kora.KORA_CODES.REFUSED, wrongPayer.message);
+  assert.match(wrongPayer.message, /fee payer/);
+  row('sponsorship policy', `stranger token account beside a donation: ${farm.message}`, `SOL transfer: ${solMove.message}`, `wallet as fee payer: ${wrongPayer.message}`);
+  // the fallback client reads the same chain without the app
+  const cli = execFileSync('npx', ['tsx', path.join(here, 'member.ts'), 'status', borrower.address], { encoding: 'utf8', env: { ...process.env, RPC_URL } });
+  assert.match(cli, /membership {2}active/);
+  assert.match(cli, new RegExp(`loan #${L1.id} {3}borrowed 100.00, repaid 100.00, Repaid`));
+  row('member CLI', 'status shows the membership and the repaid loan');
+}
 
 // ---------- proxy boundary (only when KORA_URL is the app's /api/sponsor) ----------
-const viaProxy = /\/api\/sponsor$/.test(process.env.NEXT_PUBLIC_KORA_URL!);
 if (viaProxy) {
   const direct = process.env.KORA_DIRECT_URL ?? 'http://127.0.0.1:8080';
   const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });

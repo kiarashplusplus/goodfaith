@@ -30,6 +30,13 @@ The nav shows who pays fees ("Fees covered" / "You pay network fees" / sponsor u
 configured but unreachable the wallet pays; when the sponsor refuses a transaction the error is shown and nothing is
 retried at the user's expense. The Checking page never asks the sponsor to create a token account for a stranger.
 
+The proxy (`/api/sponsor`) decodes every transaction before Kora sees it (`src/lib/sponsor-policy.ts`): Kora must be
+the fee payer, exactly one other key signs (the wallet the sponsorship is attributed to), and each instruction is a
+Good Faith instruction, a compute-budget instruction, a token-account creation used by a Good Faith instruction in the
+same transaction or owned by the wallet, or a token transfer or close signed by the wallet. Each wallet has a daily
+transaction allowance and a lifetime token-account allowance (`SPONSOR_DAILY_TX_PER_WALLET`, `SPONSOR_ATA_PER_WALLET`,
+counted in the identity store). `scripts/member.ts` is the fallback client for when the app or the sponsor is down.
+
 Values are validated at startup (`src/lib/config.ts`). A bad value, or a pool on chain that doesn't match the pinned
 configuration, shows a red banner and turns off borrowing, co-signing, repaying and donating. Plain wallet transfers on
 the Checking page keep working.
@@ -52,11 +59,15 @@ proposal also needs the pool's recovery authority). The app's `/api/identity/*` 
   `done`, `blocked`).
 - `join`: the `register_member` transaction, built for the fee sponsor when one is configured and signed with
   `ISSUER_SECRET`; the browser adds the wallet's signature and sends it (`sendPrepared` in `lib/tx.ts`).
-- `rebind`: wallet recovery in two steps. A person who verifies again from a new wallet gets `recover`: the route
-  returns `propose_rebind` signed by the issuer and the recovery authority (`RECOVERY_SECRET`; without it the service
-  refuses to propose). The old wallet may veto during `pool.recoveryDelaySeconds`; once the delay has passed the same
-  route returns `finalize_rebind`, paid by the new wallet (the cranker finalises due recoveries too). The old wallet is
-  retired on chain and open loans, guarantees, eligibility and escrow claims follow the person.
+- `rebind`: wallet recovery in three steps. A person who verifies again from a new wallet gets `recover`: the first
+  call records the request (202 with `readyAt` while `RECOVERY_REVIEW_SECONDS` run; DELETE withdraws it), then the
+  route returns `propose_rebind` signed by the issuer and the recovery authority (`RECOVERY_SECRET`; without it the
+  service refuses to propose). The old wallet may veto during `pool.recoveryDelaySeconds`; once the delay has passed
+  the same route returns `finalize_rebind`, paid by the new wallet (the cranker finalises due recoveries too). The old
+  wallet is retired on chain and open loans, guarantees, eligibility and escrow claims follow the person.
+- `link`: a verified wallet re-checks with a renewed or second document; the new fingerprint joins the same person
+  (refused when it already belongs to another membership). Fingerprint keys are versioned (`PERSON_HASH_SECRETS`)
+  so a rotation re-links people on their next check instead of orphaning them. `docs/identity.md` has the details.
 - `ban` (operator, `IDENTITY_ADMIN_KEY`, by `personId` or `wallet`): after a default, revokes the passes of every
   wallet the person verified with and refuses future checks. Eligibility itself is on chain (`ineligible_until`).
 

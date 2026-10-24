@@ -1,9 +1,11 @@
 /**
  * The one identity service per server process, built from the environment:
  *   IDENTITY_PROVIDER=persona|mock, PERSONA_API_KEY, PERSONA_TEMPLATE_ID, PERSONA_WEBHOOK_SECRET (persona),
- *   MOCK_WEBHOOK_SECRET (mock), PERSON_HASH_SECRET, ISSUER_SECRET, GATEKEEPER_SECRET (both JSON keypair arrays),
- *   IDENTITY_DB_PATH (default ./identity.sqlite; ":memory:" for throwaway), IDENTITY_ADMIN_KEY (ban route),
- *   RECOVERY_SECRET (optional JSON keypair: the pool's recovery authority, enables wallet recovery proposals).
+ *   MOCK_WEBHOOK_SECRET (mock), PERSON_HASH_SECRETS ("2:new,1:old", newest first) or PERSON_HASH_SECRET (version 1),
+ *   ISSUER_SECRET, GATEKEEPER_SECRET (both JSON keypair arrays), IDENTITY_DB_PATH (default ./identity.sqlite;
+ *   "memory" for throwaway), IDENTITY_ADMIN_KEY (ban route), RECOVERY_SECRET (optional JSON keypair: the pool's
+ *   recovery authority, enables wallet recovery proposals), RECOVERY_REVIEW_SECONDS (service-side wait before a
+ *   recovery is proposed, default 0).
  */
 import { createKeyPairSignerFromBytes, createSolanaRpc, type Address } from "@solana/kit";
 import { GATEKEEPER_NETWORK, RPC_URL } from "../config";
@@ -13,7 +15,9 @@ import { MockProvider } from "./mock";
 import { PersonaProvider } from "./persona";
 import type { IdentityProvider } from "./provider";
 import { IdentityService } from "./service";
-import { MemoryStore, openSqlite, type IdentityStore } from "./store";
+import { openStore } from "./db";
+import { HashKeyring } from "./person-hash";
+import type { IdentityStore } from "./store";
 
 type Bundle = { service: IdentityService; provider: IdentityProvider; store: IdentityStore };
 const g = globalThis as unknown as { __goodfaithIdentity?: Promise<Bundle> };
@@ -31,8 +35,7 @@ function providerFromEnv(): IdentityProvider {
 
 async function build(): Promise<Bundle> {
   const provider = providerFromEnv();
-  const dbPath = process.env.IDENTITY_DB_PATH?.trim() || "./identity.sqlite";
-  const store = dbPath === "memory" ? new MemoryStore() : openSqlite(dbPath);
+  const store = openStore();
   const issuer = await createKeyPairSignerFromBytes(secretFromEnv("ISSUER_SECRET", process.env.ISSUER_SECRET));
   const recovery = process.env.RECOVERY_SECRET?.trim()
     ? await createKeyPairSignerFromBytes(secretFromEnv("RECOVERY_SECRET", process.env.RECOVERY_SECRET))
@@ -51,7 +54,8 @@ async function build(): Promise<Bundle> {
     issuer,
     recovery,
     rpc: createSolanaRpc(RPC_URL),
-    hashSecret: process.env.PERSON_HASH_SECRET?.trim() ?? "",
+    keyring: HashKeyring.fromEnv(process.env.PERSON_HASH_SECRETS, process.env.PERSON_HASH_SECRET),
+    recoveryReviewSec: Number(process.env.RECOVERY_REVIEW_SECONDS) || 0,
     feePayer: serverKoraPayer,
   });
   return { service, provider, store };

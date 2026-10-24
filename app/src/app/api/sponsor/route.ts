@@ -1,10 +1,16 @@
 /**
  * Fee-sponsor proxy. The browser talks to this route; this route talks to Kora with the server-side
  * credentials (`KORA_URL`, `KORA_API_KEY`, `KORA_HMAC_SECRET`). Kora 2.0.5 accepts any origin and only
- * rate-limits globally, so this is where origin control, auth and per-client limits live.
- * Only three methods are forwarded; everything else is refused before it reaches Kora.
+ * rate-limits globally, so this is where origin control, auth, per-client limits and the sponsorship policy live:
+ * only three methods are forwarded, a transaction is decoded and checked against `sponsor-policy.ts` first, and
+ * each wallet has a daily transaction and a lifetime token-account allowance.
  */
 import type { NextRequest } from "next/server";
+import { createSolanaRpc, type Address } from "@solana/kit";
+import { PROGRAM_ID, RPC_URL } from "@/lib/config";
+import { openStore } from "@/lib/identity/db";
+import { serverKoraPayer } from "@/lib/kora-server";
+import { checkCaps, inspectTransaction, limitsFromEnv, type CreatedAta } from "@/lib/sponsor-policy";
 import {
   ALLOWED_METHODS,
   MAX_BODY_BYTES,
@@ -47,7 +53,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const parsed = parseRpcRequest(raw);
   if (!parsed.ok) return reply(jsonRpcError(parsed.id, parsed.code, parsed.message), 400);
-  const { id, method, body } = parsed.req;
+  const { id, method, params, body } = parsed.req;
 
   const limit = bucket.take(clientIp(request.headers), ALLOWED_METHODS[method].cost);
   if (!limit.ok) {
@@ -57,7 +63,44 @@ export async function POST(request: NextRequest): Promise<Response> {
   const cfg = env();
   if (!cfg.url) return reply(jsonRpcError(id, PROXY_ERROR.NOT_CONFIGURED, "Fee sponsor is not configured on the server."));
 
-  return forward(cfg, id, body, ALLOWED_METHODS[method].timeoutMs);
+  if (method !== "signAndSendTransaction") return forward(cfg, id, body, ALLOWED_METHODS[method].timeoutMs);
+
+  // The sponsorship policy: who pays, what the transaction does, and this wallet's allowance.
+  const payer = await serverKoraPayer();
+  if (!payer) return reply(jsonRpcError(id, PROXY_ERROR.UPSTREAM_UNREACHABLE, "Fee sponsor is unreachable."));
+  const inspection = inspectTransaction(String(params.transaction), { payer, programId: PROGRAM_ID });
+  if (!inspection.ok) return reply(jsonRpcError(id, PROXY_ERROR.TRANSACTION_REFUSED, inspection.reason));
+  const store = openStore();
+  const newAtas = await missing(inspection.atas);
+  const caps = checkCaps(await store.getSponsorUsage(inspection.wallet), newAtas.length, limitsFromEnv(process.env), Date.now());
+  if (!caps.ok) return reply(jsonRpcError(id, PROXY_ERROR.WALLET_CAP, caps.reason));
+
+  const res = await forward(cfg, id, body, ALLOWED_METHODS[method].timeoutMs);
+  // Count only what Kora sent; refused or failed attempts are already bounded by the per-client limiter.
+  if (res.ok && (await isResult(res.clone()))) await store.putSponsorUsage({ wallet: inspection.wallet, ...caps.next });
+  return res;
+}
+
+/** The token accounts in the transaction that do not exist yet (the ones whose rent the sponsor would pay). */
+async function missing(atas: CreatedAta[]): Promise<Address[]> {
+  if (!atas.length) return [];
+  const rpc = createSolanaRpc(RPC_URL);
+  const { value } = await rpc
+    .getMultipleAccounts(
+      atas.map((a) => a.ata),
+      { encoding: "base64", commitment: "confirmed" },
+    )
+    .send();
+  return atas.filter((_, i) => value[i] === null).map((a) => a.ata);
+}
+
+async function isResult(res: Response): Promise<boolean> {
+  try {
+    const j = (await res.json()) as { result?: unknown; error?: unknown };
+    return j.result !== undefined && j.error === undefined;
+  } catch {
+    return false;
+  }
 }
 
 /** Liveness, auth-exempt upstream. */

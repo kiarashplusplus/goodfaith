@@ -37,10 +37,10 @@ async function api<T>(path: string, init: RequestInit = {}, expectStatus = 200):
   return body;
 }
 const status = (w: Address) => api<StatusView>(`/api/identity/status?wallet=${w}`);
-async function start(w: KeyPairSigner, tamper = false) {
+async function start(w: KeyPairSigner, tamper = false, route: 'start' | 'link' = 'start') {
   const message = proofMessage(w.address, Math.floor(Date.now() / 1000));
   const sig = await signBytes(w.keyPair.privateKey, new TextEncoder().encode(tamper ? message + '!' : message));
-  return api<{ inquiryId: string; url: string }>('/api/identity/start', { method: 'POST', body: JSON.stringify({ wallet: w.address, message, signature: getBase64Decoder().decode(sig) }) }, tamper ? 401 : 200);
+  return api<{ inquiryId: string; url: string }>(`/api/identity/${route}`, { method: 'POST', body: JSON.stringify({ wallet: w.address, message, signature: getBase64Decoder().decode(sig) }) }, tamper ? 401 : 200);
 }
 const decide = (inquiryId: string, outcome: string, fields: object = MOCK_FIELDS_TX) => api<{ result: string }>('/api/identity/mock', { method: 'POST', body: JSON.stringify({ inquiryId, outcome, fields }) });
 async function finish(w: KeyPairSigner, kind: 'join' | 'rebind', expectKind: PreparedTx['kind']) {
@@ -96,6 +96,25 @@ const m1 = await prog.fetchMember(txRpc, pool.address, w1.address);
 assert.ok(m1 && !m1.retired && !m1.ineligible, 'member on chain');
 assert.equal((await status(w1.address)).next, 'done');
 row('verify + join', `inquiry ${s1.inquiryId}`, `pass ${tokenW1.slice(0, 6)}.. issued by the gateway program`, `register_member ${j1.prepared.sponsored ? 'sponsored by Kora' : 'paid by the wallet'}`, `sig ${j1.sig.slice(0, 8)}..`);
+
+// ---------- a renewed document is linked to the same person; someone else's is refused ----------
+const renewed = { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-1-renewed` };
+const l1 = await start(w1, false, 'link');
+assert.equal((await status(w1.address)).status, 'pending');
+assert.equal((await decide(l1.inquiryId, 'approved', renewed)).result, 'issued');
+assert.equal((await status(w1.address)).next, 'done');
+const wR = await generateKeyPairSigner();
+const sR = await start(wR);
+assert.equal((await decide(sR.inquiryId, 'approved', renewed)).result, 'issued');
+assert.equal((await status(wR.address)).next, 'recover', 'the renewed document resolves to the same person');
+assert.equal((await status(wR.address)).person?.currentWallet, w1.address);
+const wX = await generateKeyPairSigner();
+const sX = await start(wX);
+assert.equal((await decide(sX.inquiryId, 'approved', { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-x` })).result, 'issued');
+const l1b = await start(w1, false, 'link');
+assert.equal((await decide(l1b.inquiryId, 'approved', { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-x` })).result, 'issued');
+assert.equal((await status(w1.address)).reason, 'That document already belongs to another membership.');
+row('link a renewed document', 'same person from a new wallet after linking: recover', `someone else's document: refused`);
 
 // ---------- the same person, new wallet: the membership moves after the recovery delay ----------
 // w2's seed is kept so cranker-e2e can borrow with this member later (test keys only).

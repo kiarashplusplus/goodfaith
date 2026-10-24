@@ -3,7 +3,7 @@ import { PublicKey } from "@solana/web3.js";
 import { getGatekeeperAccountAddress, getGatewayTokenAddressForOwnerAndGatekeeperNetwork } from "@civic/solana-gateway-ts";
 import { address, generateKeyPairSigner, getBase64Decoder, signBytes, type Address } from "@solana/kit";
 import { gatekeeperAccountAddress, gatewayTokenAddress } from "../gateway";
-import { ageAt, normaliseFields, personHash, toHex } from "./person-hash";
+import { ageAt, HASH_DOMAIN, HashKeyring, normaliseFields, personHash, toHex } from "./person-hash";
 import { DEFAULT_FIELD_KEYS, PersonaProvider, parsePersonaSignature, personaDigest } from "./persona";
 import { MemoryStore, openSqlite, type IdentityStore } from "./store";
 import { MockProvider, MOCK_FIELDS_TX } from "./mock";
@@ -128,28 +128,73 @@ describe("stores", () => {
     ["sqlite", () => openSqlite(":memory:")],
   ];
   for (const [name, make] of stores) {
-    it(`${name}: wallets, persons and event ids`, () => {
+    it(`${name}: wallets, persons, credentials, recoveries, sponsorship and event ids`, async () => {
       const s = make();
-      expect(s.getWallet(W1)).toBeNull();
-      s.putWallet({ wallet: W1, inquiryId: "inq_1", url: "https://x", status: "pending", createdAt: 1, updatedAt: 1 });
-      expect(s.getWallet(W1)).toMatchObject({ inquiryId: "inq_1", status: "pending", url: "https://x" });
-      expect(s.getByInquiry("inq_1")?.wallet).toBe(W1);
-      s.putWallet({ wallet: W1, inquiryId: "inq_1", status: "issued", personId: "ab", tokenAddress: NET, createdAt: 1, updatedAt: 2 });
-      expect(s.getWallet(W1)).toMatchObject({ status: "issued", personId: "ab", tokenAddress: NET });
-      expect(s.getWallet(W1)!.url).toBeUndefined();
-      expect(s.getPerson("ab")).toBeNull();
-      expect(s.getPersonByCredential("cd")).toBeNull();
-      s.putPerson({ personId: "ab", credentialHash: "cd", wallet: W1, createdAt: 3 });
-      s.putPerson({ personId: "ab", credentialHash: "cd", wallet: W1, bannedAt: 4, createdAt: 3 });
-      expect(s.getPerson("ab")).toEqual({ personId: "ab", credentialHash: "cd", wallet: W1, bannedAt: 4, createdAt: 3 });
-      expect(s.getPersonByCredential("cd")).toEqual(s.getPerson("ab"));
-      expect(s.walletsOf("ab")).toEqual([W1]);
-      expect(s.walletsOf("zz")).toEqual([]);
-      expect(s.firstTime("e1")).toBe(true);
-      expect(s.firstTime("e1")).toBe(false);
-      s.close();
+      expect(await s.getWallet(W1)).toBeNull();
+      await s.putWallet({ wallet: W1, inquiryId: "inq_1", url: "https://x", status: "pending", createdAt: 1, updatedAt: 1 });
+      expect(await s.getWallet(W1)).toMatchObject({ inquiryId: "inq_1", status: "pending", url: "https://x" });
+      expect((await s.getByInquiry("inq_1"))?.wallet).toBe(W1);
+      await s.putWallet({
+        wallet: W1,
+        inquiryId: "inq_1",
+        status: "issued",
+        personId: "ab",
+        tokenAddress: NET,
+        createdAt: 1,
+        updatedAt: 2,
+      });
+      expect(await s.getWallet(W1)).toMatchObject({ status: "issued", personId: "ab", tokenAddress: NET });
+      expect((await s.getWallet(W1))!.url).toBeUndefined();
+      expect((await s.getWallet(W1))!.linkTo).toBeUndefined();
+      await s.putWallet({ ...(await s.getWallet(W1))!, linkTo: "ab" });
+      expect((await s.getWallet(W1))!.linkTo).toBe("ab");
+      expect(await s.getPerson("ab")).toBeNull();
+      await s.putPerson({ personId: "ab", wallet: W1, createdAt: 3 });
+      await s.putPerson({ personId: "ab", wallet: W1, bannedAt: 4, createdAt: 3 });
+      expect(await s.getPerson("ab")).toEqual({ personId: "ab", wallet: W1, bannedAt: 4, createdAt: 3 });
+      expect(await s.walletsOf("ab")).toEqual([W1]);
+      expect(await s.walletsOf("zz")).toEqual([]);
+      expect(await s.getCredential("cd")).toBeNull();
+      await s.putCredential({ hash: "cd", keyVersion: 1, personId: "ab", linkedAt: 5, via: "verify" });
+      await s.putCredential({ hash: "ef", keyVersion: 2, personId: "ab", linkedAt: 6, via: "rotate" });
+      expect(await s.getCredential("cd")).toEqual({ hash: "cd", keyVersion: 1, personId: "ab", linkedAt: 5, via: "verify" });
+      expect((await s.credentialsOf("ab")).map((c) => c.hash)).toEqual(["cd", "ef"]);
+      expect(await s.credentialsOf("zz")).toEqual([]);
+      expect(await s.getRecovery("ab")).toBeNull();
+      await s.putRecovery({ personId: "ab", newWallet: NET, openedAt: 7 });
+      expect(await s.getRecovery("ab")).toEqual({ personId: "ab", newWallet: NET, openedAt: 7 });
+      await s.deleteRecovery("ab");
+      expect(await s.getRecovery("ab")).toBeNull();
+      expect(await s.getSponsorUsage(W1)).toBeNull();
+      await s.putSponsorUsage({ wallet: W1, day: "2026-10-24", dayTxs: 3, atasTotal: 1 });
+      await s.putSponsorUsage({ wallet: W1, day: "2026-10-25", dayTxs: 1, atasTotal: 2 });
+      expect(await s.getSponsorUsage(W1)).toEqual({ wallet: W1, day: "2026-10-25", dayTxs: 1, atasTotal: 2 });
+      expect(await s.firstTime("e1")).toBe(true);
+      expect(await s.firstTime("e1")).toBe(false);
+      await s.close();
     });
   }
+});
+
+describe("hash keyring", () => {
+  it("parses the versioned list newest first, or a single secret as version 1", () => {
+    const k = HashKeyring.fromEnv("1:old, v2:new", undefined);
+    expect(k.keys.map((x) => x.version)).toEqual([2, 1]);
+    expect(k.current).toEqual({ version: 2, secret: "new" });
+    expect(HashKeyring.fromEnv(undefined, "only").keys).toEqual([{ version: 1, secret: "only" }]);
+    expect(() => HashKeyring.fromEnv("nope", undefined)).toThrow(/newest first/);
+    expect(() => HashKeyring.fromEnv("1:a,1:b", undefined)).toThrow(/twice/);
+    expect(() => HashKeyring.fromEnv(undefined, "")).toThrow(/PERSON_HASH_SECRET/);
+  });
+  it("fingerprints under every key and keeps the domain separation", () => {
+    const k = HashKeyring.fromEnv("2:new,1:old", undefined);
+    const prints = k.fingerprints(MOCK_FIELDS_TX);
+    expect(prints.map((p) => p.version)).toEqual([2, 1]);
+    expect(prints[0]!.hash).toBe(toHex(personHash("new", MOCK_FIELDS_TX)));
+    expect(prints[1]!.hash).toBe(toHex(personHash("old", MOCK_FIELDS_TX)));
+    expect(k.fingerprint(MOCK_FIELDS_TX)).toEqual(prints[0]);
+    expect(HASH_DOMAIN).toBe("goodfaith/person/v1");
+  });
 });
 
 describe("wallet proof", () => {

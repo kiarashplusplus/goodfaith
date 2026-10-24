@@ -26,6 +26,10 @@ export const PROXY_ERROR = {
   RATE_LIMITED: -32005,
   UPSTREAM_AUTH: -32006,
   BODY_TOO_LARGE: -32007,
+  /** The transaction is outside the sponsorship policy (see sponsor-policy.ts). */
+  TRANSACTION_REFUSED: -32008,
+  /** The wallet has used its sponsored transactions or token accounts. */
+  WALLET_CAP: -32009,
 } as const;
 
 export type RpcId = string | number | null;
