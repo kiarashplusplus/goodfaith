@@ -12,7 +12,9 @@
     "cranker-e2e": "tsx cranker-e2e.ts",
     "kora-e2e": "tsx kora-e2e.ts",
     "smoke": "tsx smoke.ts",
-    "member": "tsx member.ts"
+    "member": "tsx member.ts",
+    "launch": "tsx launch.ts",
+    "admin": "tsx admin.ts"
   },
   "dependencies": {
     "@solana/kit": "^8.5.0"

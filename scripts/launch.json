@@ -1,0 +1,22 @@
+{
+  "comment": "Launch settings in whole tokens and days (docs/spec.md, Launch parameters). launch.ts converts them with the mint's decimals.",
+  "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  "decimals": 6,
+  "maxLoan": 500,
+  "maxTermDays": 180,
+  "graceDays": 30,
+  "maxGuaranteesPerMember": 2,
+  "cosignerEscrowBps": 2500,
+  "timelockDays": 7,
+  "recoveryDelayDays": 3,
+  "requestTtlDays": 7,
+  "firstLoanCap": 150,
+  "loanCapStep": 100,
+  "cooldownDays": 30,
+  "maxExposurePerPerson": 1000,
+  "disbursementWindowDays": 1,
+  "disbursementCapPerWindow": 5000,
+  "defaultBanDays": 730,
+  "lateBanDays": 90,
+  "cosignerBanDays": 365
+}

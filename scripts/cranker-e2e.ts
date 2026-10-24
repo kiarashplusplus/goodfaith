@@ -108,7 +108,8 @@ assert.ok(rec, 'this member\'s recovery was finalised');
 assert.equal(rec!.to, prev.pendingWallet);
 const personB = await getPerson(pB);
 assert.equal(personB.wallet, prev.pendingWallet);
-assert.equal(personB.ineligibleUntil, PERMANENT);
+const poolNow = await fetchPool(pool);
+assert.equal(personB.ineligibleUntil, poolNow.defaultBanSeconds === PERMANENT ? PERMANENT : after.closedAt + poolNow.defaultBanSeconds);
 assert.equal((await gf.fetchMember(rpc as any, mB, { commitment: 'confirmed' })).data.retired, true, 'old wallet retired');
 assert.equal((await getPerson(l.cosignerPerson)).ineligibleUntil, 0n);
 // the identity service barred the person: every wallet it knows for them lost its pass

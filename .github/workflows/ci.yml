@@ -76,7 +76,17 @@ jobs:
     defaults:
       run:
         working-directory: app
+    # The identity store tests run on memory, SQLite and this Postgres.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: goodfaith
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
+      TEST_PG_URL: postgres://postgres:test@127.0.0.1:5432/goodfaith
       # Mirrors app/.env.example so the build is deterministic.
       NEXT_PUBLIC_CLUSTER: devnet
       NEXT_PUBLIC_RPC_URL: https://api.devnet.solana.com
@@ -174,9 +184,9 @@ jobs:
             sleep 2
           done
           echo "surfpool did not come up"; tail -50 /tmp/surfpool.log; exit 1
-      - name: Plant the program, create the gatekeeper network and run the loan-cycle e2e
+      - name: Plant the program, create the gatekeeper network and the fund (launch.json, short delays), run the loan-cycle e2e
         working-directory: scripts
-        run: npm run deploy-fork && npm run gatekeeper-setup && npm run e2e
+        run: npm run deploy-fork && npm run gatekeeper-setup && npm run launch -- --timelock 3600 --recovery-delay 3600 && npm run e2e
       - name: Validate the Kora policy and start Kora without auth (development mode)
         run: |
           solana-keygen new --no-bip39-passphrase --silent -o /tmp/kora-signer.json
@@ -233,3 +243,52 @@ jobs:
             /tmp/kora.log
             /tmp/kora-auth.log
             /tmp/app.log
+
+  # The deployable images: the app (web, identity service, sponsor proxy) and the cranker. Built on every push and
+  # pull request; the app container is started against public devnet and /api/health must answer. The Kora image
+  # (deploy/kora.Dockerfile) compiles Kora for 10-20 minutes, so it is built by hand, not here.
+  docker:
+    name: Docker images (app, cranker) and /api/health
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: app/Dockerfile
+          load: true
+          tags: goodfaith-app:ci
+          build-args: |
+            NEXT_PUBLIC_PROGRAM_ID=BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd
+            NEXT_PUBLIC_POOL_AUTHORITY=none
+            GOODFAITH_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build the cranker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/cranker.Dockerfile
+          load: true
+          tags: goodfaith-cranker:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start the app container and read /api/health
+        run: |
+          docker run -d --name app -p 3000:3000 -e IDENTITY_PROVIDER=mock -e IDENTITY_DB_PATH=memory goodfaith-app:ci
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:3000/api/health && break; sleep 2; done
+          curl -s http://127.0.0.1:3000/api/health | tee /tmp/health.json
+          node -e '
+            const h = require("/tmp/health.json");
+            if (h.ok !== true) { console.error("health not ok"); process.exit(1); }
+            if (h.version !== "${{ github.sha }}") { console.error("version not stamped"); process.exit(1); }
+            if (!h.rpc?.ok) { console.error("rpc not reachable"); process.exit(1); }
+            if (h.identity?.provider !== "mock") { console.error("identity env not read"); process.exit(1); }
+          '
+          docker run --rm goodfaith-cranker:ci sh -c 'npx tsx cranker.ts --help >/dev/null 2>&1 || true; test -f cranker.ts && test -f admin.ts && test -f member.ts'
+      - name: App logs
+        if: failure()
+        run: docker logs app || true

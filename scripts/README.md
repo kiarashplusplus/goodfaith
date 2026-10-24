@@ -20,8 +20,11 @@ release set `SOLANA_VERSION` (only tarballs that exist on release.anza.xyz work;
    declared in `programs/goodfaith/src/lib.rs` with the `surfnet_writeProgram` cheatcode, so the original program keypair
    is not needed (a fresh `anchor build` generates a new, unrelated `target/deploy/goodfaith-keypair.json`; ignore it).
    The upgrade authority is your `~/.config/solana/id.json`.
-3. The mint is hard-coded in `lib.ts` (`MINT`, devnet USDC) and the pool is derived from it. `e2e.ts` writes the
-   resulting pool, vault, authority and gatekeeper network to `e2e-result.json`; copy them into `app/.env.local`.
+3. Create the gatekeeper network and the fund: `npm run gatekeeper-setup && npm run launch -- --timelock 3600
+   --recovery-delay 3600` (`launch.ts` reads `launch.json`, the decided settings; without the two flags it uses the
+   real seven-day notice and three-day recovery delay). It prints the app's `NEXT_PUBLIC_*` block and writes
+   `launch-result.json`. The mint is devnet USDC (`lib.ts` `MINT`, `launch.json`); `e2e.ts` reuses the pool and writes
+   `e2e-result.json` for CI. `docs/launch.md` has the full sequence for a real network.
 
 Program id note: LiteSVM (the Rust tests and `cd app && npm run test:svm`) registers the `.so` under the declared id
 directly, so neither needs a keypair or a running fork.
@@ -34,26 +37,44 @@ program; it writes `gatekeeper.json` (public). With that file present, `e2e` and
 for their wallets instead of planting cloned Civic bytes, and `identity-e2e` drives the app's identity routes
 (`IDENTITY_PROVIDER=mock`) from the wallet's proof of control to the issuer-signed join, a wallet replacement and a ban.
 
+## Operator and member command lines
+
+`npm run admin -- show | schedule --set field=value | cancel-params | apply | propose-authority <key> | cancel-proposal |
+accept-authority | suspend-issuer | pause | resume | announce-wind-down <account> | cancel-wind-down | sweep | freeze --yes`
+is everything the pool authority can do (`ADMIN_KEYPAIR`, default `~/.config/solana/id.json`; `--mint` for another
+pool). `e2e.ts` drives pause, schedule, apply, suspend-issuer and freeze through it. `npm run member -- status |
+request | cancel | cosign | repay | claim | close-expired | veto | finalize | donate` is a member's fallback client
+(`MEMBER_KEYPAIR`), everything the app offers from a terminal against the RPC alone; `kora-e2e` runs its `status`.
+
 ## Cranker and model
 
-`npm run cranker -- --once` (or `--interval 300` to loop) is the operator's scheduled job: it marks loans past due
-plus grace as defaulted, applies settings whose timelock has elapsed, sweeps the vault to the successor once a
-wind-down is in effect with no open loan, and posts the barred people to the identity service
+`npm run cranker -- --once` (or `--interval 300` to loop, `--dry-run` to only report) is the operator's scheduled
+job: it applies settings whose timelock has elapsed, marks loans past the cutoff as defaulted, releases escrow owed to
+co-signers of closed loans, closes expired requests, finalises recoveries whose delay has passed, sweeps the vault to
+the successor once a wind-down is in effect with no loan open, and posts the barred people to the identity service
 (`APP_URL`/`IDENTITY_URL` + `IDENTITY_ADMIN_KEY`) so their passes are revoked. It pays with `CRANKER_KEYPAIR`
 (default `~/.config/solana/id.json`) or through Kora when `KORA_URL` is set. `cranker-e2e` proves it on the fork with
-a one-day loan from the member `identity-e2e` created. `npm run model` prints the economic scenarios behind
-`docs/economics.md`.
+a one-day loan from the member `identity-e2e` created, a pending recovery and an expiring request. `npm run model`
+prints the economic tables behind `docs/economics.md`.
 
 ## Run
-- `npm run e2e` - full loan cycle with users paying fees: register, request, co-sign, partial and full repay,
-  cancel (borrower, co-signer, stranger rejected), `rebind_wallet`, `schedule_params` + `apply_params` after the timelock (an open loan keeps its own grace period), `suspend_issuer`, a wind-down with `sweep_to_successor` on a second pool,
-  default after time travel, `freeze_pool` (irreversible; re-runs on the same fork skip the update/freeze rows,
-  restart Surfpool for a fresh one).
-- `npm run kora-e2e` - request, co-sign and repay with Kora as fee and rent payer; asserts user SOL is unchanged.
-  Optional: needs Kora running (below) and a pool created by `e2e`.
+- `npm run e2e` - full loan cycle with users paying fees: register, request, co-sign, partial and full repay, the
+  escrow claim, cancel (borrower, co-signer, stranger rejected), recovery with a veto and a finalisation,
+  `schedule_params` + `apply_params` after the timelock (an open loan keeps its own grace period), default after time
+  travel, pause and resume, request expiry, the authority handover, `suspend_issuer`, a wind-down with
+  `sweep_to_successor` on a second pool, `freeze_pool` (irreversible; re-runs on the same fork skip the update/freeze
+  rows, restart Surfpool for a fresh one).
+- `npm run kora-e2e` - register, request, co-sign, repay, claim, default and the policy's refusals with Kora as fee
+  and rent payer; asserts user SOL is unchanged. Needs Kora running (below) and a pool created by `launch`/`e2e`.
 - `npm run smoke` - Playwright page load check of all 7 routes; fails on any console or page error (including hydration
   errors). Needs `cd app && npm run build && PORT=3100 npm start`. Override the URL with `APP_URL`; set `CHROMIUM_PATH` if no
   Playwright browser is installed (`playwright-core` doesn't download one).
+
+## Deployable images
+`app/Dockerfile` (web app, identity service and sponsor proxy; Next.js standalone), `deploy/cranker.Dockerfile`
+(cranker, admin and member CLIs), `deploy/kora.Dockerfile` (Kora with the fund's policy) and `deploy/docker-compose.yml`
+(all of them plus an optional Postgres). `docs/launch.md` walks through a deployment; `/api/health` reports the
+configuration, the RPC, the pool, the sponsor and the identity service.
 
 ## In CI
 `.github/workflows/ci.yml` runs the smoke check in the `app` job on every push and pull request, and the long `e2e`
@@ -83,7 +104,9 @@ kora --config scripts/kora/kora.toml --rpc-url http://127.0.0.1:8899 rpc start -
 - `kora/kora.toml` is the deployable policy; its header lists what to change for mainnet. Kora 2.0.5 answers any
   origin, so never expose its port: the app's `/api/sponsor` route is the origin and auth boundary.
 - `max_allowed_lamports` is the fee payer's outflow per transaction, CPI-created rent included. A first co-sign costs
-  6,062,160 lamports (borrower token account + Loan + escrow), hence 7,000,000.
+  6,618,960 lamports (borrower token account + Loan + escrow), hence 8,000,000. `max_signatures = 4` fits a recovery
+  proposal (wallet + issuer + recovery authority + Kora); the app's proxy only lets extra signers through on Good
+  Faith instructions.
 - `[kora.usage_limit]` counts transactions per wallet for ever (no window); keep it off.
 - Auth: Kora reads `KORA_API_KEY` / `KORA_HMAC_SECRET` from its environment; the proxy sends them. `config validate`
   warns about missing auth because it only looks at the file.

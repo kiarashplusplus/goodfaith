@@ -1,0 +1,81 @@
+# The whole deployment on one host: the app (web, identity service, sponsor proxy), Kora on the internal network
+# only, the cranker on a schedule, and optionally Postgres for the identity store. Copy deploy/.env.example to
+# deploy/.env and fill it; build args for the app come from the same file.
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   docker compose -f deploy/docker-compose.yml --profile postgres up -d --build
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: app/Dockerfile
+      args:
+        NEXT_PUBLIC_CLUSTER: ${NEXT_PUBLIC_CLUSTER:-devnet}
+        NEXT_PUBLIC_RPC_URL: ${NEXT_PUBLIC_RPC_URL:-https://api.devnet.solana.com}
+        NEXT_PUBLIC_POOL_MINT: ${NEXT_PUBLIC_POOL_MINT:-4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU}
+        NEXT_PUBLIC_PROGRAM_ID: ${NEXT_PUBLIC_PROGRAM_ID}
+        NEXT_PUBLIC_POOL_ADDRESS: ${NEXT_PUBLIC_POOL_ADDRESS:-}
+        NEXT_PUBLIC_POOL_AUTHORITY: ${NEXT_PUBLIC_POOL_AUTHORITY}
+        NEXT_PUBLIC_GATEKEEPER_NETWORK: ${NEXT_PUBLIC_GATEKEEPER_NETWORK}
+        NEXT_PUBLIC_KORA_URL: /api/sponsor
+        GOODFAITH_VERSION: ${GOODFAITH_VERSION:-dev}
+    ports: ["3000:3000"]
+    environment:
+      KORA_URL: http://kora:8080
+      KORA_API_KEY: ${KORA_API_KEY}
+      KORA_HMAC_SECRET: ${KORA_HMAC_SECRET}
+      IDENTITY_PROVIDER: ${IDENTITY_PROVIDER:-persona}
+      PERSONA_API_KEY: ${PERSONA_API_KEY:-}
+      PERSONA_TEMPLATE_ID: ${PERSONA_TEMPLATE_ID:-}
+      PERSONA_WEBHOOK_SECRET: ${PERSONA_WEBHOOK_SECRET:-}
+      MOCK_WEBHOOK_SECRET: ${MOCK_WEBHOOK_SECRET:-}
+      PERSON_HASH_SECRETS: ${PERSON_HASH_SECRETS}
+      ISSUER_SECRET: ${ISSUER_SECRET}
+      RECOVERY_SECRET: ${RECOVERY_SECRET:-}
+      GATEKEEPER_SECRET: ${GATEKEEPER_SECRET}
+      RECOVERY_REVIEW_SECONDS: ${RECOVERY_REVIEW_SECONDS:-86400}
+      IDENTITY_ADMIN_KEY: ${IDENTITY_ADMIN_KEY}
+      IDENTITY_DB_PATH: /data/identity.sqlite
+      IDENTITY_DB_URL: ${IDENTITY_DB_URL:-}
+      SPONSOR_DAILY_TX_PER_WALLET: ${SPONSOR_DAILY_TX_PER_WALLET:-40}
+      SPONSOR_ATA_PER_WALLET: ${SPONSOR_ATA_PER_WALLET:-12}
+    volumes: ["identity:/data"]
+    depends_on: [kora]
+    restart: unless-stopped
+  kora:
+    build:
+      context: ..
+      dockerfile: deploy/kora.Dockerfile
+    environment:
+      RPC_URL: ${NEXT_PUBLIC_RPC_URL:-https://api.devnet.solana.com}
+      KORA_PRIVATE_KEY: ${KORA_PRIVATE_KEY}
+      KORA_API_KEY: ${KORA_API_KEY}
+      KORA_HMAC_SECRET: ${KORA_HMAC_SECRET}
+    expose: ["8080"]
+    restart: unless-stopped
+  cranker:
+    build:
+      context: ..
+      dockerfile: deploy/cranker.Dockerfile
+    environment:
+      RPC_URL: ${NEXT_PUBLIC_RPC_URL:-https://api.devnet.solana.com}
+      NEXT_PUBLIC_POOL_MINT: ${NEXT_PUBLIC_POOL_MINT:-4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU}
+      NEXT_PUBLIC_PROGRAM_ID: ${NEXT_PUBLIC_PROGRAM_ID}
+      CRANKER_KEYPAIR: /run/secrets/cranker.json
+      CRANKER_INTERVAL: ${CRANKER_INTERVAL:-300}
+      APP_URL: http://app:3000
+      IDENTITY_ADMIN_KEY: ${IDENTITY_ADMIN_KEY}
+    volumes: ["${CRANKER_KEYPAIR_FILE:-./cranker.json}:/run/secrets/cranker.json:ro"]
+    depends_on: [app]
+    restart: unless-stopped
+  postgres:
+    image: postgres:17-alpine
+    profiles: [postgres]
+    environment:
+      POSTGRES_DB: goodfaith
+      POSTGRES_USER: goodfaith
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    restart: unless-stopped
+volumes:
+  identity:
+  pgdata:

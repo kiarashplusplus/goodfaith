@@ -1,0 +1,62 @@
+import { describe, expect, it } from "vitest";
+import { readServerEnv } from "./server-env";
+
+describe("server environment", () => {
+  it("describes a complete production-like setup without problems", () => {
+    const e = readServerEnv({
+      NEXT_PUBLIC_KORA_URL: "/api/sponsor",
+      KORA_URL: "http://kora:8080",
+      KORA_HMAC_SECRET: "s",
+      KORA_API_KEY: "k",
+      IDENTITY_PROVIDER: "persona",
+      PERSONA_API_KEY: "a",
+      PERSONA_TEMPLATE_ID: "t",
+      PERSONA_WEBHOOK_SECRET: "w",
+      ISSUER_SECRET: "[1]",
+      GATEKEEPER_SECRET: "[1]",
+      RECOVERY_SECRET: "[1]",
+      PERSON_HASH_SECRETS: "1:x",
+      IDENTITY_ADMIN_KEY: "adm",
+      IDENTITY_DB_URL: "postgres://x",
+    });
+    expect(e).toEqual({
+      sponsor: { enabled: true, proxied: true, upstream: true, auth: "hmac+key" },
+      identity: { configured: true, provider: "persona", recovery: true, store: "postgres" },
+      problems: [],
+    });
+  });
+  it("flags secrets exposed as NEXT_PUBLIC_, a proxy without upstream, missing auth and provider settings", () => {
+    const e = readServerEnv({
+      NEXT_PUBLIC_KORA_URL: "/api/sponsor",
+      NEXT_PUBLIC_KORA_HMAC_SECRET: "leak",
+      IDENTITY_PROVIDER: "persona",
+      ISSUER_SECRET: "[1]",
+      GATEKEEPER_SECRET: "[1]",
+      PERSON_HASH_SECRET: "x",
+      IDENTITY_DB_PATH: "memory",
+      NEXT_PUBLIC_CLUSTER: "mainnet-beta",
+    });
+    expect(e.problems).toEqual([
+      "NEXT_PUBLIC_KORA_URL points at the proxy but KORA_URL (the upstream Kora) is not set.",
+      "NEXT_PUBLIC_KORA_HMAC_SECRET is set: that value would be shipped to browsers. Use KORA_HMAC_SECRET.",
+      "IDENTITY_PROVIDER=persona needs PERSONA_API_KEY, PERSONA_TEMPLATE_ID and PERSONA_WEBHOOK_SECRET.",
+      "IDENTITY_ADMIN_KEY is not set: the cranker cannot revoke passes.",
+      "IDENTITY_DB_PATH=memory loses every record on restart; not for mainnet.",
+    ]);
+    expect(e.identity).toMatchObject({ configured: true, recovery: false, store: "memory" });
+    expect(readServerEnv({ KORA_URL: "http://k" }).problems).toContain(
+      "Kora is reachable without KORA_API_KEY or KORA_HMAC_SECRET; the upstream must not be exposed without auth.",
+    );
+    expect(readServerEnv({ IDENTITY_PROVIDER: "mock", NEXT_PUBLIC_CLUSTER: "mainnet-beta" }).problems).toContain(
+      "The mock identity provider must not run against mainnet.",
+    );
+    expect(readServerEnv({ IDENTITY_PROVIDER: "other" }).identity.provider).toBe("unknown");
+  });
+  it("reports nothing configured as such", () => {
+    expect(readServerEnv({})).toEqual({
+      sponsor: { enabled: false, proxied: false, upstream: false, auth: "none" },
+      identity: { configured: false, provider: "none", recovery: false, store: "sqlite" },
+      problems: [],
+    });
+  });
+});

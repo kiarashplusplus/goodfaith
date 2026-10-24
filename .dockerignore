@@ -1,0 +1,13 @@
+.git
+node_modules
+**/node_modules
+target
+app/.next
+app/tsconfig.tsbuildinfo
+**/*.log
+scripts/gatekeeper-network.json
+scripts/identity-e2e-result.json
+scripts/launch-result.json
+app/identity.sqlite*
+*.pem
+*-keypair.json

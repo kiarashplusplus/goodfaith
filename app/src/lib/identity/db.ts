@@ -1,16 +1,23 @@
 /**
- * The one identity store per server process, from IDENTITY_DB_PATH (default ./identity.sqlite; "memory" for a
- * throwaway store). Shared by the identity service and the fee-sponsor proxy, which keeps its per-wallet counters
- * here, so the proxy works even where the identity service itself is not configured.
+ * The one identity store per server process: Postgres when IDENTITY_DB_URL is set, else SQLite at IDENTITY_DB_PATH
+ * (default ./identity.sqlite; "memory" for a throwaway store). Shared by the identity service and the fee-sponsor
+ * proxy, which keeps its per-wallet counters here, so the proxy works even where the identity service itself is not
+ * configured.
  */
+import { PgStore } from "./pg-store";
 import { MemoryStore, openSqlite, type IdentityStore } from "./store";
 
 const g = globalThis as unknown as { __goodfaithStore?: IdentityStore };
 
 export function openStore(): IdentityStore {
   if (!g.__goodfaithStore) {
-    const dbPath = process.env.IDENTITY_DB_PATH?.trim() || "./identity.sqlite";
-    g.__goodfaithStore = dbPath === "memory" ? new MemoryStore() : openSqlite(dbPath);
+    const url = process.env.IDENTITY_DB_URL?.trim();
+    if (url) {
+      g.__goodfaithStore = PgStore.fromUrl(url);
+    } else {
+      const dbPath = process.env.IDENTITY_DB_PATH?.trim() || "./identity.sqlite";
+      g.__goodfaithStore = dbPath === "memory" ? new MemoryStore() : openSqlite(dbPath);
+    }
   }
   return g.__goodfaithStore;
 }

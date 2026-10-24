@@ -41,6 +41,17 @@ Values are validated at startup (`src/lib/config.ts`). A bad value, or a pool on
 configuration, shows a red banner and turns off borrowing, co-signing, repaying and donating. Plain wallet transfers on
 the Checking page keep working.
 
+## Health and deployment
+
+`GET /api/health` answers 200 with `ok: true` when the configuration is valid and the RPC answers; the body lists the
+pinned pool (paused, winding down, active loans, pending claims, scheduled change), the sponsor (proxied, upstream,
+auth kind, liveness), the identity service (provider, recovery enabled, store kind) and configuration problems from
+`src/lib/server-env.ts` (a secret under `NEXT_PUBLIC_`, a proxy without upstream, Kora without auth, the mock provider
+or a memory store on mainnet). `app/Dockerfile` builds the standalone server (`next.config.ts` `output: "standalone"`);
+`deploy/docker-compose.yml` runs it with Kora and the cranker. The identity store is SQLite by default and Postgres
+when `IDENTITY_DB_URL` is set (`src/lib/identity/pg-store.ts`; the store tests run on both when `TEST_PG_URL` points
+at a database).
+
 ## Identity issuer (server side)
 
 Joining needs the fund's issuer to co-sign (`register_member` and `propose_rebind` require `pool.issuer`; a recovery

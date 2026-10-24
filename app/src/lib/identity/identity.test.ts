@@ -6,6 +6,7 @@ import { gatekeeperAccountAddress, gatewayTokenAddress } from "../gateway";
 import { ageAt, HASH_DOMAIN, HashKeyring, normaliseFields, personHash, toHex } from "./person-hash";
 import { DEFAULT_FIELD_KEYS, PersonaProvider, parsePersonaSignature, personaDigest } from "./persona";
 import { MemoryStore, openSqlite, type IdentityStore } from "./store";
+import { PgStore } from "./pg-store";
 import { MockProvider, MOCK_FIELDS_TX } from "./mock";
 import { proofMessage, verifyProof } from "./wallet-proof";
 
@@ -123,9 +124,13 @@ describe("Persona provider", () => {
 });
 
 describe("stores", () => {
+  // Postgres runs only where TEST_PG_URL points at a database (CI starts one); the same assertions on all backends.
   const stores: [string, () => IdentityStore][] = [
     ["memory", () => new MemoryStore()],
     ["sqlite", () => openSqlite(":memory:")],
+    ...(process.env.TEST_PG_URL
+      ? ([["postgres", () => PgStore.fromUrl(process.env.TEST_PG_URL!)]] as [string, () => IdentityStore][])
+      : []),
   ];
   for (const [name, make] of stores) {
     it(`${name}: wallets, persons, credentials, recoveries, sponsorship and event ids`, async () => {

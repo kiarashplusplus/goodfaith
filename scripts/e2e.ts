@@ -67,15 +67,20 @@ await setUsdc(cosigner2.address, 500n * USDC);
 await setUsdc(third.address, 200n * USDC);
 /** One stable opaque 32-byte person id per e2e wallet (the issuer service assigns random ones). */
 const idOf = (a: Address) => new Uint8Array(createHash('sha256').update(`e2e:${a}`).digest());
-const TIMELOCK = 3600n;
-const RECOVERY_DELAY = 3600n;
 const DAY = 86_400n;
 const PERMANENT = 9223372036854775807n;
-/** Pool settings for the fork: the admin key plays every role (issuer, recovery and pause authority); launch separates them. */
+/** The bar a person carries after `at` for `seconds` (the program saturates at i64::MAX). */
+const barAfter = (at: bigint, seconds: bigint) => (seconds === PERMANENT ? PERMANENT : at + seconds);
+const adminCli = await import('./admin.ts');
+const adminRun = async (args: string[]) => { const lines: string[] = []; await adminCli.run(args, (l) => lines.push(l)); return lines.join(' '); };
+/**
+ * Pool settings when no pool exists yet (`npm run launch` normally creates it from launch.json first): the admin key
+ * plays every role (issuer, recovery and pause authority).
+ */
 const params = (timelockSeconds: bigint) => ({
   gatekeeperNetwork: NETWORK, maxLoan: 1000n * USDC, maxTermDays: 30, graceDays: 3, maxGuaranteesPerMember: 2, cosignerEscrowBps: 2500,
   issuer: admin.address, timelockSeconds, recoveryAuthority: admin.address, pauseAuthority: admin.address,
-  recoveryDelaySeconds: RECOVERY_DELAY, requestTtlSeconds: 7n * DAY, firstLoanCap: 1000n * USDC, loanCapStep: 100n * USDC, cooldownSeconds: 0n,
+  recoveryDelaySeconds: 3600n, requestTtlSeconds: 7n * DAY, firstLoanCap: 1000n * USDC, loanCapStep: 100n * USDC, cooldownSeconds: 0n,
   maxExposurePerPerson: 10_000n * USDC, disbursementWindowSeconds: DAY, disbursementCapPerWindow: 0n,
   defaultBanSeconds: PERMANENT, lateBanSeconds: 0n, cosignerBanSeconds: PERMANENT,
 });
@@ -84,15 +89,16 @@ const [pool] = await gf.findPoolPda({ mint: MINT });
 const [vault] = await gf.findVaultPda({ pool });
 const existing = await rpc.getAccountInfo(pool, { encoding: 'base64' }).send();
 if (!existing.value) {
-  await send([await gf.getInitializePoolInstructionAsync({ payer: admin, mint: MINT, params: params(TIMELOCK) })], admin, 'initialize_pool');
+  await send([await gf.getInitializePoolInstructionAsync({ payer: admin, mint: MINT, params: params(3600n) })], admin, 'initialize_pool');
 }
 const p0 = await fetchPool(pool);
+const TIMELOCK = p0.timelockSeconds;
 assert.equal(p0.gatekeeperNetwork, NETWORK, 'existing pool uses a different gatekeeper network');
 assert.equal(p0.mint, MINT);
 assert.equal(p0.issuer, admin.address, 'existing pool has a different issuer');
 assert.equal(p0.recoveryAuthority, admin.address);
 assert.equal(p0.paused, false);
-row('initialize_pool', existing.value ? 'reused existing pool' : 'created', `net=${p0.gatekeeperNetwork.slice(0, 6)}.. bps=${p0.cosignerEscrowBps} grace=${p0.graceDays}d timelock=${p0.timelockSeconds}s recovery delay=${p0.recoveryDelaySeconds}s request ttl=${p0.requestTtlSeconds}s issuer=recovery=pause=admin`);
+row('initialize_pool', existing.value ? 'reused existing pool (launch)' : 'created', `net=${p0.gatekeeperNetwork.slice(0, 6)}.. bps=${p0.cosignerEscrowBps} grace=${p0.graceDays}d timelock=${p0.timelockSeconds}s recovery delay=${p0.recoveryDelaySeconds}s request ttl=${p0.requestTtlSeconds}s issuer=recovery=pause=admin`);
 
 const ataOf = { donor: await ata(donor.address), borrower: await ata(borrower.address), cosigner: await ata(cosigner.address), cosigner2: await ata(cosigner2.address), third: await ata(third.address) };
 
@@ -282,14 +288,15 @@ if (frozenAtStart) {
   const pBefore = await fetchPool(pool);
   newGrace = pBefore.graceDays + 7;
   const strangerErr = await expectFail(send([gf.getScheduleParamsInstruction({ authority: third, pool, params: { ...paramsOf(pBefore), graceDays: newGrace } })], third, 'schedule by stranger'), 'stranger schedule');
-  await send([gf.getScheduleParamsInstruction({ authority: admin, pool, params: { ...paramsOf(pBefore), graceDays: newGrace } })], admin, 'schedule_params');
+  await adminRun(['schedule', '--set', `graceDays=${newGrace}`]);
   const ps = await fetchPool(pool);
+  assert.match(await adminRun(['show']), new RegExp(`graceDays: ${pBefore.graceDays} -> ${newGrace}`));
   assert.equal(ps.graceDays, pBefore.graceDays, 'nothing changes at scheduling');
   assert.equal(ps.pendingParams.__option, 'Some');
   assert.ok(ps.paramsEffectiveAt >= BigInt(await clockTs()) + TIMELOCK - 60n, 'effective after the timelock');
   const early = await expectFail(send([gf.getApplyParamsInstruction({ pool })], third, 'apply early'), 'apply before the timelock');
   const tooShort = await expectFail(send([gf.getScheduleParamsInstruction({ authority: admin, pool, params: { ...paramsOf(pBefore), timelockSeconds: 0n } })], admin, 'schedule timelock 0'), 'notice period below the minimum');
-  row('schedule_params grace +7', `stranger ${errName(strangerErr)}`, `pending, effective in ${ps.paramsEffectiveAt - BigInt(await clockTs())}s`, `apply now: ${errName(early)}`, `timelock -> 0: ${errName(tooShort)}`);
+  row('schedule_params grace +7 (admin CLI)', `stranger ${errName(strangerErr)}`, `pending, effective in ${ps.paramsEffectiveAt - BigInt(await clockTs())}s`, `apply now: ${errName(early)}`, `timelock -> 0: ${errName(tooShort)}`);
 }
 const earlyDefault = await expectFail(send([await gf.getMarkDefaultInstructionAsync({ caller: third, mint: MINT, vault, loan: L2.loan, escrow: L2.escrow, borrowerPerson: pB, cosignerPerson: pC, rentPayer: l.rentPayer })], third, 'early default'), 'early default');
 row('mark_default too early', 'rejected', errName(earlyDefault));
@@ -303,8 +310,8 @@ const now1 = await clockTs();
 console.log('clock', now0, '->', now1, 'due', l.dueAt, 'target', target);
 assert.ok(now1 > Number(l.dueAt) + l.graceDays * 86400, 'time travel moved clock past due+grace');
 if (!frozenAtStart) {
-  // Anyone applies the change once the delay has passed (the operator's cranker in production).
-  await send([gf.getApplyParamsInstruction({ pool })], third, 'apply_params');
+  // Anyone applies the change once the delay has passed (the operator's cranker, or the admin CLI, in production).
+  await adminRun(['apply']);
   const pa = await fetchPool(pool);
   assert.equal(pa.graceDays, newGrace, 'pool grace updated');
   assert.equal(pa.pendingParams.__option, 'None');
@@ -319,13 +326,16 @@ assert.equal(await tok(ataOf.cosigner2), pre.c, 'nothing pushed to the co-signer
 assert.equal((await rpc.getAccountInfo(L2.escrow, { encoding: 'base64' }).send()).value, null, 'fully absorbed escrow closes at once');
 l = await loanOf(L2.loan); assert.equal(l.status, gf.LoanStatus.Defaulted); assert.equal(l.refundPending, L2.escrowAmt - recovered);
 const personB = await getPerson(pB), personC = await getPerson(pC);
-assert.equal(personB.ineligibleUntil, PERMANENT); assert.equal(personC.ineligibleUntil, PERMANENT, 'the fund lost money, so the co-signer is barred too');
+const defaultedAt = (await loanOf(L2.loan)).closedAt;
+const poolNow = await fetchPool(pool);
+assert.equal(personB.ineligibleUntil, barAfter(defaultedAt, poolNow.defaultBanSeconds));
+assert.equal(personC.ineligibleUntil, barAfter(defaultedAt, poolNow.cosignerBanSeconds), 'the fund lost money, so the co-signer is barred too');
 assert.equal(personB.activeLoan.__option, 'None'); assert.equal(personC.activeGuarantees, 0);
 p = await fetchPool(pool);
 assert.equal(p.totalRecovered, pre.p.totalRecovered + recovered);
 assert.equal(p.totalLost, pre.p.totalLost + (shortfall - recovered));
 assert.equal(p.activeLoans, 0n);
-row('mark_default', `recovered ${fmt(recovered)}`, `lost ${fmt(shortfall - recovered)}`, `vault ${fmt(await tok(vault))}`, `both people ineligible (loss > 0)`);
+row('mark_default', `recovered ${fmt(recovered)}`, `lost ${fmt(shortfall - recovered)}`, `vault ${fmt(await tok(vault))}`, `both people barred (loss > 0): borrower ${poolNow.defaultBanSeconds === PERMANENT ? 'for good' : `${poolNow.defaultBanSeconds / DAY} days`}, co-signer ${poolNow.cosignerBanSeconds === PERMANENT ? 'for good' : `${poolNow.cosignerBanSeconds / DAY} days`}`);
 // ineligible cannot request again, from any wallet of that person
 {
   const [cosignerMember] = await gf.findMemberPda({ pool, wallet: cosigner2.address });
@@ -346,12 +356,13 @@ if (!frozenAtStart) {
   const [m5] = await gf.findMemberPda({ pool, wallet: fifth.address });
   const reqIx = () => gf.getRequestLoanInstructionAsync({ payer: fourth, borrower: fourth, mint: MINT, borrowerPerson: p4, cosignerMember: m5, borrowerGatewayToken: gw4, amount: 10n * USDC, termDays: 5, cosigner: fifth.address });
   const strangerPause = await expectFail(send([gf.getPauseLendingInstruction({ signer: third, pool })], third, 'pause by stranger'), 'stranger pause');
-  await send([gf.getPauseLendingInstruction({ signer: admin, pool })], admin, 'pause_lending');
+  await adminRun(['pause']);
   assert.equal((await fetchPool(pool)).paused, true);
+  assert.match(await adminRun(['show']), /PAUSED/);
   const whilePaused = await expectFail(send([await reqIx()], fourth, 'request while paused'), 'request while paused');
-  await send([gf.getResumeLendingInstruction({ authority: admin, pool })], admin, 'resume_lending');
+  await adminRun(['resume']);
   assert.equal((await fetchPool(pool)).paused, false);
-  row('pause_lending / resume_lending', `stranger ${errName(strangerPause)}`, `request while paused: ${errName(whilePaused)}`, 'resumed by the authority');
+  row('pause_lending / resume_lending (admin CLI)', `stranger ${errName(strangerPause)}`, `request while paused: ${errName(whilePaused)}`, 'resumed by the authority');
   await send([await reqIx()], fourth, 'request (to expire)');
   const [request] = await gf.findRequestPda({ pool, borrower: fourth.address });
   const req = (await gf.fetchLoanRequest(rpc as any, request, { commitment: 'confirmed' })).data;
@@ -390,17 +401,17 @@ if (!frozenAtStart) {
 
 // ---------- suspend_issuer: an instant brake; a new issuer goes through the timelock ----------
 if (!frozenAtStart) {
-  await send([gf.getSuspendIssuerInstruction({ authority: admin, pool })], admin, 'suspend_issuer');
+  await adminRun(['suspend-issuer']);
   assert.equal((await fetchPool(pool)).issuer, address('11111111111111111111111111111111'));
+  assert.match(await adminRun(['show']), /SUSPENDED/);
   const blocked = await expectFail(send([await registerIx(third, gwThird)], third, 'register while suspended'), 'register while suspended');
-  const ps = await fetchPool(pool);
-  await send([gf.getScheduleParamsInstruction({ authority: admin, pool, params: { ...paramsOf(ps), issuer: admin.address } })], admin, 'schedule issuer');
+  await adminRun(['schedule', '--set', `issuer=${admin.address}`]);
   const stillBlocked = await expectFail(send([await registerIx(third, gwThird)], third, 'register while pending'), 'register while the new issuer is pending');
   await cheat('surfnet_timeTravel', [{ absoluteTimestamp: (await clockTs() + Number(TIMELOCK) + 60) * 1000 }]);
   await new Promise(r => setTimeout(r, 1500));
-  await send([gf.getApplyParamsInstruction({ pool })], third, 'apply issuer');
+  await adminRun(['apply']);
   await send([await registerIx(third, gwThird)], third, 'register after restore');
-  row('suspend_issuer', `register: ${errName(blocked)}`, `scheduled new issuer, still ${errName(stillBlocked)}`, 'after the timelock: registrations resume');
+  row('suspend_issuer (admin CLI)', `register: ${errName(blocked)}`, `scheduled new issuer, still ${errName(stillBlocked)}`, 'after the timelock: registrations resume');
 }
 
 // ---------- wind-down and sweep, on a second pool so the main one stays usable for the sponsor e2e ----------
@@ -438,11 +449,13 @@ if (!frozenAtStart) {
 
 // ---------- freeze_pool (irreversible) ----------
 if (!frozenAtStart) {
-  await send([gf.getFreezePoolInstruction({ authority: admin, pool })], admin, 'freeze_pool');
+  await expectFail(adminRun(['freeze']), 'freeze without --yes');
+  await adminRun(['freeze', '--yes']);
   assert.equal((await fetchPool(pool)).authority.__option, 'None', 'authority cleared');
+  assert.match(await adminRun(['show']), /none \(frozen\)/);
   const pf = await fetchPool(pool);
   const afterFreeze = await expectFail(send([gf.getScheduleParamsInstruction({ authority: admin, pool, params: paramsOf(pf) })], admin, 'schedule after freeze'), 'schedule after freeze');
-  row('freeze_pool', 'authority = none', `schedule now ${errName(afterFreeze)}`);
+  row('freeze_pool (admin CLI, --yes required)', 'authority = none', `schedule now ${errName(afterFreeze)}`);
 }
 
 // final totals
