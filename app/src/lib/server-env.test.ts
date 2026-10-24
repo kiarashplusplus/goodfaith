@@ -22,6 +22,7 @@ describe("server environment", () => {
     expect(e).toEqual({
       sponsor: { enabled: true, proxied: true, upstream: true, auth: "hmac+key" },
       identity: { configured: true, provider: "persona", notifier: "webhook", store: "postgres" },
+      ramps: { configured: false, origin: null, sandbox: false },
       problems: [],
     });
     expect(readServerEnv({ RECOVERY_SECRET: "[1]" }).problems).toEqual([
@@ -59,7 +60,25 @@ describe("server environment", () => {
     expect(readServerEnv({})).toEqual({
       sponsor: { enabled: false, proxied: false, upstream: false, auth: "none" },
       identity: { configured: false, provider: "none", notifier: "console", store: "sqlite" },
+      ramps: { configured: false, origin: null, sandbox: false },
       problems: [],
     });
+  });
+
+  it("reports MoneyGram cash access and keeps its secret server-side", () => {
+    const origin = "https://playground.xramps.moneygram.com";
+    expect(readServerEnv({ NEXT_PUBLIC_RAMPS_ORIGIN: `${origin}/`, MONEYGRAM_SK: "ramps_sk_sbox_x" })).toMatchObject({
+      ramps: { configured: true, origin, sandbox: true },
+      problems: [],
+    });
+    expect(readServerEnv({ NEXT_PUBLIC_RAMPS_ORIGIN: origin }).problems).toEqual([
+      "NEXT_PUBLIC_RAMPS_ORIGIN is set but MONEYGRAM_SK is not: the cash card cannot open.",
+    ]);
+    expect(readServerEnv({ NEXT_PUBLIC_MONEYGRAM_SK: "leak" }).problems).toContain(
+      "NEXT_PUBLIC_MONEYGRAM_SK is set: that value would be shipped to browsers. Use MONEYGRAM_SK.",
+    );
+    expect(
+      readServerEnv({ NEXT_PUBLIC_RAMPS_ORIGIN: origin, MONEYGRAM_SK: "ramps_sk_sbox_x", NEXT_PUBLIC_CLUSTER: "mainnet-beta" }).problems,
+    ).toContain("MONEYGRAM_SK is a sandbox key; mainnet needs MoneyGram production credentials.");
   });
 });

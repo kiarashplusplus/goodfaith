@@ -26,6 +26,7 @@ export async function GET(): Promise<Response> {
     config: { ok: CONFIG_ERRORS.length === 0, errors: CONFIG_ERRORS, problems: env.problems },
     sponsor: env.sponsor,
     identity: env.identity,
+    ramps: env.ramps,
   };
   try {
     const slot = await timeout(rpc.getSlot({ commitment: "confirmed" }).send(), 5_000);

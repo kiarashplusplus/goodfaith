@@ -4,6 +4,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { QRCodeSVG } from "qrcode.react";
 import { address, type Address } from "@solana/kit";
+import { CashCard } from "@/components/cash-card";
 import { RequireWallet } from "@/components/connect-button";
 import { Button, Card, Field, GhostButton, Notice, PageTitle, Stat, TxStatus } from "@/components/ui";
 import { useApp, useBalances, useSponsor } from "@/lib/hooks";
@@ -37,6 +38,7 @@ function Account({ wallet }: { wallet: Address }) {
         <Send wallet={wallet} balance={data?.usdc} onDone={() => mutate()} />
         <Receive wallet={wallet} />
       </div>
+      <CashCard wallet={wallet} onDone={() => mutate()} />
       <History wallet={wallet} />
     </div>
   );

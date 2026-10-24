@@ -82,7 +82,7 @@ The app includes a plain **wallet**: your own USDC under a key only you hold. Go
 
 1. **Verify once** (section 4), a few minutes. The pass lasts a year and renews from the app.
 2. **Ask a friend.** Enter the amount, the term and your co-signer's wallet; they get a link and approve within a week. The USDC arrives the moment they do.
-3. **Spend it.** USDC is not yet dollars in a bank. You can send it, spend it where it is accepted, or convert it through an exchange or "off-ramp" service, with its own fees and identity checks (section 3 has an example). A bank partner would remove this step (section 8).
+3. **Spend it.** USDC is not yet dollars in a bank. You can send it, spend it where it is accepted, or turn it into cash at a MoneyGram counter from the app's Checking page: MoneyGram checks your ID, shows its fee and rate, and gives you a reference number to collect US dollars with (section 3 has the cost). The same card turns cash into USDC, where MoneyGram offers cash deposits (its test environment does for the US; production coverage for Texas is still to confirm). A bank partner would remove this step (section 8).
 4. **Repay** any amount, from any wallet, until the cutoff. The app shows the due date, the grace days left and what is still owed.
 
 ## 3. Why Solana, and what the fee sponsor does
@@ -93,7 +93,7 @@ The sponsor's money is bounded and kept apart by purpose:
 - **Three daily budgets.** *Protected* operations (settling, repaying, paying back, releasing or collecting what is owed, waiving, cancelling or finishing a recovery) have their own budget, so nobody can stop a member protecting themselves or paying what they owe by exhausting another. *Onboarding* (a wallet's first sponsored transaction, and joining) is small: 60 transactions and 20 new wallets a day at launch. *Members* have the rest. Each budget warns the operator at 80%.
 - **Where rent goes.** The rent of a loan request and of an escrow goes back to whoever paid it (the sponsor, when it sponsored them) when they close. The rent of person, membership and loan records is never returned; those records are permanent. The sponsor pays for a token account only when its owner is a verified member, within a lifetime allowance per wallet, and never pays to close one, so its money cannot be collected back by opening and closing accounts.
 
-**What "fee-free" leaves out.** Converting to bank dollars is not free: a $150 loan converted out and back through a service charging $3 each way costs about $6, 4% of the loan, paid to that service. A borrower who spends USDC directly pays nothing.
+**What "fee-free" leaves out.** Converting to cash is not free. The app's cash card uses MoneyGram Ramps, which charges its own fee: its test environment quoted 3.00 USDC on a 25 USDC cash-out in Texas, at one dollar per USDC; production fees are not yet published to us. At $3 each way, a $150 loan converted out and back costs about $6, 4% of the loan, paid to MoneyGram. A cash-out also carries MoneyGram's reference number in a memo, which the fee sponsor does not pay for, so the wallet pays that one network fee (a fraction of a cent). A borrower who spends USDC directly pays nothing.
 
 **Tradeoffs.** Solana has had outages. During one, nobody can borrow or repay; funds are not lost, but access pauses (section 2 and section 6 say what an outage across a cutoff does).
 
@@ -146,7 +146,7 @@ After the delay anyone finalises the move. A recovered membership sits on the fi
 - **Donations, not deposits.** Nobody is promised their money back.
 - **Custody.** Your wallet is yours. The fund and the escrows are held by the program under rules the administrator changes only with notice.
 
-**Open questions for counsel**, which we will put to a Texas attorney before any real-money launch: which legal entity runs the fund and holds the keys; who the lender is in law; who owns the donated assets; what the loan and co-signer agreements must say, and whether a co-signer is a guarantor or a surety; whether the Equal Credit Opportunity Act and Regulation B apply, and what notices a refused or barred person is owed; whether the FTC's co-signer notice rule applies; what sanctions screening is owed; how unclaimed escrow and entitlements are treated; whether the selfie match is a biometric identifier under Texas law; whether any licensing or money-transmission rules apply; which disclosure rules apply to time-limited bars; the privacy of the check and the fingerprint; whether the upgrade authority changes any of this; and how donations are treated for tax. Answers will be published before launch.
+**Open questions for counsel**, which we will put to a Texas attorney before any real-money launch: which legal entity runs the fund and holds the keys; who the lender is in law; who owns the donated assets; what the loan and co-signer agreements must say, and whether a co-signer is a guarantor or a surety; whether the Equal Credit Opportunity Act and Regulation B apply, and what notices a refused or barred person is owed; whether the FTC's co-signer notice rule applies; what sanctions screening is owed; how unclaimed escrow and entitlements are treated; whether the selfie match is a biometric identifier under Texas law; whether any licensing or money-transmission rules apply, including to offering MoneyGram's cash service inside the app (MoneyGram is the licensed party and runs its own identity check; the operator would be its integration partner); which disclosure rules apply to time-limited bars; the privacy of the check and the fingerprint; whether the upgrade authority changes any of this; and how donations are treated for tax. Answers will be published before launch.
 
 ## 5. How the fund is run
 
@@ -219,7 +219,8 @@ Five pieces of software run beside the program, each replaceable:
 5. **Research with the people it is for.** Interviews and a dry run with prospective borrowers and co-signers, including people who decline to take part, about the deposit, the bar, and the pressure a guarantee puts on a friendship. If the co-signer terms keep the people we mean to reach away, the design changes before money moves.
 6. **A very small pilot with real dollars in Texas**: a $10,000 fund, run by volunteers, with the platform's one-off costs paid by the founder; a multisig administrator and a separate upgrade multisig; measuring what section 9 says we need. The fund grows only when the pilot's numbers say lending is working, and each step up (more capital, a higher ceiling or budget) is a settings change with notice and a published review.
 7. **Permanence**: remove the upgrade key once the exit criteria are met.
-8. **A bank partner** for dollar accounts, then **more states**, one at a time after reviewing each state's law.
+8. **Cash access**: MoneyGram cash-out and cash-in through the app (on the test network now, against MoneyGram's test environment); production needs MoneyGram's partner review of the operator and counsel's answer above.
+9. **A bank partner** for dollar accounts, then **more states**, one at a time after reviewing each state's law.
 
 ## 9. Economics
 

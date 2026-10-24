@@ -11,6 +11,8 @@ export type ServerEnv = {
     notifier: "console" | "webhook";
     store: "memory" | "sqlite" | "postgres";
   };
+  /** MoneyGram Ramps cash access: the widget origin is public, the secret key server-only. */
+  ramps: { configured: boolean; origin: string | null; sandbox: boolean };
   problems: string[];
 };
 
@@ -32,6 +34,7 @@ export function readServerEnv(env: Record<string, string | undefined> = process.
     "PERSON_HASH_SECRETS",
     "IDENTITY_ADMIN_KEY",
     "IDENTITY_DB_URL",
+    "MONEYGRAM_SK",
   ]) {
     if (has(env[`NEXT_PUBLIC_${k}`])) problems.push(`NEXT_PUBLIC_${k} is set: that value would be shipped to browsers. Use ${k}.`);
   }
@@ -70,9 +73,16 @@ export function readServerEnv(env: Record<string, string | undefined> = process.
   if (store === "memory" && env.NEXT_PUBLIC_CLUSTER?.trim() === "mainnet-beta")
     problems.push("IDENTITY_DB_PATH=memory loses every record on restart; not for mainnet.");
 
+  const rampsOrigin = env.NEXT_PUBLIC_RAMPS_ORIGIN?.trim().replace(/\/+$/, "") || null;
+  const rampsKey = env.MONEYGRAM_SK?.trim() ?? "";
+  if (rampsOrigin && !rampsKey) problems.push("NEXT_PUBLIC_RAMPS_ORIGIN is set but MONEYGRAM_SK is not: the cash card cannot open.");
+  if (rampsKey.startsWith("ramps_sk_sbox_") && env.NEXT_PUBLIC_CLUSTER?.trim() === "mainnet-beta")
+    problems.push("MONEYGRAM_SK is a sandbox key; mainnet needs MoneyGram production credentials.");
+
   return {
     sponsor: { enabled: publicKora !== "", proxied, upstream, auth },
     identity: { configured: identityConfigured, provider, notifier: has(env.NOTIFY_WEBHOOK_URL) ? "webhook" : "console", store },
+    ramps: { configured: !!rampsOrigin && rampsKey !== "", origin: rampsOrigin, sandbox: rampsKey.startsWith("ramps_sk_sbox_") },
     problems,
   };
 }
