@@ -1,25 +1,36 @@
 // The cranker on the fork: a member from identity-e2e borrows a one-day loan and repays most of it, a request is left
-// to expire, a wallet recovery is left pending; time travels past due + grace, and one cranker pass settles the loan,
-// bars the borrower, collects the fund's recovery, releases the co-signer's leftover escrow, finalises the recovery,
-// has the identity service revoke the borrower's passes; the borrower pays the shortfall back and the bar relaxes; a
-// later pass closes the expired request.
+// to expire, a wallet recovery is left pending; time travels past due + grace. The borrower settles the loan
+// themselves and the escrow is frozen: one cranker pass finalises the recovery, reports the frozen escrow as waiting
+// (not as an error) and reconciles the identity service with the chain's bar, whoever settled. The borrower pays the
+// shortfall back while the escrow is still frozen (the uncollected recovery is released to the co-signer instead of
+// being paid from the vault), the escrow thaws, the next pass releases the whole escrow to the co-signer; a later pass
+// closes the expired request.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createKeyPairSignerFromBytes, type Address } from '@solana/kit';
-import { ata, cheat, clockTs, fetchPool, gf, loanPda, MINT, rpc, send, setSol, setUsdc, tok, USDC, wallet } from './lib.ts';
+import { ata, cheat, clockTs, fetchPool, gf, loanPda, MINT, rpc, send, setSol, setUsdc, tok, TOKEN_PROGRAM, USDC, wallet } from './lib.ts';
 import { gatewayFixture } from './gateway-fixture.ts';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const APP = process.env.APP_URL ?? 'http://127.0.0.1:3100';
+process.env.CRANKER_KEYPAIR ??= path.join(os.homedir(), '.config/solana/id.json'); // the fork's cranker is the default key (test harness only)
 const { runOnce } = await import('./cranker.ts');
+/** Flips the SPL token state byte of a loan's escrow (1 initialized, 2 frozen), as the mint's freeze authority could. */
+async function setEscrowState(loanAddr: Address, state: 1 | 2) {
+  const [escrow] = await gf.findEscrowPda({ loan: loanAddr });
+  const acc = (await rpc.getAccountInfo(escrow, { encoding: 'base64' }).send()).value!;
+  const data = Buffer.from(acc.data[0], 'base64');
+  data[108] = state;
+  await cheat('surfnet_setAccount', [escrow, { lamports: Number(acc.lamports), owner: TOKEN_PROGRAM, data: data.toString('hex') }]);
+}
+const statusOf = async (w: Address) => (await (await fetch(`${APP}/api/identity/status?wallet=${w}`)).json()) as { status: string; person: { ineligible: boolean; barredUntil: number } | null; next: string };
 const { gatewayTokenAddress } = await import('../app/src/lib/gateway.ts');
 const rows: string[][] = [];
 const row = (step: string, ...cols: string[]) => { rows.push([step, ...cols]); console.log(`[ok] ${step} ${cols.join(' | ')}`); };
 const PERMANENT = 9223372036854775807n;
-const hex = (b: Iterable<number>) => Buffer.from(Uint8Array.from(b)).toString('hex');
 const when = (t: bigint) => (t === PERMANENT ? 'for good' : new Date(Number(t) * 1000).toISOString());
 
 const prev = JSON.parse(fs.readFileSync(path.join(here, 'identity-e2e-result.json'), 'utf8')) as { memberSecret: number[]; member: Address; pendingWallet: Address; newWalletSecret: number[] };
@@ -89,24 +100,22 @@ await cheat('surfnet_timeTravel', [{ absoluteTimestamp: target * 1000 }]);
 await new Promise((res) => setTimeout(res, 1500));
 assert.ok((await clockTs()) > Number(l.dueAt) + l.graceDays * 86400);
 const cosignerTokBefore = await tok(cosignerAta);
-r = await runOnce();
-assert.equal(r.errors.length, 0, r.errors.join('; '));
-const dflt = r.defaults.find((d) => d.loanId === id.toString());
-assert.ok(dflt, 'this loan was settled');
-assert.equal(dflt!.borrowerBarred, true);
-assert.equal(dflt!.cosignerBarred, false, 'escrow 10 covered the shortfall 5: the fund lost nothing, the co-signer stays in good standing');
+// the borrower settles the loan themselves (as the app's "settle and pay back" would), and the escrow is frozen by
+// the mint's freeze authority before anyone moves it
+await send([await gf.getSettleInstructionAsync({ caller: borrower, mint: MINT, loan, borrowerPerson: pB, cosignerPerson: l.cosignerPerson, rentPayer: l.rentPayer })], borrower, 'settle (borrower)');
 const after = await getLoan(loan);
 assert.equal(after.status, gf.LoanStatus.Defaulted);
-assert.equal(after.refundPending, 0n, 'the cranker claimed the leftover escrow');
-assert.equal(after.recoveryPending, 0n, 'the cranker collected the recovery');
-const collected = r.collected.find((c) => c.loanId === id.toString());
-assert.ok(collected, 'the recovery was collected into the vault');
-assert.equal(BigInt(collected!.amount), 5n * USDC);
-const claim = r.claims.find((c) => c.loanId === id.toString());
-assert.ok(claim, 'the leftover escrow was claimed');
-assert.equal(claim!.to, cosignerWallet);
-assert.equal(BigInt(claim!.amount), 5n * USDC);
-assert.equal(await tok(cosignerAta), cosignerTokBefore + 5n * USDC);
+assert.equal(after.recoveryPending, 5n * USDC, 'shortfall 5 set aside from the escrow');
+assert.equal(after.refundPending, 5n * USDC, 'the other 5 wait for the co-signer');
+await setEscrowState(loan, 2);
+r = await runOnce();
+assert.equal(r.errors.length, 0, r.errors.join('; '));
+assert.equal(r.defaults.find((d) => d.loanId === id.toString()), undefined, 'the cranker did not settle: the borrower had');
+assert.equal(r.collected.find((c) => c.loanId === id.toString()), undefined, 'frozen: nothing collected');
+assert.equal(r.claims.find((c) => c.loanId === id.toString()), undefined, 'frozen: nothing claimed');
+const waiting = r.waiting.filter((w) => w.includes(`#${id}`));
+assert.equal(waiting.length, 2, `collect and claim wait on the frozen escrow: ${r.waiting.join('; ')}`);
+assert.equal((await getLoan(loan)).recoveryPending, 5n * USDC, 'still in the frozen escrow');
 // the recovery was finalised: the member now lives on the pending wallet, the loan and the bar followed the person
 // (a fork reused across runs may carry other due recoveries; this member's is the one that matters)
 const rec = r.recoveries.find((x) => x.person === pB);
@@ -114,46 +123,60 @@ assert.ok(rec, 'this member\'s recovery was finalised');
 assert.equal(rec!.to, prev.pendingWallet);
 const personB = await getPerson(pB);
 assert.equal(personB.wallet, prev.pendingWallet);
-const poolNow = await fetchPool(pool);
 assert.equal(personB.ineligibleUntil, after.defaultBanSeconds === PERMANENT ? PERMANENT : after.closedAt + after.defaultBanSeconds, 'the bar the loan opened with');
-void poolNow;
+assert.equal(personB.borrowerBarUntil, personB.ineligibleUntil, 'a borrower bar');
+assert.equal(personB.cosignerBarUntil, 0n);
 assert.equal((await gf.fetchMember(rpc as any, mB, { commitment: 'confirmed' })).data.retired, true, 'old wallet retired');
-assert.equal((await getPerson(l.cosignerPerson)).ineligibleUntil, 0n);
-// the identity service mirrors the chain's bar: time-bounded (the pool's default ban), so no pass is revoked; the
-// person can still recover a wallet and collect what they are owed, and the record lifts itself when the chain does
-const bans = Object.fromEntries(r.bans.map((b) => [b.personId, b]));
-const idB = hex(personB.personId);
-assert.equal(bans[idB]?.banned, true, 'identity service recorded the bar');
-assert.equal(bans[idB]!.revoked.length, personB.ineligibleUntil === PERMANENT ? 2 : 0, 'a temporary bar revokes nothing');
-assert.equal(hex((await getPerson(l.cosignerPerson)).personId) in bans, false, 'the co-signer was not barred');
+assert.equal((await getPerson(l.cosignerPerson)).ineligibleUntil, 0n, 'escrow 10 covered the shortfall 5: the fund lost nothing, the co-signer stays in good standing');
+// the identity service follows the chain, whoever settled: the bar is time-bounded (the pool's default ban), so no
+// pass is frozen; the person can still recover a wallet and collect what they are owed
+assert.ok(r.reconcile, 'the identity service was reconciled');
+assert.equal(r.reconcile!.note, undefined, r.reconcile!.note ?? 'reconciled');
+assert.ok(r.reconcile!.barred >= 1, 'the chain\'s bars were mirrored');
+assert.ok(r.reconcile!.recoveriesClosed >= 1, 'the finalised recovery request was closed');
 const tokB = await rpc.getAccountInfo(gwB, { encoding: 'base64' }).send();
-assert.equal(Buffer.from(tokB.value!.data[0], 'base64')[99], personB.ineligibleUntil === PERMANENT ? 2 : 0, 'pass state follows the kind of bar');
-const st = await (await fetch(`${APP}/api/identity/status?wallet=${prev.pendingWallet}`)).json() as { status: string; person: { ineligible: boolean; barredUntil: number } | null; next: string };
+assert.equal(Buffer.from(tokB.value!.data[0], 'base64')[99], personB.ineligibleUntil === PERMANENT ? 1 : 0, 'pass state follows the kind of bar (0 active, 1 frozen)');
+let st = await statusOf(prev.pendingWallet);
 assert.equal(st.next, 'done', 'the recovered wallet is the member');
 assert.equal(st.person?.ineligible, true, 'the status shows the bar');
 assert.equal(BigInt(st.person!.barredUntil), personB.ineligibleUntil);
-row('cranker after the deadline', `loan #${id} settled (${dflt!.sig.slice(0, 8)}..), borrower barred, co-signer not (no loss)`, `collected 5.00 for the fund (${collected!.sig.slice(0, 8)}..), claimed 5.00 to the co-signer (${claim!.sig.slice(0, 8)}..)`, `recovery finalised -> ${prev.pendingWallet.slice(0, 6)}.. (${rec!.sig.slice(0, 8)}..)`, `identity service: barred until ${when(personB.ineligibleUntil)}, passes kept`);
+row('cranker after the deadline', `loan #${id} settled by the borrower, escrow frozen: collect and claim wait (${waiting.length} waiting, 0 errors)`, `recovery finalised -> ${prev.pendingWallet.slice(0, 6)}.. (${rec!.sig.slice(0, 8)}..)`, `identity service reconciled: barred until ${when(personB.ineligibleUntil)}, pass kept`);
 
-// the borrower (now on the new wallet) pays the 5 back: the co-signer's used escrow comes back from the vault, the
-// loan is Restituted and the borrower's bar relaxes to the late bar from the settlement
+// the borrower (now on the new wallet) pays the 5 back while the escrow is still frozen: the fund cannot collect its
+// 5, so that 5 is released to the co-signer where it is and the vault keeps the payment; the loan is Restituted and
+// the borrower's own pay-back relaxes their bar to the late bar from today
 const newWallet = await createKeyPairSignerFromBytes(Uint8Array.from(prev.newWalletSecret));
 assert.equal(newWallet.address, prev.pendingWallet);
 await setSol(newWallet.address, 1_000_000_000n);
 await setUsdc(newWallet.address, 5n * USDC);
+const vaultBefore = await tok(vault);
 await send([await gf.getRestituteInstructionAsync({ payer: newWallet, mint: MINT, vault, loan, borrowerPerson: pB, cosignerPerson: after.cosignerPerson, payerToken: await ata(newWallet.address), amount: 5n * USDC })], newWallet, 'restitute 5');
 const paidBack = await getLoan(loan);
 assert.equal(paidBack.status, gf.LoanStatus.Restituted);
-assert.equal(paidBack.reimbursementPending, 5n * USDC, 'owed to the co-signer out of the vault');
+assert.equal(paidBack.recoveryPending, 0n, 'the uncollected recovery was released to the co-signer');
+assert.equal(paidBack.refundPending, 10n * USDC, 'the whole escrow is the co-signer\'s now');
+assert.equal(paidBack.reimbursementPending, 0n, 'nothing owed from the vault');
+assert.equal(await tok(vault), vaultBefore + 5n * USDC, 'the vault keeps the payment in place of the recovery');
 const relaxed = await getPerson(pB);
-assert.equal(relaxed.ineligibleUntil, after.lateBanSeconds === 0n ? 0n : after.closedAt + after.lateBanSeconds, 'bar relaxed to the late bar');
+const paidAt = BigInt(await clockTs());
+if (after.lateBanSeconds === 0n) assert.ok(relaxed.ineligibleUntil <= paidAt, 'eligible again (no late bar)');
+else assert.ok(relaxed.ineligibleUntil >= paidAt - 300n + after.lateBanSeconds && relaxed.ineligibleUntil <= paidAt + after.lateBanSeconds, 'bar relaxed to the late bar from the pay-back');
+// still frozen: the cranker keeps waiting, then the escrow thaws and the next pass releases it
 r = await runOnce();
 assert.equal(r.errors.length, 0, r.errors.join('; '));
-const reimb = r.claims.find((c) => c.loanId === id.toString());
-assert.ok(reimb, 'the cranker paid the reimbursement from the vault');
-assert.equal(BigInt(reimb!.amount), 5n * USDC);
+assert.equal(r.claims.find((c) => c.loanId === id.toString()), undefined, 'still frozen');
+await setEscrowState(loan, 1);
+r = await runOnce();
+assert.equal(r.errors.length, 0, r.errors.join('; '));
+const released = r.claims.find((c) => c.loanId === id.toString());
+assert.ok(released, 'the cranker released the escrow to the co-signer');
+assert.equal(BigInt(released!.amount), 10n * USDC);
+assert.equal(released!.to, cosignerWallet);
 assert.equal(await tok(cosignerAta), cosignerTokBefore + 10n * USDC, 'the co-signer has the whole escrow back');
-assert.equal((await getLoan(loan)).reimbursementPending, 0n);
-row('borrower pays back 5', 'Restituted; bar relaxed to the late bar', `cranker reimbursed the co-signer 5.00 from the vault (${reimb!.sig.slice(0, 8)}..)`);
+assert.equal(r.waiting.filter((w) => w.includes(`#${id}`)).length, 0);
+st = await statusOf(prev.pendingWallet);
+assert.equal(BigInt(st.person?.barredUntil ?? 0), relaxed.ineligibleUntil > paidAt ? relaxed.ineligibleUntil : 0n, 'the identity service follows the relaxed bar');
+row('borrower pays back 5 while frozen', 'Restituted; the recovery is released to the co-signer, the vault keeps the payment; bar relaxed to the late bar from today', `thawed: cranker released 10.00 to the co-signer (${released!.sig.slice(0, 8)}..)`);
 
 // a request that will expire: the co-signer asks for a small loan naming the member's new wallet (the pool's grace
 // is longer than the request TTL on the fork, so the request is made after the default pass)

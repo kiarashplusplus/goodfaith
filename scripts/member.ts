@@ -10,13 +10,15 @@
 //   npm run member -- pay-back <loanId> <amount>       (after it: settles the loan first when nobody has, then pays)
 //   npm run member -- settle <loanId> | collect <loanId>
 //   npm run member -- claim <loanId>
+//   npm run member -- forgive <loanId>                 (co-signer: ends the borrower's debt; bars and the fund's loss stay)
+//   npm run member -- renew                            (via the app at APP_URL: a fresh year on the pass, no new ID check)
 //   npm run member -- close-expired <borrowerWallet>
 //   npm run member -- veto | finalize
 //   npm run member -- donate <amount>
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { address, createKeyPairSignerFromBytes, createNoopSigner, type Address, type Instruction } from '@solana/kit';
+import { address, createKeyPairSignerFromBytes, createNoopSigner, getBase64Decoder, signBytes, type Address, type Instruction } from '@solana/kit';
 import { getCreateAssociatedTokenIdempotentInstruction } from '@solana-program/token';
 import { rpc, RPC_URL } from './lib.ts';
 
@@ -28,6 +30,7 @@ const cfg = await import('../app/src/lib/config.ts');
 const { gatewayTokenAddress } = await import('../app/src/lib/gateway.ts');
 const { escrowFor } = await import('../app/src/lib/escrow.ts');
 const { loanTiming } = await import('../app/src/lib/loan-status.ts');
+const { proofMessage } = await import('../app/src/lib/identity/wallet-proof.ts');
 
 type Rpc = Parameters<typeof tx.sendInstructions>[0] & Parameters<typeof prog.fetchPool>[0] & Parameters<typeof prog.fetchLoansFor>[0];
 const txRpc = rpc as unknown as Rpc;
@@ -85,7 +88,7 @@ export async function run(argv: string[], out: (line: string) => void = console.
       for (const l of await prog.fetchLoansFor(txRpc, pool, w)) {
         const role = l.borrowerPerson === m.person ? 'borrowed' : 'co-signed';
         const t = loanTiming(l, now);
-        const owedBack = l.status === 'Defaulted' ? `, ${fmt(prog.owedAfterSettlement(l))} still owed (member pay-back ${l.id} <amount>)` : '';
+        const owedBack = l.status === 'Defaulted' ? `, ${fmt(prog.owedAfterSettlement(l))} still owed (member pay-back ${l.id} <amount>${role === 'co-signed' ? `, or forgive ${l.id}` : ''})` : l.forgivenAt > 0n ? ', forgiven by the co-signer' : '';
         const toCosigner = prog.owedToCosigner(l) > 0n ? `, ${fmt(prog.owedToCosigner(l))} owed to the co-signer (member claim ${l.id})` : '';
         const toFund = l.recoveryPending > 0n ? `, ${fmt(l.recoveryPending)} waiting for the fund (member collect ${l.id})` : '';
         out(`loan #${l.id}   ${role} ${fmt(l.principal)}, repaid ${fmt(l.repaid)}, ${l.status} (${t.state})${owedBack}${toCosigner}${toFund}`);
@@ -167,6 +170,26 @@ export async function run(argv: string[], out: (line: string) => void = console.
         return [ataCreate(feePayer, cosignerToken, to), ix];
       });
       out(`released ${fmt(owed)} to ${to}: ${sig}`);
+      return;
+    }
+    case 'forgive': {
+      const loan = await loanById(args[0] ?? '');
+      if (loan.status !== 'Defaulted') throw new Error(`loan #${loan.id} is ${loan.status}: only a settled loan with something owed can be forgiven`);
+      const c = await personOf(me);
+      if (loan.cosignerPerson !== c.person) throw new Error(`you are not the co-signer of loan #${loan.id}`);
+      out(`forgiving ${fmt(prog.owedAfterSettlement(loan))}: the borrower owes nothing more; the fund's loss and the bars stay as they are`);
+      out(`forgiven: ${await send([prog.forgiveIx({ cosigner: me, pool, loan })])}`);
+      return;
+    }
+    case 'renew': {
+      const app = (process.env.APP_URL ?? process.env.IDENTITY_URL ?? '').replace(/\/$/, '');
+      if (!app) throw new Error('APP_URL must point at the Good Faith app (the identity service renews passes)');
+      const message = proofMessage(me, Math.floor(Date.now() / 1000));
+      const signature = getBase64Decoder().decode(await signBytes(signer.keyPair.privateKey, new TextEncoder().encode(message)));
+      const res = await fetch(`${app}/api/identity/renew`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ wallet: me, message, signature }) });
+      const body = (await res.json().catch(() => ({}))) as { expiresAt?: number; error?: string };
+      if (!res.ok) throw new Error(`renew: HTTP ${res.status} ${body.error ?? ''}`.trim());
+      out(`pass renewed until ${when(BigInt(body.expiresAt ?? 0))}`);
       return;
     }
     case 'close-expired': {

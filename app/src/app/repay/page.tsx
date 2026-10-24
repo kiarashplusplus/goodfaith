@@ -127,17 +127,22 @@ function PayForm({ wallet, pool, loan, onPaid }: { wallet: Address; pool: Pool; 
               The grace period has passed, so a repayment is no longer accepted. Paying now settles the loan and pays back what is owed in
               one step: the escrow covers {formatUsdc(owed < loan.escrowed ? owed : loan.escrowed)} and is reimbursed to the co-signer from
               your payment{toFund > 0n ? `, after the fund's ${formatUsdc(toFund)} shortfall` : ""}. The outcome is the same whoever settles
-              first. You are barred {bar(loan.defaultBanSeconds)} by the settlement; paying everything back{" "}
-              {loan.lateBanSeconds > 0n ? `shortens that to ${Number(loan.lateBanSeconds / 86_400n)} days from today` : "lifts it"}.
+              first. You are barred {bar(loan.defaultBanSeconds)} by the settlement; paying everything back from your own wallet{" "}
+              {loan.lateBanSeconds > 0n
+                ? `shortens that to ${Number(loan.lateBanSeconds / 86_400n)} days from the day you pay`
+                : "lifts it"}
+              .
             </Notice>
           )}
           {mode === "restitute" && (
             <Notice tone="warn">
               This loan was settled on {new Date(Number(loan.closedAt) * 1000).toLocaleDateString()}. {formatUsdc(owed)} is still owed:{" "}
               {toFund > 0n ? `${formatUsdc(toFund)} to the fund first, then ` : ""}
-              {formatUsdc(owed - toFund)} back to the co-signer whose escrow was used. Once everything is paid back the borrower&apos;s bar{" "}
-              {loan.lateBanSeconds > 0n ? `shortens to ${Number(loan.lateBanSeconds / 86_400n)} days from the settlement` : "is lifted"} and
-              the co-signer&apos;s is lifted.
+              {formatUsdc(owed - toFund)} back to the co-signer whose escrow was used. The co-signer&apos;s bar lifts as soon as the fund is
+              whole, whoever pays. The borrower&apos;s bar{" "}
+              {loan.lateBanSeconds > 0n ? `shortens to ${Number(loan.lateBanSeconds / 86_400n)} days from the day they pay` : "is lifted"}{" "}
+              only when the whole shortfall is back and the borrower&apos;s own wallet made the final payment; a friend&apos;s payment helps
+              the fund and the co-signer, not the borrower&apos;s standing.
             </Notice>
           )}
           <div className="flex items-end gap-2">

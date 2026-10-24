@@ -71,6 +71,7 @@ const DAY = 86_400n;
 const PERMANENT = 9223372036854775807n;
 /** The bar a person carries after `at` for `seconds` (the program saturates at i64::MAX). */
 const barAfter = (at: bigint, seconds: bigint) => (seconds === PERMANENT ? PERMANENT : at + seconds);
+process.env.ADMIN_KEYPAIR ??= path.join(os.homedir(), '.config/solana/id.json'); // the fork's admin is the default key (test harness only)
 const adminCli = await import('./admin.ts');
 const adminRun = async (args: string[]) => { const lines: string[] = []; await adminCli.run(args, (l) => lines.push(l)); return lines.join(' '); };
 /**
@@ -391,6 +392,10 @@ row('collect_recovery (third party)', `vault +${fmt(recovered)}`, 'escrow closed
   assert.equal(p.totalLost, pre.p.totalLost, 'the loss is made good');
   assert.equal(l.reimbursementPending, 0n, 'nothing for the co-signer yet');
   assert.ok((await getPerson(pB)).ineligibleUntil === barAfter(defaultedAt, l.defaultBanSeconds), 'still barred until the whole shortfall is back');
+  // forgiveness is the co-signer's alone (their current wallet), and only while something is owed
+  const cosignerNow = (await getPerson(pC)).wallet;
+  const forgiver = [cosigner, cosigner2].find((w) => w.address === cosignerNow)!;
+  const strangerForgive = await expectFail(send([gf.getForgiveInstruction({ cosigner: third, pool, loan: L2.loan, cosignerPerson: pC })], third, 'forgive by stranger'), 'stranger forgive');
   const c2Before = await tok(ataOf.cosigner2);
   await send([await restituteIx(borrower, ataOf.borrower, L2.loan, recovered)], borrower, 'restitute (rest)');
   p = await fetchPool(pool); l = await loanOf(L2.loan);
@@ -400,7 +405,9 @@ row('collect_recovery (third party)', `vault +${fmt(recovered)}`, 'escrow closed
   assert.equal(p.vaultClaims, recovered);
   assert.equal(p.totalRestituted, pre.p.totalRestituted + shortfall);
   personB = await getPerson(pB); personC = await getPerson(pC);
-  assert.equal(personB.ineligibleUntil, l.lateBanSeconds === 0n ? 0n : defaultedAt + l.lateBanSeconds, 'borrower bar relaxed to the late bar');
+  const paidAt = BigInt(await clockTs());
+  if (l.lateBanSeconds === 0n) assert.ok(personB.ineligibleUntil <= paidAt, 'borrower eligible again (no late bar)');
+  else assert.ok(personB.ineligibleUntil >= paidAt - 300n + l.lateBanSeconds && personB.ineligibleUntil <= paidAt + l.lateBanSeconds, 'borrower bar relaxed to the late bar from the pay-back');
   assert.equal(personC.ineligibleUntil, 0n, 'co-signer bar lifted');
   assert.equal(personC.unrestitutedLosses, 0);
   await send([await claimIx(third, L2.loan)], third, 'claim reimbursement');
@@ -408,7 +415,8 @@ row('collect_recovery (third party)', `vault +${fmt(recovered)}`, 'escrow closed
   assert.equal((await fetchPool(pool)).vaultClaims, 0n);
   assert.equal((await fetchPool(pool)).totalReimbursed, pre.p.totalReimbursed + recovered);
   const nothing = await expectFail(send([await restituteIx(third, ataOf.third, L2.loan, 1n)], third, 'restitute again'), 'restitute a Restituted loan');
-  row('restitute 70 (third 45, borrower 25) + claim', `over-restitute: ${errName(over)}`, `fund whole first, then ${fmt(recovered)} to the co-signer from the vault`, `Restituted: borrower bar -> ${l.lateBanSeconds === 0n ? 'lifted' : `${l.lateBanSeconds / DAY} days from settlement`}, co-signer bar lifted`, `again: ${errName(nothing)}`);
+  const lateForgive = await expectFail(send([gf.getForgiveInstruction({ cosigner: forgiver, pool, loan: L2.loan, cosignerPerson: pC })], forgiver, 'forgive a paid loan'), 'forgive a Restituted loan');
+  row('restitute 70 (third 45, borrower 25) + claim', `over-restitute: ${errName(over)}`, `fund whole first, then ${fmt(recovered)} to the co-signer from the vault`, `Restituted: borrower bar -> ${l.lateBanSeconds === 0n ? 'lifted' : `${l.lateBanSeconds / DAY} days from the pay-back`}, co-signer bar lifted`, `again: ${errName(nothing)}`, `forgive: stranger ${errName(strangerForgive)}, once paid ${errName(lateForgive)}`);
 }
 // lift_bar: the authority ends a bar early, publicly (the reason's hash is in the event)
 if (!frozenAtStart && (await getPerson(pB)).ineligibleUntil > BigInt(await clockTs())) {

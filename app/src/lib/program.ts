@@ -49,6 +49,7 @@ import {
   getCollectRecoveryInstruction,
   getRestituteInstruction,
   getLiftBarInstruction,
+  getForgiveInstruction,
   getClaimEscrowInstruction,
   getCloseExpiredRequestInstruction,
   getApplyParamsInstruction,
@@ -273,7 +274,8 @@ export type Loan = {
 /** What the co-signer can still collect: the escrow refund plus any reimbursement from the vault. */
 export const owedToCosigner = (l: Pick<Loan, "refundPending" | "reimbursementPending">) => l.refundPending + l.reimbursementPending;
 /** What the borrower still owes after a settlement. */
-export const owedAfterSettlement = (l: Pick<Loan, "shortfall" | "restituted">) => l.shortfall - l.restituted;
+export const owedAfterSettlement = (l: Pick<Loan, "shortfall" | "restituted"> & Partial<Pick<Loan, "forgivenAt">>) =>
+  l.forgivenAt && l.forgivenAt > 0n ? 0n : l.shortfall - l.restituted;
 /** The fund's loss on a settled loan that is not yet made good. */
 export const lossOutstanding = (l: Pick<Loan, "shortfall" | "recovered" | "restituted">) => {
   const lost = l.shortfall - l.recovered;
@@ -683,6 +685,29 @@ export async function fetchRequestsForCosigner(rpc: ScanRpc, pool: Address, cosi
 const PERSON_PENDING_TAG_OFFSETS = [100n, 132n];
 
 /** Every person of this pool with a wallet recovery in flight (the cranker finalises the due ones). */
+/** Every person of this pool the chain bars right now or barred in the past (`ineligibleUntil != 0`). */
+export async function fetchBarredPersons(rpc: ScanRpc, pool: Address): Promise<Person[]> {
+  const disc = b58(getPersonDiscriminatorBytes());
+  const accounts = await scanProgramAccounts(rpc, [{ memcmp: { offset: 0n, bytes: disc, encoding: "base58" } }]);
+  const out: Person[] = [];
+  for (const p of decodeAll(accounts, (acc) => toPerson(acc.address, decodePerson(acc).data))) {
+    if (p.ineligibleUntil === 0n) continue;
+    const [expected] = await findPersonPda(pool, new Uint8Array(getBase16Encoder().encode(p.personId)));
+    if (expected === p.address) out.push(p);
+  }
+  return out;
+}
+
+/** Whether a loan's escrow account is frozen by the mint's freeze authority (SPL token state byte 2). */
+export async function escrowFrozen(rpc: ReadRpc, loan: Loan): Promise<boolean> {
+  const [escrow] = await findEscrowPda(loan.address);
+  const r = await rpc.getAccountInfo(escrow, { encoding: "base64", commitment: "confirmed" }).send();
+  const data = r.value?.data?.[0];
+  if (!data) return false;
+  const bytes = Buffer.from(data, "base64");
+  return bytes.length >= 109 && bytes[108] === 2;
+}
+
 export async function fetchPendingRecoveries(rpc: ScanRpc, pool: Address): Promise<Person[]> {
   const disc = b58(getPersonDiscriminatorBytes());
   const some = b58(new Uint8Array([1]));
@@ -1055,6 +1080,14 @@ export async function restituteIx(a: { payer: Address; pool: Pool; loan: Loan; a
 }
 
 /** The authority ends a bar early; `reason` is the 32-byte hash of a written, published reason. */
+/** The co-signer of a settled loan lets the borrower off the unpaid rest; the fund's loss and both bars stay. */
+export function forgiveIx(a: { cosigner: Address; pool: Pool; loan: Loan }): Instruction {
+  return getForgiveInstruction(
+    { cosigner: signer(a.cosigner), pool: a.pool.address, loan: a.loan.address, cosignerPerson: a.loan.cosignerPerson },
+    cfg,
+  );
+}
+
 export function liftBarIx(a: { authority: Address; pool: Pool; person: Address; reason: Uint8Array }): Instruction {
   return getLiftBarInstruction({ authority: signer(a.authority), pool: a.pool.address, person: a.person, reason: a.reason }, cfg);
 }
@@ -1106,6 +1139,8 @@ const ERROR_NAMES = [
   "OverOutstandingCeiling",
   "LoanNotSettled",
   "NotBarred",
+  "RecoveryDelayBelowMinimum",
+  "KeysRecentlyChanged",
 ];
 const ERROR_COPY: Record<string, string> = {
   AmountZero: "Enter an amount greater than zero.",
@@ -1153,6 +1188,8 @@ const ERROR_COPY: Record<string, string> = {
   OverOutstandingCeiling: "The fund has reached its limit of money out on loan. Try again once loans are repaid.",
   LoanNotSettled: "This loan hasn't been settled yet.",
   NotBarred: "This member isn't barred.",
+  RecoveryDelayBelowMinimum: "The recovery delay can't be set below the minimum.",
+  KeysRecentlyChanged: "The fund's identity keys changed recently; wallet moves wait out the quarantine.",
 };
 
 const WALLET_REJECTED = /user rejected|rejected the request|user denied|user declined|declined by user|rejected by user/i;

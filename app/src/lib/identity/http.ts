@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 import { address, type Address } from "@solana/kit";
 import { TokenBucket, clientIp } from "../sponsor-proxy";
 import { IdentityError } from "./service";
+import { verifyProof } from "./wallet-proof";
 
 const bucket = new TokenBucket({
   capacity: Number(process.env.IDENTITY_RATE_CAPACITY) || 20,
@@ -26,6 +27,19 @@ export async function readJson(request: NextRequest, maxBytes = 8 * 1024): Promi
   } catch {
     return null;
   }
+}
+
+/**
+ * The wallet named in the body, once its dated signature checks out (`message`, `signature`); otherwise the error
+ * reply. Every route that acts for a wallet (start, link, rebind, renew, contact) goes through this.
+ */
+export async function provenWallet(body: Record<string, unknown> | null): Promise<{ wallet: Address } | { error: Response }> {
+  const wallet = walletOf(body?.wallet);
+  if (!body || !wallet || typeof body.message !== "string" || typeof body.signature !== "string")
+    return { error: json({ error: "wallet, message and signature are required." }, 400) };
+  if (!(await verifyProof(wallet, body.message, body.signature)))
+    return { error: json({ error: "The wallet signature is missing, stale or wrong." }, 401) };
+  return { wallet };
 }
 
 /** The operator's shared secret (IDENTITY_ADMIN_KEY) in `x-identity-admin-key`. */

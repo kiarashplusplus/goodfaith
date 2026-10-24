@@ -3,9 +3,10 @@
  * through a channel established earlier (a contact given at verification), not only in the app: a recovery request
  * opened, proposed or rejected; a bar set or lifted. Two implementations: the server log, and a generic webhook
  * (NOTIFY_WEBHOOK_URL, JSON body) that an operator points at their mail or messaging relay. A failed webhook falls
- * back to the log, so nothing is lost silently.
+ * back to the log and reports the failure, so the service can record it and the cranker can retry.
  */
-export type NotifyKind = "recovery_requested" | "recovery_proposed" | "recovery_rejected" | "barred" | "bar_lifted";
+export type NotifyKind =
+  "recovery_requested" | "recovery_proposed" | "recovery_rejected" | "barred" | "bar_lifted" | "contact_changed" | "pass_renewed";
 
 export type NotifyEvent = {
   kind: NotifyKind;
@@ -23,12 +24,14 @@ export type NotifyEvent = {
 };
 
 export interface Notifier {
-  send(event: NotifyEvent): Promise<void>;
+  /** True when the configured channel took the notice; false when it did not (the log always has it). */
+  send(event: NotifyEvent): Promise<boolean>;
 }
 
 export class ConsoleNotifier implements Notifier {
-  async send(e: NotifyEvent): Promise<void> {
+  async send(e: NotifyEvent): Promise<boolean> {
     console.log(`[notify] ${e.kind} person ${e.personId.slice(0, 8)}.. ${e.contact ? "(contact on file)" : "(no contact)"}: ${e.detail}`);
+    return true;
   }
 }
 
@@ -38,7 +41,7 @@ export class WebhookNotifier implements Notifier {
     private readonly fallback: Notifier = new ConsoleNotifier(),
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
-  async send(e: NotifyEvent): Promise<void> {
+  async send(e: NotifyEvent): Promise<boolean> {
     try {
       const res = await this.fetchImpl(this.url, {
         method: "POST",
@@ -47,18 +50,22 @@ export class WebhookNotifier implements Notifier {
         signal: AbortSignal.timeout(5_000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return true;
     } catch (err) {
       console.error(`[notify] webhook failed (${err instanceof Error ? err.message : String(err)}); logging instead`);
       await this.fallback.send(e);
+      return false;
     }
   }
 }
 
-/** A notifier that remembers what it was asked to send (tests). */
+/** A notifier that remembers what it was asked to send (tests); `fail` makes it report every notice as undelivered. */
 export class MemoryNotifier implements Notifier {
   readonly sent: NotifyEvent[] = [];
-  async send(e: NotifyEvent): Promise<void> {
+  fail = false;
+  async send(e: NotifyEvent): Promise<boolean> {
     this.sent.push(e);
+    return !this.fail;
   }
 }
 

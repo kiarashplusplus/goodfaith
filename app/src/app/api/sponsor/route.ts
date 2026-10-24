@@ -7,11 +7,11 @@
  */
 import type { NextRequest } from "next/server";
 import { createSolanaRpc, type Address } from "@solana/kit";
-import { PROGRAM_ID, RPC_URL } from "@/lib/config";
+import { POOL_MINT, PROGRAM_ID, RPC_URL } from "@/lib/config";
 import { openStore } from "@/lib/identity/db";
 import { serverKoraPayer } from "@/lib/kora-server";
-import { budgetFromEnv, checkBudget, checkCaps, inspectTransaction, limitsFromEnv, type CreatedAta } from "@/lib/sponsor-policy";
-import { GLOBAL_TX_ROW, GLOBAL_WALLETS_ROW } from "@/lib/identity/store";
+import { budgetFromEnv, inspectTransaction, limitsFromEnv, needsMembership, utcDay, type CreatedAta } from "@/lib/sponsor-policy";
+import { fetchMember, findPoolPda } from "@/lib/program";
 import {
   ALLOWED_METHODS,
   MAX_BODY_BYTES,
@@ -69,27 +69,56 @@ export async function POST(request: NextRequest): Promise<Response> {
   // The sponsorship policy: who pays, what the transaction does, and this wallet's allowance.
   const payer = await serverKoraPayer();
   if (!payer) return reply(jsonRpcError(id, PROXY_ERROR.UPSTREAM_UNREACHABLE, "Fee sponsor is unreachable."));
-  const inspection = inspectTransaction(String(params.transaction), { payer, programId: PROGRAM_ID });
+  const inspection = inspectTransaction(String(params.transaction), { payer, programId: PROGRAM_ID, mint: POOL_MINT });
   if (!inspection.ok) return reply(jsonRpcError(id, PROXY_ERROR.TRANSACTION_REFUSED, inspection.reason));
+  // Rent for a token account on its own is for members: a stranger does not get accounts created at the fund's expense.
+  if (needsMembership(inspection) && !(await isMember(inspection.wallet)))
+    return reply(jsonRpcError(id, PROXY_ERROR.TRANSACTION_REFUSED, "Token accounts are only sponsored for members of the fund."));
   const store = openStore();
   const newAtas = await missing(inspection.atas);
-  const now = Date.now();
-  const usage = await store.getSponsorUsage(inspection.wallet);
-  const caps = checkCaps(usage, newAtas.length, limitsFromEnv(process.env), now);
-  if (!caps.ok) return reply(jsonRpcError(id, PROXY_ERROR.WALLET_CAP, caps.reason));
-  // The fund-wide budget: one wallet's caps bound one person, this bounds a crowd of fresh wallets.
-  const [globalTxs, globalWallets] = await Promise.all([store.getSponsorUsage(GLOBAL_TX_ROW), store.getSponsorUsage(GLOBAL_WALLETS_ROW)]);
-  const budget = checkBudget(globalTxs, globalWallets, usage === null, budgetFromEnv(process.env), now);
-  if (!budget.ok) return reply(jsonRpcError(id, PROXY_ERROR.BUDGET_EXHAUSTED, budget.reason));
-
+  const day = utcDay(Date.now());
+  // Reserve first, forward second: the counters are conditional increments in the store, so two requests in flight
+  // cannot both pass the last slot. A definite refusal gives the slot back; a timeout keeps it (the transaction may
+  // have landed), which errs on the side of the budget.
+  const newWallet = (await store.getSponsorUsage(inspection.wallet)) === null;
+  const usage = await store.reserveSponsorUsage(inspection.wallet, day, newAtas.length, limitsFromEnv(process.env));
+  if (!usage)
+    return reply(jsonRpcError(id, PROXY_ERROR.WALLET_CAP, "This wallet has used today's sponsored transactions or its token accounts."));
+  const budgeted = await store.reserveSponsorBudget(day, newWallet, budgetFromEnv(process.env));
+  if (!budgeted) {
+    await store.releaseSponsorUsage(inspection.wallet, day, newAtas.length);
+    return reply(jsonRpcError(id, PROXY_ERROR.BUDGET_EXHAUSTED, "The fee sponsor has used today's budget."));
+  }
   const res = await forward(cfg, id, body, ALLOWED_METHODS[method].timeoutMs);
-  // Count only what Kora sent; refused or failed attempts are already bounded by the per-client limiter.
-  if (res.ok && (await isResult(res.clone()))) {
-    await store.putSponsorUsage({ wallet: inspection.wallet, ...caps.next });
-    await store.putSponsorUsage({ wallet: GLOBAL_TX_ROW, ...budget.nextTxs });
-    await store.putSponsorUsage({ wallet: GLOBAL_WALLETS_ROW, ...budget.nextWallets });
+  const outcome = await classify(res.clone());
+  if (outcome === "refused") {
+    await store.releaseSponsorUsage(inspection.wallet, day, newAtas.length);
+    await store.releaseSponsorBudget(day, newWallet);
   }
   return res;
+}
+
+async function isMember(wallet: Address): Promise<boolean> {
+  try {
+    const rpc = createSolanaRpc(RPC_URL);
+    const [pool] = await findPoolPda(POOL_MINT);
+    const m = await fetchMember(rpc, pool, wallet);
+    return !!m && !m.retired;
+  } catch {
+    return false;
+  }
+}
+
+/** What happened upstream: a result, a definite refusal (an error reply), or unknown (timeout, bad response). */
+async function classify(res: Response): Promise<"sent" | "refused" | "unknown"> {
+  try {
+    const j = (await res.json()) as { result?: unknown; error?: { code?: number } };
+    if (j.result !== undefined && j.error === undefined) return "sent";
+    if (j.error && j.error.code !== PROXY_ERROR.UPSTREAM_TIMEOUT && j.error.code !== PROXY_ERROR.UPSTREAM_UNREACHABLE) return "refused";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 /** The token accounts in the transaction that do not exist yet (the ones whose rent the sponsor would pay). */
@@ -103,15 +132,6 @@ async function missing(atas: CreatedAta[]): Promise<Address[]> {
     )
     .send();
   return atas.filter((_, i) => value[i] === null).map((a) => a.ata);
-}
-
-async function isResult(res: Response): Promise<boolean> {
-  try {
-    const j = (await res.json()) as { result?: unknown; error?: unknown };
-    return j.result !== undefined && j.error === undefined;
-  } catch {
-    return false;
-  }
 }
 
 /** Liveness, auth-exempt upstream. */

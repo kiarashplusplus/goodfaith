@@ -1,5 +1,5 @@
 // The operator's command line for the pool authority: everything the administrator may do, and nothing else.
-// Signs with ADMIN_KEYPAIR (default ~/.config/solana/id.json); pool from NEXT_PUBLIC_POOL_MINT (or --mint).
+// Signs with ADMIN_KEYPAIR (required: the authority has a key of its own); pool from NEXT_PUBLIC_POOL_MINT (or --mint).
 //
 //   npm run admin -- show
 //   npm run admin -- schedule --set graceDays=30 --set maxLoan=500000000 ...   (field=value, base units and seconds)
@@ -8,10 +8,10 @@
 //   npm run admin -- suspend-issuer | pause | resume
 //   npm run admin -- announce-wind-down <successorTokenAccount> | cancel-wind-down | sweep
 //   npm run admin -- lift-bar <personAccount> <reason words...>   (public: the event carries the hash of the reason)
+//   npm run admin -- announce-wind-down <successorTokenAccount>   (two keys: ADMIN_KEYPAIR and SUCCESSOR_KEYPAIR)
 //   npm run admin -- freeze --yes
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import os from 'node:os';
 import path from 'node:path';
 import { address, createKeyPairSignerFromBytes, type Address } from '@solana/kit';
 import { fetchPool, gf, rpc, RPC_URL, send } from './lib.ts';
@@ -36,7 +36,8 @@ export async function run(argv: string[], out: (line: string) => void = console.
   const [cmd = 'show', ...rest] = argv;
   const flagValues = (name: string) => rest.flatMap((a, i) => (a === `--${name}` && rest[i + 1] !== undefined ? [rest[i + 1]!] : []));
   const positional = rest.filter((a, i) => !a.startsWith('--') && rest[i - 1]?.startsWith('--') !== true);
-  const signer = await createKeyPairSignerFromBytes(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.ADMIN_KEYPAIR ?? path.join(os.homedir(), '.config/solana/id.json'), 'utf8'))));
+  if (!process.env.ADMIN_KEYPAIR) throw new Error('ADMIN_KEYPAIR must be set: the authority signs with a key of its own, never a shared default');
+  const signer = await createKeyPairSignerFromBytes(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.ADMIN_KEYPAIR, 'utf8'))));
   const mint = address(flagValues('mint')[0] ?? cfg.POOL_MINT);
   const [pool] = await gf.findPoolPda({ mint });
   const [vault] = await gf.findVaultPda({ pool });

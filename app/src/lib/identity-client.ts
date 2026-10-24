@@ -22,11 +22,39 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 export const fetchIdentityStatus = (wallet: Address) => call<StatusView>(`/api/identity/status?wallet=${wallet}`);
 export const prepareJoin = (wallet: Address) =>
   call<PreparedTx>("/api/identity/join", { method: "POST", body: JSON.stringify({ wallet }) });
-/** Proposes moving the membership to this wallet, or finalises a proposal whose delay has passed. */
-export const prepareRebind = (wallet: Address) =>
-  call<PreparedTx>("/api/identity/rebind", { method: "POST", body: JSON.stringify({ wallet }) });
 
 type MessageCapable = { signMessage?: (message: Uint8Array) => Promise<Uint8Array> };
+
+/** The dated proof of control every wallet-acting route wants, signed now. */
+async function proof(signer: TransactionSigner, walletClient: MessageCapable | undefined) {
+  const message = proofMessage(signer.address, Math.floor(Date.now() / 1000));
+  const signature = getBase64Decoder().decode(await signText(signer, walletClient, message));
+  return { wallet: signer.address, message, signature };
+}
+
+/**
+ * Asks to move the membership to this wallet (recorded for the operator), or finalises a proposal whose delay has
+ * passed. The wallet signs a dated message: nobody can open a recovery request in someone else's name.
+ */
+export async function prepareRebind(signer: TransactionSigner, walletClient: MessageCapable | undefined): Promise<PreparedTx> {
+  return call<PreparedTx>("/api/identity/rebind", { method: "POST", body: JSON.stringify(await proof(signer, walletClient)) });
+}
+/** Withdraws this wallet's recovery request while the operator has not proposed it yet. */
+export async function cancelRebind(signer: TransactionSigner, walletClient: MessageCapable | undefined): Promise<{ cancelled: boolean }> {
+  return call("/api/identity/rebind", { method: "DELETE", body: JSON.stringify(await proof(signer, walletClient)) });
+}
+/** Renews the member's pass for another term. */
+export async function renewPass(signer: TransactionSigner, walletClient: MessageCapable | undefined): Promise<{ expiresAt: number }> {
+  return call("/api/identity/renew", { method: "POST", body: JSON.stringify(await proof(signer, walletClient)) });
+}
+/** Changes (or removes, with an empty string) where notices about the membership go. */
+export async function setContact(
+  signer: TransactionSigner,
+  walletClient: MessageCapable | undefined,
+  contact: string,
+): Promise<{ changed: boolean }> {
+  return call("/api/identity/contact", { method: "POST", body: JSON.stringify({ ...(await proof(signer, walletClient)), contact }) });
+}
 
 /** Signs `text` with the wallet: through the kit signer when it can sign messages, else through the wallet client. */
 export async function signText(signer: TransactionSigner, walletClient: MessageCapable | undefined, text: string): Promise<Uint8Array> {

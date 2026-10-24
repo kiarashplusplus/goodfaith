@@ -22,7 +22,16 @@ import {
   getTransferInstruction,
 } from "@solana-program/token";
 import { getTransferSolInstruction } from "@solana-program/system";
-import { COMPUTE_BUDGET_PROGRAM, budgetFromEnv, checkBudget, checkCaps, inspectTransaction, limitsFromEnv, utcDay } from "./sponsor-policy";
+import {
+  COMPUTE_BUDGET_PROGRAM,
+  budgetFromEnv,
+  checkBudget,
+  checkCaps,
+  inspectTransaction,
+  limitsFromEnv,
+  needsMembership,
+  utcDay,
+} from "./sponsor-policy";
 
 const PROGRAM = address("BM71D4Kdnq3Mtc2cqDuMBLyYguFihDqsjk9btdTWtoRd");
 const payer = address("78DWc8FZ3iVru1z1jDy9wdPsTHqhGYiQRhtyVU6u9RHU");
@@ -61,6 +70,7 @@ function wire(ixs: Instruction[], feePayer: Address = payer): string {
   return getBase64EncodedWireTransaction(compileTransaction(msg));
 }
 const inspect = (ixs: Instruction[], feePayer?: Address) => inspectTransaction(wire(ixs, feePayer), { payer, programId: PROGRAM });
+const inspectMint = (ixs: Instruction[]) => inspectTransaction(wire(ixs), { payer, programId: PROGRAM, mint });
 
 describe("inspectTransaction", () => {
   it("accepts Good Faith instructions, attributed to the first signer after the sponsor", () => {
@@ -110,11 +120,31 @@ describe("inspectTransaction", () => {
     expect(inspect([create(ataO, other), gf([pool])])).toMatchObject({ ok: false, reason: /someone else/ });
     expect(inspect([create(ataO, other, wallet), gf([pool, ataO])])).toMatchObject({ ok: false, reason: /paid by the sponsor/ });
   });
-  it("accepts the wallet's own token transfers and closes, nothing signed by someone else", () => {
+  it("sponsors token accounts of the fund's mint only, and on their own for members only", () => {
+    const own = getTransferInstruction({ source: ataW, destination: ataO, authority: createNoopSigner(wallet), amount: 5n });
+    expect(inspectMint([create(ataW, wallet), own])).toMatchObject({ ok: true });
+    const otherMint = getCreateAssociatedTokenIdempotentInstruction({
+      payer: createNoopSigner(payer),
+      ata: ataO,
+      owner: wallet,
+      mint: other,
+    });
+    expect(inspectMint([otherMint, own])).toMatchObject({ ok: false, reason: /fund's mint/ });
+    expect(inspectMint([otherMint, gf([pool, ataO])])).toMatchObject({ ok: false, reason: /fund's mint/ });
+    const alone = inspectMint([create(ataW, wallet), own]);
+    expect(alone.ok && needsMembership(alone)).toBe(true);
+    const withGf = inspectMint([create(ataW, wallet), gf([pool, ataW])]);
+    expect(withGf.ok && needsMembership(withGf)).toBe(false);
+  });
+  it("accepts the wallet's own token transfers and closes paid back to itself, nothing signed by someone else", () => {
     const transfer = getTransferInstruction({ source: ataW, destination: ataO, authority: createNoopSigner(wallet), amount: 5n });
     const close = getCloseAccountInstruction({ account: ataW, destination: wallet, owner: createNoopSigner(wallet) });
     expect(inspect([transfer])).toMatchObject({ ok: true, wallet });
     expect(inspect([close])).toMatchObject({ ok: true });
+    expect(inspect([getCloseAccountInstruction({ account: ataW, destination: other, owner: createNoopSigner(wallet) })])).toMatchObject({
+      ok: false,
+      reason: /rent to the wallet/,
+    });
     const foreign = getTransferInstruction({ source: ataO, destination: ataW, authority: createNoopSigner(other), amount: 5n });
     expect(inspect([foreign, gf([pool])])).toMatchObject({ ok: false, reason: /signed by the wallet/ });
     expect(inspect([foreign, transfer])).toMatchObject({ ok: false, reason: /signed by the wallet|Extra signers/ });

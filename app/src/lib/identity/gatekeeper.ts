@@ -6,21 +6,35 @@ import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction 
 import {
   addGatekeeper,
   findGatewayToken,
+  freeze,
   gatekeeperExists,
   getGatekeeperAccountAddress,
   getGatewayTokenAddressForOwnerAndGatekeeperNetwork,
   issue,
   revoke,
+  State,
+  unfreeze,
+  updateExpiry,
 } from "@civic/solana-gateway-ts";
 import { address, type Address } from "@solana/kit";
 
+export type PassView = { address: Address; state: "active" | "frozen" | "revoked"; expiresAt: number | null };
+
 export interface TokenIssuer {
   readonly network: Address;
-  /** Issues (or re-issues after a revoke) a token for `owner`, valid until `expireSec`. Returns the token address. */
+  /** Issues a token for `owner`, valid until `expireSec` (a revoked one cannot come back). Returns the token address. */
   issue(owner: Address, expireSec: number): Promise<Address>;
+  /** Permanent: the token can never be re-issued. Not used for bars (those freeze); kept for compromised wallets. */
   revoke(owner: Address): Promise<void>;
+  /** A bar for good: the pass stops working until `unfreeze`. No-op without a token or when already frozen. */
+  freeze(owner: Address): Promise<void>;
+  unfreeze(owner: Address): Promise<void>;
+  /** Moves the expiry of an existing token (issuing one when the wallet has none yet). */
+  renew(owner: Address, expireSec: number): Promise<Address>;
   /** The token address when `owner` holds an active token. */
   active(owner: Address): Promise<Address | null>;
+  /** The token as it is, whatever its state; null when the wallet never had one. */
+  pass(owner: Address): Promise<PassView | null>;
 }
 
 /** A 64-byte secret key as a JSON array (the `solana-keygen` file format). */
@@ -85,9 +99,39 @@ export class Gatekeeper implements TokenIssuer {
     await this.send(new Transaction().add(revoke(existing.publicKey, this.key.publicKey, this.account)), "revoke");
   }
 
+  async freeze(owner: Address): Promise<void> {
+    const t = await findGatewayToken(this.conn, new PublicKey(owner), this.net, false);
+    if (!t || t.state !== State.ACTIVE) return;
+    await this.send(new Transaction().add(freeze(t.publicKey, this.key.publicKey, this.account)), "freeze");
+  }
+
+  async unfreeze(owner: Address): Promise<void> {
+    const t = await findGatewayToken(this.conn, new PublicKey(owner), this.net, false);
+    if (!t || t.state !== State.FROZEN) return;
+    await this.send(new Transaction().add(unfreeze(t.publicKey, this.key.publicKey, this.account)), "unfreeze");
+  }
+
+  async renew(owner: Address, expireSec: number): Promise<Address> {
+    const t = await findGatewayToken(this.conn, new PublicKey(owner), this.net, false);
+    if (!t) return this.issue(owner, expireSec);
+    if (t.state === State.REVOKED) throw new Error("This wallet's pass was revoked and cannot be renewed.");
+    await this.send(new Transaction().add(updateExpiry(t.publicKey, this.key.publicKey, this.account, expireSec)), "update expiry");
+    return address(t.publicKey.toBase58());
+  }
+
   async active(owner: Address): Promise<Address | null> {
     const t = await findGatewayToken(this.conn, new PublicKey(owner), this.net, false);
     return t && t.isValid() ? address(t.publicKey.toBase58()) : null;
+  }
+
+  async pass(owner: Address): Promise<PassView | null> {
+    const t = await findGatewayToken(this.conn, new PublicKey(owner), this.net, false);
+    if (!t) return null;
+    return {
+      address: address(t.publicKey.toBase58()),
+      state: t.state === State.ACTIVE ? "active" : t.state === State.FROZEN ? "frozen" : "revoked",
+      expiresAt: t.expiryTime ?? null,
+    };
   }
 }
 

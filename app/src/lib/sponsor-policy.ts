@@ -3,15 +3,17 @@
  * finer policy in front of it: the transaction is decoded and every instruction must be one of
  *   - a Good Faith program instruction (the program enforces its own rules),
  *   - a compute-budget instruction,
- *   - an associated-token-account creation whose account a Good Faith instruction in the same transaction uses
- *     (the borrower's or co-signer's token account) or whose owner signs the transaction (their own account),
- *   - a token transfer or close signed by the wallet itself,
+ *   - an associated-token-account creation, of the pool's mint only, whose account a Good Faith instruction in the
+ *     same transaction uses (the borrower's or co-signer's token account) or whose owner signs the transaction (their
+ *     own account); on its own (no Good Faith instruction) it is sponsored for members only (the route checks),
+ *   - a token transfer signed by the wallet itself, or a close of the wallet's own account paid out to the wallet,
  * with Kora as the fee payer and the wallet the sponsorship is attributed to as the next signer; further signers (the
  * issuer and the recovery authority co-sign registrations and recovery proposals) are allowed only when a Good Faith
- * instruction is present. Anything else (a system transfer, a memo, an account for a stranger, a lookup table) is
- * refused before it reaches Kora.
+ * instruction is present. Anything else (a system transfer, a memo, an account for a stranger, another mint, a lookup
+ * table) is refused before it reaches Kora.
  * Per-wallet caps (sponsored transactions per day, token accounts created in total) bound what one person can cost;
- * a global daily budget (transactions, and wallets sponsored for the first time) bounds what a crowd can.
+ * a global daily budget (transactions, and wallets sponsored for the first time) bounds what a crowd can. Both are
+ * reserved in the store before the transaction is forwarded, so two requests in flight cannot both pass.
  * No Next.js imports, so everything here is unit-testable.
  */
 import {
@@ -30,9 +32,17 @@ export const COMPUTE_BUDGET_PROGRAM = "ComputeBudget1111111111111111111111111111
 
 export type CreatedAta = { ata: Address; owner: Address };
 export type Inspection = { ok: true; wallet: Address; atas: CreatedAta[]; goodFaithInstructions: number } | { ok: false; reason: string };
+export type Policy = {
+  payer: Address;
+  programId: Address;
+  /** The pool's mint; token accounts of any other are not sponsored. */ mint?: Address;
+};
+
+/** A transaction that only creates token accounts is sponsored for members: the route checks the wallet's membership. */
+export const needsMembership = (i: Inspection & { ok: true }) => i.goodFaithInstructions === 0 && i.atas.length > 0;
 
 /** Decodes a base64 wire transaction and checks it against the sponsorship policy. */
-export function inspectTransaction(base64: string, policy: { payer: Address; programId: Address }): Inspection {
+export function inspectTransaction(base64: string, policy: Policy): Inspection {
   let compiled: ReturnType<ReturnType<typeof getCompiledTransactionMessageDecoder>["decode"]>;
   try {
     const tx = getTransactionDecoder().decode(getBase64Encoder().encode(base64));
@@ -71,9 +81,11 @@ export function inspectTransaction(base64: string, policy: { payer: Address; pro
     if (ix.programAddress === ASSOCIATED_TOKEN_PROGRAM_ADDRESS) {
       const kind = data.length === 0 ? 0 : data[0];
       if (kind !== 0 && kind !== 1) return { ok: false, reason: "Only token account creation is sponsored on the token-account program." };
-      const [payer, ata, owner] = accounts;
-      if (!payer || !ata || !owner) return { ok: false, reason: "Malformed token account creation." };
+      const [payer, ata, owner, ataMint] = accounts;
+      if (!payer || !ata || !owner || !ataMint) return { ok: false, reason: "Malformed token account creation." };
       if (payer.address !== policy.payer) return { ok: false, reason: "Token account rent must be paid by the sponsor." };
+      if (policy.mint && ataMint.address !== policy.mint)
+        return { ok: false, reason: "Only token accounts of the fund's mint are sponsored." };
       atas.push({ ata: ata.address, owner: owner.address });
       if (owner.address !== wallet) pending.push({ ix, what: ata.address });
       continue;
@@ -87,6 +99,9 @@ export function inspectTransaction(base64: string, policy: { payer: Address; pro
       else return { ok: false, reason: "Only token transfers and account closes are sponsored on the token program." };
       if (!authority || !isSignerRole(authority.role) || authority.address !== wallet)
         return { ok: false, reason: "Token instructions must be signed by the wallet itself." };
+      // The rent of a closed account goes back to the wallet, never to a third party.
+      if (kind === TokenInstruction.CloseAccount && accounts[1]?.address !== wallet)
+        return { ok: false, reason: "A sponsored close must return the rent to the wallet itself." };
       continue;
     }
     return { ok: false, reason: "This program is not sponsored." };
@@ -134,8 +149,8 @@ export function limitsFromEnv(env: Record<string, string | undefined>): SponsorL
 export type BudgetLimits = { dailyTxs: number; dailyNewWallets: number };
 
 /**
- * The global counters live in two usage rows (`GLOBAL_TX_ROW`, `GLOBAL_WALLETS_ROW`); `dayTxs` carries today's count
- * in both. A new wallet is one the store has no usage row for yet.
+ * The budget arithmetic on its own (the stores apply it as one conditional update). A new wallet is one the store
+ * has no usage row for yet.
  */
 export function checkBudget(
   txs: Usage | null,

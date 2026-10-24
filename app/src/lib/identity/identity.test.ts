@@ -177,19 +177,55 @@ describe("stores", () => {
       expect(await s.getCredential("cd")).toEqual({ hash: "cd", keyVersion: 1, personId: "ab", linkedAt: 5, via: "verify" });
       expect((await s.credentialsOf("ab")).map((c) => c.hash)).toEqual(["cd", "ef"]);
       expect(await s.credentialsOf("zz")).toEqual([]);
+      expect(await s.listBarredPersons()).toEqual([]);
+      await s.putPerson({ ...(await s.getPerson("ab"))!, bannedUntil: 5 });
+      expect((await s.listBarredPersons()).map((p) => p.personId)).toEqual(["ab"]);
       expect(await s.getRecovery("ab")).toBeNull();
       await s.putRecovery({ personId: "ab", newWallet: NET, openedAt: 7 });
       await s.putRecovery({ personId: "zz", newWallet: W1, openedAt: 6 });
       expect(await s.getRecovery("ab")).toEqual({ personId: "ab", newWallet: NET, openedAt: 7 });
       expect((await s.listRecoveries()).map((r) => r.personId)).toEqual(["zz", "ab"]);
-      await s.deleteRecovery("ab");
-      await s.deleteRecovery("zz");
+      await s.putRecovery({ ...(await s.getRecovery("ab"))!, notifiedAt: 8, delivery: "failed", proposedAt: 9, signature: "sig" });
+      expect(await s.getRecovery("ab")).toEqual({
+        personId: "ab",
+        newWallet: NET,
+        openedAt: 7,
+        notifiedAt: 8,
+        delivery: "failed",
+        proposedAt: 9,
+        signature: "sig",
+      });
+      await s.closeRecovery("ab", "finalized", 10);
+      await s.closeRecovery("zz", "withdrawn", 11);
       expect(await s.getRecovery("ab")).toBeNull();
+      expect(await s.getRecoveryHistory("ab")).toMatchObject({ closedAs: "finalized", closedAt: 10, signature: "sig" });
       expect(await s.listRecoveries()).toEqual([]);
+      await s.putRecovery({ personId: "ab", newWallet: W1, openedAt: 12 });
+      expect(await s.getRecovery("ab")).toEqual({ personId: "ab", newWallet: W1, openedAt: 12 });
+      await s.closeRecovery("ab", "rejected", 13);
       expect(await s.getSponsorUsage(W1)).toBeNull();
       await s.putSponsorUsage({ wallet: W1, day: "2026-10-24", dayTxs: 3, atasTotal: 1 });
       await s.putSponsorUsage({ wallet: W1, day: "2026-10-25", dayTxs: 1, atasTotal: 2 });
       expect(await s.getSponsorUsage(W1)).toEqual({ wallet: W1, day: "2026-10-25", dayTxs: 1, atasTotal: 2 });
+      // atomic reservations: the caps hold under concurrent requests, a day rolls the daily count over, a release gives back
+      const caps = { dailyTxs: 3, totalAtas: 3 };
+      await s.putSponsorUsage({ wallet: W1, day: "2026-10-25", dayTxs: 0, atasTotal: 2 });
+      const burst = await Promise.all(Array.from({ length: 6 }, () => s.reserveSponsorUsage(W1, "2026-10-25", 0, caps)));
+      expect(burst.filter((u) => u !== null)).toHaveLength(3);
+      expect(await s.getSponsorUsage(W1)).toMatchObject({ dayTxs: 3, atasTotal: 2 });
+      expect(await s.reserveSponsorUsage(W1, "2026-10-26", 2, caps)).toBeNull(); // two more accounts would be four
+      expect(await s.reserveSponsorUsage(W1, "2026-10-26", 1, caps)).toEqual({ wallet: W1, day: "2026-10-26", dayTxs: 1, atasTotal: 3 });
+      await s.releaseSponsorUsage(W1, "2026-10-26", 1);
+      expect(await s.getSponsorUsage(W1)).toEqual({ wallet: W1, day: "2026-10-26", dayTxs: 0, atasTotal: 2 });
+      expect(await s.reserveSponsorUsage(NET, "2026-10-26", 0, caps)).toEqual({ wallet: NET, day: "2026-10-26", dayTxs: 1, atasTotal: 0 });
+      const budget = { dailyTxs: 2, dailyNewWallets: 1 };
+      expect(await s.getSponsorBudget("2026-10-26")).toBeNull();
+      const bb = await Promise.all([true, true, false, false].map((n) => s.reserveSponsorBudget("2026-10-26", n, budget)));
+      expect(bb.filter(Boolean)).toHaveLength(2);
+      expect(await s.getSponsorBudget("2026-10-26")).toMatchObject({ txs: 2 });
+      await s.releaseSponsorBudget("2026-10-26", true);
+      expect(await s.getSponsorBudget("2026-10-26")).toEqual({ day: "2026-10-26", txs: 1, newWallets: 0 });
+      expect(await s.reserveSponsorBudget("2026-10-27", false, budget)).toBe(true);
       expect(await s.firstTime("e1")).toBe(true);
       expect(await s.firstTime("e1")).toBe(false);
       await s.close();

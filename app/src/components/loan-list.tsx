@@ -9,6 +9,7 @@ import {
   claimEscrowIx,
   collectRecoveryIx,
   cosignerWalletOf,
+  forgiveIx,
   lossOutstanding,
   owedAfterSettlement,
   owedToCosigner,
@@ -77,8 +78,9 @@ function LoanRow({
 }) {
   const { rpc, signer } = useApp();
   const { run, busy, error, result } = useRun();
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<false | "settle" | "forgive">(false);
   const t = loanTiming(loan, now);
+  const iAmCosigner = loan.cosigner === wallet;
   const chip = CHIP[t.state];
   const role = loan.borrower === wallet ? "you borrowed" : "you co-signed";
   const owed = loan.principal - loan.repaid;
@@ -103,6 +105,7 @@ function LoanRow({
               {lossOutstanding(loan) > 0n && <>The fund is still short {formatUsdc(lossOutstanding(loan))}. </>}
               {loan.recoveryPending > 0n && <>{formatUsdc(loan.recoveryPending)} waits in escrow for the fund. </>}
               {toCosigner > 0n && <>{formatUsdc(toCosigner)} waits for the co-signer. </>}
+              {loan.forgivenAt > 0n && <>The co-signer forgave the rest on {date(loan.forgivenAt)}. </>}
             </div>
           )}
         </div>
@@ -154,22 +157,56 @@ function LoanRow({
             </GhostButton>
           )}
           {t.state === "defaultable" && !result && (
-            <GhostButton onClick={() => setConfirming((c) => !c)} aria-expanded={confirming}>
+            <GhostButton onClick={() => setConfirming((c) => (c ? false : "settle"))} aria-expanded={confirming === "settle"}>
               Settle
+            </GhostButton>
+          )}
+          {loan.status === "Defaulted" && iAmCosigner && stillOwed > 0n && !result && (
+            <GhostButton onClick={() => setConfirming((c) => (c ? false : "forgive"))} aria-expanded={confirming === "forgive"}>
+              Forgive
             </GhostButton>
           )}
         </div>
       </div>
-      {confirming && !result && (
+      {confirming === "forgive" && !result && (
+        <div className="mt-3">
+          <Notice tone="warn">
+            <strong>Forgiving ends the borrower&apos;s debt of {formatUsdc(stillOwed)}; nothing else changes.</strong> The fund&apos;s loss
+            stays a loss, your bar (if any) runs its course, since it lifts only when the fund is made whole, and the borrower&apos;s bar is
+            untouched. Nobody can pay this loan back afterwards.
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                disabled={busy || !signer}
+                onClick={() =>
+                  run(async () => {
+                    const sig = await sendInstructions(rpc, signer!, [forgiveIx({ cosigner: wallet, pool, loan })]);
+                    onChanged();
+                    return sig;
+                  })
+                }
+              >
+                {busy ? "Working..." : "Forgive the rest"}
+              </Button>
+              <GhostButton disabled={busy} onClick={() => setConfirming(false)}>
+                Keep it owed
+              </GhostButton>
+            </div>
+          </Notice>
+        </div>
+      )}
+      {confirming === "settle" && !result && (
         <div className="mt-3">
           <Notice tone="warn">
             <strong>Settling records the outcome; it moves no money by itself.</strong> Of the co-signer&apos;s escrow (
             {formatUsdc(loan.escrowed)}), {formatUsdc(owed < loan.escrowed ? owed : loan.escrowed)} is set aside for the fund to cover what
             is owed ({formatUsdc(owed)}); the rest waits for the co-signer. The borrower is barred {bar(loan.defaultBanSeconds)}
             {owed > loan.escrowed ? `, the co-signer ${bar(loan.cosignerBanSeconds)} because the escrow does not cover everything` : ""}.
-            Anyone can do this once the grace period has passed; the borrower can pay back what is owed afterwards, which{" "}
-            {loan.lateBanSeconds > 0n ? `shortens their bar to ${Number(loan.lateBanSeconds / 86_400n)} days` : "lifts their bar"} and
-            reimburses the co-signer.
+            Anyone can do this once the grace period has passed. Paying back what is owed afterwards reimburses the co-signer and lifts
+            their bar once the fund is whole; the borrower&apos;s own pay-back{" "}
+            {loan.lateBanSeconds > 0n
+              ? `shortens their bar to ${Number(loan.lateBanSeconds / 86_400n)} days from that day`
+              : "lifts their bar"}
+            .
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 disabled={busy || !signer}

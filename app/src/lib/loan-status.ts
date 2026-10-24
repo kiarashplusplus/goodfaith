@@ -21,13 +21,20 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const ceilDiv = (a: bigint, b: bigint) => (a + b - 1n) / b;
 
 export function loanTiming(
-  loan: Pick<Loan, "status" | "dueAt" | "graceDays"> & Partial<Pick<Loan, "shortfall" | "restituted">>,
+  loan: Pick<Loan, "status" | "dueAt" | "graceDays"> & Partial<Pick<Loan, "shortfall" | "restituted" | "forgivenAt">>,
   nowSec: bigint,
 ): LoanTiming {
   const deadline = loan.dueAt + BigInt(loan.graceDays) * SECONDS_PER_DAY;
   const base = { deadline, daysUntilDue: 0, graceDaysLeft: 0 };
   if (loan.status === "Repaid") return { ...base, state: "repaid", label: "Repaid in full." };
-  if (loan.status === "Restituted") return { ...base, state: "restituted", label: "Settled after the deadline, then paid back in full." };
+  if (loan.status === "Restituted")
+    return {
+      ...base,
+      state: "restituted",
+      label: loan.forgivenAt
+        ? "Settled after the deadline; the co-signer forgave the rest."
+        : "Settled after the deadline, then paid back in full.",
+    };
   if (loan.status === "Defaulted") {
     const owed = loan.shortfall !== undefined && loan.restituted !== undefined ? loan.shortfall - loan.restituted : null;
     const partly = owed !== null && loan.restituted! > 0n ? " Partly paid back." : "";
