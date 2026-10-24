@@ -9,10 +9,12 @@ import {
   depositUsedPerDefault,
   evaluate,
   issuerCompromise,
+  FOUNDER_PAID,
   LAUNCH,
   launchFirstYear,
   launchRamp,
   lossPerDefault,
+  PILOT,
   RAMP,
   settlementSplit,
   outageAcrossCutoff,
@@ -131,6 +133,19 @@ describe("economic model", () => {
     const first = launchFirstYear();
     expect(first.avgLoan).toBeGreaterThan(150);
     expect(first.avgLoan).toBeLessThan(BASE.avgLoan);
+  });
+  it("the v7 pilot reaches more people as loans than the same money as grants; the v6 plan did not", () => {
+    const ratio = (s: typeof PILOT, years: number) => {
+      const g = compareWithGrants(s, years);
+      return g.people / g.grants;
+    };
+    expect(ratio(PILOT, 10)).toBeGreaterThan(1);
+    expect(ratio(PILOT, 3)).toBeGreaterThan(1);
+    expect(ratio(LAUNCH, 10)).toBeLessThan(1);
+    // charging the founder's costs to the donors would turn it round: the pilot's case rests on that split
+    const charged = { ...PILOT, costs: { ...PILOT.costs, oneOff: { ...FOUNDER_PAID } } };
+    expect(ratio(charged, 10)).toBeLessThan(1);
+    expect(evaluate(PILOT).donationsNeededPerYear).toBeLessThan(3_000);
   });
   it("bounds the attacks", () => {
     const shock = correlatedShock(BASE, 0.3);

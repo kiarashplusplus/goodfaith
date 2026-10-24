@@ -467,6 +467,32 @@ export const BASE: Scenario = {
 /** The launch settings: the $25,000 outstanding-principal ceiling binds, so a quarter of the fund is out at most. */
 export const LAUNCH: Scenario = { ...BASE, name: "launch ($25,000 ceiling)", utilisation: 0.25 };
 
+/**
+ * The v7 pilot: a $10,000 fund with $9,000 out on loan at most, run by volunteers. The audit, the legal work and the
+ * development are paid by the founder as the platform's cost, not by donors (`FOUNDER_PAID`), so the donors' side
+ * carries only what the pilot itself spends: capital lost, identity checks and renewals for its members, the
+ * sponsor, and hosting. Volunteer time is real but unpaid; `VOLUNTEER_HOURS_PER_YEAR` says how much of it.
+ */
+export const PILOT: Scenario = {
+  ...BASE,
+  name: "pilot ($10,000 fund, $9,000 ceiling, volunteer-run)",
+  fund: 10_000,
+  utilisation: 0.9,
+  costs: {
+    ...BASE.costs,
+    newMembersPerYear: 100,
+    renewalsPerYear: 100,
+    recurring: { hosting: 1_800, support: 0, disputes: 0, fraudResponse: 0, bookkeeping: 0 },
+    oneOff: { audit: 0, legal: 0, development: 0 },
+  },
+};
+
+/** What the founder pays so that donors do not: the platform's one-off costs, outside the donor comparison. */
+export const FOUNDER_PAID = { ...BASE.costs.oneOff };
+
+/** Unpaid volunteer time the pilot relies on, hours a year (support, disputes, fraud response, bookkeeping). */
+export const VOLUNTEER_HOURS_PER_YEAR = 150;
+
 /** The launch ramp at the launch settings: $150 first loans, +$100 a step, $500 at most, against a $300 need. */
 export const RAMP = {
   firstLoanCap: 150,

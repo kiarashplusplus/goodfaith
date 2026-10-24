@@ -35,6 +35,8 @@ const table = (header: string[], body: string[][]) => {
 };
 const base = evaluate(BASE);
 const launch = evaluate(LAUNCH);
+const PILOT = eco.PILOT;
+const pilot = evaluate(PILOT);
 const FIRST = eco.launchFirstYear();
 const first = evaluate(FIRST);
 const ramp = eco.launchRamp({ ...eco.RAMP, months: 24 });
@@ -61,10 +63,34 @@ const grantsRows = (s: Scenario) => {
 };
 
 if (json) {
-  console.log(JSON.stringify({ launch: { ...LAUNCH, ...launch, grants: eco.compareWithGrants(LAUNCH, 10) }, launchFirstYear: { ...FIRST, ...first }, ramp, scenarios: rows.map(({ s, r }) => ({ ...s, ...r })), balance: eco.balanceSheet(BASE), trajectory: eco.trajectory(BASE, 10), grants: eco.compareWithGrants(BASE, 10) }, null, 1));
+  console.log(JSON.stringify({ pilot: { ...PILOT, ...pilot, grants: eco.compareWithGrants(PILOT, 10), grants3: eco.compareWithGrants(PILOT, 3), founderPaid: eco.FOUNDER_PAID }, launch: { ...LAUNCH, ...launch, grants: eco.compareWithGrants(LAUNCH, 10) }, launchFirstYear: { ...FIRST, ...first }, ramp, scenarios: rows.map(({ s, r }) => ({ ...s, ...r })), balance: eco.balanceSheet(BASE), trajectory: eco.trajectory(BASE, 10), grants: eco.compareWithGrants(BASE, 10) }, null, 1));
 } else {
+  const founder = Object.values(eco.FOUNDER_PAID).reduce((x, y) => x + y, 0);
+  console.log(`Pilot assumptions: fund ${money(PILOT.fund)} | ${money(PILOT.fund * PILOT.utilisation)} ceiling on principal out on loan | average loan ${money(PILOT.avgLoan)} | ${PILOT.cycleDays}-day cycle | settlement rate ${pct(PILOT.settlementRate)} of loans per cycle | escrow ${pct(PILOT.escrowRate)} | ${pct(PILOT.repaidBeforeDefault)} repaid before a settlement | nothing paid back later | volunteer-run | the founder pays ${money(founder)} of one-off costs\n`);
+  console.log('## The pilot (the headline: what v7 launches)\n');
+  table(
+    ['scenario', 'loans/yr', 'completed/yr', 'borrower-years/yr', 'loss/cycle', 'loss/yr', 'loss % fund', 'gifts needed/yr', 'per completed loan', 'per borrower-year', 'half-life (capital only)', 'runway (pays its own way)', 'collusion payoff'],
+    [scenarioRow(PILOT, pilot), scenarioRow({ ...PILOT, name: 'pilot, settlement 10%', settlementRate: 0.1 }, evaluate({ ...PILOT, settlementRate: 0.1 })), scenarioRow({ ...PILOT, name: 'pilot, settlement 2%', settlementRate: 0.02 }, evaluate({ ...PILOT, settlementRate: 0.02 }))],
+  );
+  console.log('## What the founder pays, outside the donor comparison\n');
+  table(
+    ['item', 'amount', 'note'],
+    [
+      ...Object.entries(eco.FOUNDER_PAID).map(([k, v]) => [k, money(v), k === 'development' ? 'already spent: the program, app and services exist' : 'before any real money moves']),
+      ['total', money(founder), 'a cost of building the platform, not of running the pilot'],
+      ['volunteer time', `${eco.VOLUNTEER_HOURS_PER_YEAR} hours a year`, 'support, disputes, fraud response, bookkeeping: unpaid, and the first thing to cost money if volunteers leave'],
+    ],
+  );
+  console.log('## Lending against giving in the pilot, same money\n');
+  table(['', 'money in over ten years', 'people reached', 'what is left', 'costs the fund does not pay'], grantsRows(PILOT));
+  const g3 = eco.compareWithGrants(PILOT, 3);
+  console.log(`Over three years: ${money(g3.moneyIn)} in; as grants ${Math.round(g3.grants)} people once, as loans ${Math.round(g3.people)} people, with the ${money(PILOT.fund)} still lending.\n`);
+  console.log('Assumptions behind that comparison:\n');
+  table(['assumption', 'value', 'note'], grantsAssumptions(PILOT));
+  console.log(`In the pilot the donors pay only what running it costs: about ${money(pilot.donationsNeededPerYear)} a year, so each completed loan costs them about ${money(pilot.subsidyPerCompletedLoan)} against ${money(PILOT.avgLoan)} lent, and loans reach more people than the same money as grants. If the founder's costs were charged to donors, or the volunteers were paid, grants would reach more people (the v6 launch plan below).\n`);
+
   console.log(`Launch assumptions: fund ${money(LAUNCH.fund)} | the $25,000 ceiling on principal out on loan binds, so ${pct(LAUNCH.utilisation)} lent | average loan ${money(LAUNCH.avgLoan)} | ${LAUNCH.cycleDays}-day cycle | settlement rate ${pct(LAUNCH.settlementRate)} of loans per cycle | escrow ${pct(LAUNCH.escrowRate)} | ${pct(LAUNCH.repaidBeforeDefault)} repaid before a settlement | ${pct(LAUNCH.paybackRate)} of what is left paid back later | ${LAUNCH.loansPerBorrowerPerYear} loans per borrower a year\n`);
-  console.log('## At launch scale (the headline: what the fund can do under its launch settings)\n');
+  console.log('## The v6 launch plan, for comparison ($100,000 fund, $25,000 ceiling, paid staff, one-offs charged to donors)\n');
   table(
     ['scenario', 'loans/yr', 'completed/yr', 'borrower-years/yr', 'loss/cycle', 'loss/yr', 'loss % fund', 'gifts needed/yr', 'per completed loan', 'per borrower-year', 'half-life (capital only)', 'runway (pays its own way)', 'collusion payoff'],
     [scenarioRow(FIRST, first), scenarioRow(LAUNCH, launch), scenarioRow({ ...LAUNCH, name: 'launch, settlement 10%', settlementRate: 0.1 }, evaluate({ ...LAUNCH, settlementRate: 0.1 })), scenarioRow({ ...LAUNCH, name: 'launch, settlement 2%', settlementRate: 0.02 }, evaluate({ ...LAUNCH, settlementRate: 0.02 }))],
@@ -82,11 +108,11 @@ if (json) {
     ['', 'principal unpaid at settlement', 'covered by escrow', 'paid back later (to the fund)', 'ultimate loss'],
     [['launch, nothing paid back later', ...split(launch)], ['launch, half paid back later', ...split(payback)]],
   );
-  console.log('## Lending against giving at launch scale, ten years, same money\n');
+  console.log('## Lending against giving under the v6 launch plan, ten years, same money\n');
   table(['', 'money in over ten years', 'people reached', 'what is left', 'costs the fund does not pay'], grantsRows(LAUNCH));
   console.log('Assumptions behind that comparison:\n');
   table(['assumption', 'value', 'note'], grantsAssumptions(LAUNCH));
-  console.log(`At launch scale the fixed costs of running the fund are spread over about ${Math.round(launch.completedLoansPerYear)} completed loans a year, so each costs the donors about ${money(launch.subsidyPerCompletedLoan)} against ${money(LAUNCH.avgLoan)} lent, and the same money as grants would reach more people. Loan volume against fixed costs decides the result, not the settlement rate; the design pays off only once the ceiling is raised (the base scale below, 80% of the fund lent).\n`);
+  console.log(`Under the v6 plan the fixed costs of running the fund are spread over about ${Math.round(launch.completedLoansPerYear)} completed loans a year, so each costs the donors about ${money(launch.subsidyPerCompletedLoan)} against ${money(LAUNCH.avgLoan)} lent, and the same money as grants would reach more people. Loan volume against fixed costs decides the result, not the settlement rate; the design pays off only once the ceiling is raised (the base scale below, 80% of the fund lent).\n`);
 
   console.log(`Base assumptions: fund ${money(BASE.fund)} | ${pct(BASE.utilisation)} lent | average loan ${money(BASE.avgLoan)} | ${BASE.cycleDays}-day cycle | settlement rate ${pct(BASE.settlementRate)} of loans per cycle | escrow ${pct(BASE.escrowRate)} | ${pct(BASE.repaidBeforeDefault)} repaid before a settlement | ${BASE.loansPerBorrowerPerYear} loans per borrower a year\n`);
 
@@ -141,38 +167,40 @@ if (json) {
   table(['', 'money in over ten years', 'people reached', 'what is left', 'costs the fund does not pay'], grantsRows(BASE));
 
   console.log('## Stress scenarios (assumptions in each row; these are scenarios, not bounds)\n');
-  const shock = eco.correlatedShock(BASE, 0.3);
-  // The fund at launch scale normally has most of the ceiling in use, so the attacker gets the headroom, not the ceiling.
-  const outstandingNow = Math.round(LAUNCH.fund * LAUNCH.utilisation * 0.8);
-  const issuerArgs = { firstLoanCap: 150, escrowRate: 0.25, disbursementCap: 5_000, windowDays: 1, containmentDays: 3, fakeLoansPerDay: 50, outstandingCeiling: 25_000, outstandingNow };
+  const shock = eco.correlatedShock(PILOT, 0.3);
+  // The pilot normally has most of its ceiling in use, so the attacker gets the headroom, not the ceiling.
+  const ceiling = PILOT.fund * PILOT.utilisation;
+  const outstandingNow = Math.round(ceiling * 0.8);
+  const issuerArgs = { firstLoanCap: 150, escrowRate: 0.25, disbursementCap: 1_000, windowDays: 1, containmentDays: 3, fakeLoansPerDay: 50, outstandingCeiling: ceiling, outstandingNow };
   const issuerCapped = eco.issuerCompromise(issuerArgs);
   const issuerEmpty = eco.issuerCompromise({ ...issuerArgs, outstandingNow: 0 });
   const issuerLate = eco.issuerCompromise({ ...issuerArgs, outstandingNow: 0, containmentDays: 7 });
   const issuerUncapped = eco.issuerCompromise({ ...issuerArgs, outstandingNow: 0, disbursementCap: 0 });
-  // The pilot's lifetime budget is $40,000; a fund that has lent $30,000 of it has $10,000 left, whatever has settled.
-  const issuerBudget = eco.issuerCompromise({ ...issuerArgs, outstandingNow: 0, containmentDays: 30, budgetLeft: 10_000 });
+  // Unnoticed for a month, settlements free the ceiling as fast as the attacker lends; the lifetime budget ($15,000)
+  // and, below it, the cash in the fund are what bind (fake loans never come back, so the fund cannot lend more than it holds).
+  const issuerBudget = eco.issuerCompromise({ ...issuerArgs, outstandingCeiling: 0, outstandingNow: 0, containmentDays: 30, budgetLeft: Math.min(15_000, PILOT.fund) });
   // Strangers draw on the onboarding lane only, and get no token accounts (the sponsor pays rent for members' accounts
   // only), so they cost transaction fees: 60 a day. Verified members cost what their per-wallet caps allow.
   const abuse = eco.sponsorAbuse({ wallets: 1_000, days: 1, dailyTxsPerWallet: 40, atasPerWallet: 0, txCost: 0.001, ataRent: 0.3, dailyBudgetTx: 60, dailyNewWallets: 20 });
   const abuseYear = eco.sponsorAbuse({ wallets: 100_000, days: 365, dailyTxsPerWallet: 40, atasPerWallet: 0, txCost: 0.001, ataRent: 0.3, dailyBudgetTx: 60, dailyNewWallets: 20 });
   const v5Year = eco.sponsorAbuse({ wallets: 100_000, days: 365, dailyTxsPerWallet: 40, atasPerWallet: 12, txCost: 0.001, ataRent: 0.3, dailyBudgetTx: 2_000, dailyNewWallets: 200 });
-  const memberYear = eco.sponsorAbuse({ wallets: 600, days: 365, dailyTxsPerWallet: 40, atasPerWallet: 12, txCost: 0.001, ataRent: 0.3, dailyBudgetTx: 300 });
-  const outage = eco.outageAcrossCutoff(BASE, 24);
+  const memberYear = eco.sponsorAbuse({ wallets: 100, days: 365, dailyTxsPerWallet: 40, atasPerWallet: 12, txCost: 0.001, ataRent: 0.3, dailyBudgetTx: 300 });
+  const outage = eco.outageAcrossCutoff(PILOT, 24);
   const ring = eco.collusionRing({ people: 3, loanCap: 150, escrowRate: 0.25, exposure: 1_000 });
   const ringGrown = eco.collusionRing({ people: 3, loanCap: 500, escrowRate: 0.25, exposure: 1_000 });
   table(
     ['scenario', 'assumptions', 'cost'],
     [
-      ['one cycle at a 30% settlement rate (correlated trouble)', 'base, one cycle at 30% instead of 5%; escrow 25%; nothing paid back', `${money(shock.shockCycleLoss)} that cycle; ${money(shock.yearLoss)} that year (${pct(shock.shareOfFund)} of the fund)`],
-      ['compromised identity service (issuer and gatekeeper), contained in 3 days, fund in normal use', `no loan settles or is repaid before containment; $5,000 per fixed one-day window (${issuerCapped.windows} windows straddled), first-loan cap $150, 25% escrow forfeited, $25,000 outstanding ceiling with ${money(outstandingNow)} already out`, `up to ${money(issuerCapped.maxDisbursed)} to ${issuerCapped.fakeLoans} fake members, ${money(issuerCapped.maxLoss)} lost (the ceiling's headroom binds)`],
+      ['one cycle at a 30% settlement rate (correlated trouble)', 'pilot, one cycle at 30% instead of 5%; escrow 25%; nothing paid back', `${money(shock.shockCycleLoss)} that cycle; ${money(shock.yearLoss)} that year (${pct(shock.shareOfFund)} of the fund)`],
+      ['compromised identity service (issuer and gatekeeper), contained in 3 days, fund in normal use', `no loan settles or is repaid before containment; ${money(issuerArgs.disbursementCap)} per fixed one-day window (${issuerCapped.windows} windows straddled), first-loan cap $150, 25% escrow forfeited, ${money(ceiling)} outstanding ceiling with ${money(outstandingNow)} already out`, `up to ${money(issuerCapped.maxDisbursed)} to ${issuerCapped.fakeLoans} fake members, ${money(issuerCapped.maxLoss)} lost (the ceiling's headroom binds)`],
       ['compromised identity service, contained in 3 days, nothing out', 'as above with the whole ceiling free', `up to ${money(issuerEmpty.maxDisbursed)} to ${issuerEmpty.fakeLoans} fake members, ${money(issuerEmpty.maxLoss)} lost`],
       ['compromised identity service, contained in 7 days, nothing out', 'as above, a week to notice and pause', `up to ${money(issuerLate.maxDisbursed)} (the ceiling binds), ${money(issuerLate.maxLoss)} lost`],
       ['compromised identity service, no window cap, nothing out', '50 fake memberships a day, 3 days, the ceiling still binds', `${money(issuerUncapped.maxDisbursed)} lent, ${money(issuerUncapped.maxLoss)} lost`],
-      ['compromised identity service, unnoticed for a month', `settlements free the ceiling as fast as the attacker lends; only the $40,000 lifetime budget, with ${money(10_000)} of it left, binds`, `${money(issuerBudget.maxDisbursed)} lent, ${money(issuerBudget.maxLoss)} lost, then nothing until the administrator raises the budget, with notice`],
+      ['compromised identity service, unnoticed for a month', `settlements free the ceiling as fast as the attacker lends; the $15,000 lifetime budget binds, and below it the ${money(PILOT.fund)} the fund holds`, `${money(issuerBudget.maxDisbursed)} lent, ${money(issuerBudget.maxLoss)} lost: the whole fund less the forfeited deposits, and the worst case of the pilot`],
       ['1,000 strangers\' wallets for a day', 'onboarding lane: 60 sponsored transactions and 20 new wallets a day; no token accounts for non-members', `$${abuse.maxCost.toFixed(2)} of sponsor money (${abuse.newWallets} wallets get in); the protected and member lanes are untouched`],
       ['strangers every day for a year', 'the same lane, 365 days', `${money(abuseYear.maxCost)} a year (v5's single 2,000-transaction budget allowed ${money(v5Year.maxCost)})`],
-      ['every verified member at their caps for a year', '600 members, 40 tx a day and 12 token accounts each, member lane 300 tx a day', `${money(memberYear.maxCost)} a year at most; each of them passed an identity check`],
-      ['24-hour outage across deadlines', `base volume; each affected loan is settled and reviewed (half an hour at $40)`, `about ${outage.loansWithDeadlineInside.toFixed(1)} loans settled late through no fault of theirs; ${money(outage.reviewCost)} of review; the fund's money is unchanged, but each co-signer's deposit is used until the borrower pays back and each borrower loses the loan's cap credit`],
+      ['every verified member at their caps for a year', '100 members, 40 tx a day and 12 token accounts each, member lane 300 tx a day', `${money(memberYear.maxCost)} a year at most; each of them passed an identity check`],
+      ['24-hour outage across deadlines', `pilot volume; each affected loan is settled and reviewed (half an hour of volunteer time, priced at $40 an hour)`, `about ${outage.loansWithDeadlineInside.toFixed(1)} loans settled late through no fault of theirs; ${money(outage.reviewCost)} of review; the fund's money is unchanged, but each co-signer's deposit is used until the borrower pays back and each borrower loses the loan's cap credit`],
       ['a ring of three who never repay', 'each borrows the $150 first-loan cap once with the next as co-signer (no reciprocal pair), 25% escrow', `${money(ring.payoff)} taken (${money(ring.perPerson)} each), ${money(ring.fundLoss)} lost; ${money(ringGrown.payoff)} if all three had grown to the $500 cap (${ringGrown.feasible ? 'fits the $1,000 exposure limit' : 'does not fit the $1,000 exposure limit'})`],
     ],
   );

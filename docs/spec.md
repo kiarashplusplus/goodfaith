@@ -1,4 +1,4 @@
-# Good Faith — Program Spec (v6, devnet)
+# Good Faith — Program Spec (v7, devnet)
 
 Interest-free, fee-free loans from a donated loan fund. Borrowers repay exactly what they borrowed. Each loan needs a co-signer who puts part of the loan amount in escrow. Texas residents only, verified by the fund's own identity issuer, which vouches for one person per wallet on chain.
 
@@ -236,10 +236,10 @@ Uses the Codama client generated from `target/idl/goodfaith.json` (`npm run code
 - `max_loan` $500, `max_term_days` 180, `grace_days` 30, `cosigner_escrow_bps` 2500, `max_guarantees_per_member` 2.
 - `timelock_seconds` 7 days; `recovery_delay_seconds` 3 days; `request_ttl_seconds` 7 days.
 - `first_loan_cap` $150, `loan_cap_step` $100, `cooldown_seconds` 30 days, `max_exposure_per_person` $1,000.
-- `disbursement_window_seconds` 1 day, `disbursement_cap_per_window` $5,000.
+- `disbursement_window_seconds` 1 day, `disbursement_cap_per_window` $1,000.
 - `default_ban_seconds` 2 years, `late_ban_seconds` 90 days, `cosigner_ban_seconds` 1 year (see "Bars, exactly": the co-signer's ends at the earlier of that expiry and the fund being paid back on every loan they guaranteed; the borrower's shortens to the late bar counted from the day the loan is paid back, whoever pays).
-- `seasoning_seconds` 30 days, `cap_step_interval_seconds` 30 days, `max_outstanding_principal` $25,000, `max_total_lent` $40,000 for the pilot's first phase (reviewed before it is raised).
+- `seasoning_seconds` 30 days, `cap_step_interval_seconds` 30 days, `max_outstanding_principal` $9,000, `max_total_lent` $15,000 for the pilot's first phase, about six months of lending (reviewed before it is raised; schedule the raise a notice period ahead so lending does not stop).
 - Keys: authority = a multisig of independent people; `successor_authority` = the program upgrade multisig (a wind-down needs both); `pause_authority`, `issuer`, `recovery_authority` (the operator's recovery CLI, never the web service), the gatekeeper and the program upgrade authority are separate keys held by different people where the deployment allows. Floors the program keeps whatever the settings: notice ≥ 2 days, recovery delay ≥ 1 day, a 7-day recovery quarantine after any identity-key change.
 - Release: a capped pilot, upgradeable under a separate multisig with a timelock; immutability later, once the pilot has run and the published exit criteria are met (`docs/operations.md`).
 - Presentation: neutral. Defaults: no collections, no credit reporting, no legal action. Identity: the fund's own gatekeeper network; government ID and Texas residency checked by the issuer service's provider (Persona).
-- Funding: owner seeds the fund.
+- Funding: a $10,000 pilot fund from donors; the audit, legal work and development are paid by the founder, outside the donor comparison (`docs/economics.md`). Volunteers run support, disputes, fraud response and bookkeeping during the pilot.

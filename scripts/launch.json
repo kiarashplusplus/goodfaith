@@ -15,12 +15,12 @@
   "cooldownDays": 30,
   "maxExposurePerPerson": 1000,
   "disbursementWindowDays": 1,
-  "disbursementCapPerWindow": 5000,
+  "disbursementCapPerWindow": 1000,
   "defaultBanDays": 730,
   "lateBanDays": 90,
   "cosignerBanDays": 365,
   "seasoningDays": 30,
   "capStepIntervalDays": 30,
-  "maxOutstandingPrincipal": 25000,
-  "maxTotalLent": 40000
+  "maxOutstandingPrincipal": 9000,
+  "maxTotalLent": 15000
 }

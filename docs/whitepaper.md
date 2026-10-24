@@ -2,7 +2,7 @@
 
 **Interest-free, fee-free loans, funded by gifts. goodfaith.fi**
 
-*Status: version 6 of the design, running on a test network with play money. The source is proprietary and not public. The program has been through an internal security review and automated testing; an independent audit is still ahead. Nothing here is financial or legal advice.*
+*Status: version 7 of the design, running on a test network with play money. The source is proprietary and not public. The program has been through an internal security review and automated testing; an independent audit is still ahead. Nothing here is financial or legal advice.*
 
 ---
 
@@ -23,7 +23,7 @@ People donate money to a shared loan fund. These are **gifts**, not deposits: do
 - **Repay exactly what you borrow.** Borrow $300, repay $300. No interest, no fees, no penalties.
 - **Caps that grow slowly.** A new member can borrow up to $150 at first. Each loan repaid by its deadline that ran at least 30 days raises the cap by $100, at most once every 30 days, up to $500. A settled loan (below) never counts, and puts you back on $150.
 - **One loan at a time, per person**, whichever wallet you use. What you borrow plus what you guarantee for others is capped at $1,000.
-- **The fund has limits too.** At most $25,000 out on loan at once, at most $5,000 lent per day, and at most $40,000 lent in total during the pilot's first phase: the total does not reset when loans are repaid or settled, and raising it needs notice and a review (section 5). Money the fund owes to co-signers is never lent.
+- **The fund has limits too.** The pilot fund is $10,000: at most $9,000 out on loan at once, at most $1,000 lent per day, and at most $15,000 lent in total during the pilot's first phase (about six months): the total does not reset when loans are repaid or settled, and raising it needs notice and a review (section 5). Money the fund owes to co-signers is never lent.
 - **A set term and grace period.** Each loan has a due date and a grace period after it. The last second of the grace period is the **cutoff**. The term, the grace period, the deposit rate, the bar durations and the cap rules are written into the loan when it opens; later settings changes never touch it.
 
 ### The co-signer
@@ -217,42 +217,50 @@ Five pieces of software run beside the program, each replaceable:
 3. **Identity partner in production mode.**
 4. **Audit and counsel**, published.
 5. **Research with the people it is for.** Interviews and a dry run with prospective borrowers and co-signers, including people who decline to take part, about the deposit, the bar, and the pressure a guarantee puts on a friendship. If the co-signer terms keep the people we mean to reach away, the design changes before money moves.
-6. **Capped pilot with real dollars in Texas**: a small fund, the launch caps and budget, a multisig administrator and a separate upgrade multisig, measuring what section 9 says we need.
+6. **A very small pilot with real dollars in Texas**: a $10,000 fund, run by volunteers, with the platform's one-off costs paid by the founder; a multisig administrator and a separate upgrade multisig; measuring what section 9 says we need. The fund grows only when the pilot's numbers say lending is working, and each step up (more capital, a higher ceiling or budget) is a settings change with notice and a published review.
 7. **Permanence**: remove the upgrade key once the exit criteria are met.
 8. **A bank partner** for dollar accounts, then **more states**, one at a time after reviewing each state's law.
 
 ## 9. Economics
 
-Good Faith has no revenue: capital lost and the cost of running the fund are paid from gifts. [`docs/economics.md`](./economics.md) has the model, every table and every assumption. Terms: the **settlement rate** is the share of loans made in a cycle that are settled after their cutoff (earlier versions called it the "default rate"); it is not the ultimate loss, because the deposit covers part and pay-backs may cover more. The model assumes nothing is paid back after a settlement, the conservative side.
+Good Faith has no revenue: capital lost and the cost of running the fund are paid from gifts. [`docs/economics.md`](./economics.md) has the model, every table and every assumption. Terms: the **settlement rate** is the share of loans made in a cycle that are settled after their cutoff; it is not the ultimate loss, because the deposit covers part and pay-backs may cover more. The model assumes nothing is paid back after a settlement, the conservative side.
 
-The headline is a $100,000 fund at its **launch settings**: at most $25,000 out on loan, a 120-day cycle, a fifth of the principal repaid before a settlement, 25% deposits, two loans a year per borrower. New members start at $150 and most reach the $300 they need in about eight months, so the first year's loans average about $184; the other rows use the mature $300.
+**The pilot.** Version 6 planned a $100,000 fund held to a $25,000 ceiling, with paid staff and the one-off costs charged to donors. At that scale each completed loan cost donors about $160, and the same money given as grants would have reached more people. Version 7 launches smaller instead:
+- **A $10,000 fund**, sized to its $9,000 ceiling, so no endowment sits idle.
+- **Run by volunteers**: support, disputes, fraud response and bookkeeping, about 150 hours a year.
+- **Platform costs paid by the founder**, not by donors: the audit ($30,000) and legal work ($15,000) before any real money moves, and the development already done ($20,000). These are the cost of building the platform, not of running the pilot.
 
-| scenario | completed loans a year | capital lost a year | gifts needed a year, all costs in | cost to donors per completed loan | per borrower-year | years the fund lasts paying its own way |
-|---|---|---|---|---|---|---|
-| launch, first year (average loan $184) | 392 | $2,091 | $38,715 | $99 | $198 | 2.2 |
-| launch ($25,000 ceiling) | 241 | $2,091 | $38,620 | $160 | $321 | 2.2 |
-| launch, settlement 10% | 228 | $4,182 | $40,711 | $178 | $357 | 2.0 |
-| launch, settlement 2% | 248 | $836 | $37,365 | $150 | $301 | 2.3 |
+| | per year |
+|---|---|
+| completed loans (5% settled) | about 87 |
+| capital lost | about $750 |
+| identity checks, renewals, sponsor, hosting | about $2,100 |
+| **gifts needed, all donor-side costs in** | **about $2,900** |
+| cost to donors per completed loan | about $33 |
+| years the fund lasts with no gifts at all | about 4 |
 
-At launch scale the result is decided by **loan volume against fixed costs, not by the settlement rate**. Running the fund costs about $37,000 a year: identity checks, renewals, the sponsor, hosting, support, disputes, fraud response and bookkeeping recur at about $15,200, and the audit, legal work and development, $65,000 once, are spread over three years. Over ten years the endowment plus the gifts the fund needs come to about $335,000. As $300 grants that reaches about 1,100 people once. As loans it reaches about 660 people (1,200 borrower-years, 2,400 completed loans), assuming half of each later year's borrowers borrowed before, and the $100,000 is still there. **Until the ceiling is raised, grants reach more people than loans**, and "people reached" is not equal benefit: a loan is the use of money for a few months, with a co-signer, a deposit and a bar; a grant is the money.
+| same money, ten years | people reached | what is left |
+|---|---|---|
+| grants of $300 each | about 130, once | nothing |
+| loans | about 240 (430 borrower-years, 870 completed loans; half of each later year's borrowers borrowed before) | the $10,000, still lending |
 
-Raised to 80% of the fund out on loan, the same fund completes about 770 loans a year at about $57 each to the donors, and over ten years reaches about 2,100 people as loans against 1,300 as grants. With no gifts at all, the fund pays its own way for about two years at either scale.
+Over three years the comparison is 87 people as loans against 62 as grants. **The pilot's case rests on the split of costs**: if the founder's $65,000 were charged to donors, grants would reach more people again, and paying the volunteers would narrow the margin. Read the figures as what a gift does, not as what the whole project costs. "People reached" is not equal benefit either: a loan is the use of money for a few months, with a co-signer, a deposit and a bar; a grant is the money. New members start at $150 and most reach the $300 they need in about eight months, so early loans are smaller than the model's average.
 
-**What a settlement leaves.** At launch scale about $3,000 of principal a year is unpaid at settlement, of which deposits cover about $950. The rest, about $2,100, is the fund's loss unless it is paid back. If half of what settlements leave were paid back later, the loss would fall to about $570. How much is paid back is the number we most need to measure.
+**What a settlement leaves.** In the pilot about $1,100 of principal a year is unpaid at settlement. Deposits cover about $340 of it; the rest is the fund's loss unless it is paid back. How much is paid back is the number we most need to measure.
 
-**Costs others pay.** Co-signers lose about $3,000 a year of deposits at the base scale until the loans are paid back. Borrowers who need bank dollars pay about $6 a loan to convert.
+**Costs others pay.** Co-signers lose about $340 a year of deposits until loans are paid back. Borrowers who need bank dollars pay about $6 a loan to convert.
 
-**Stress scenarios**, with their assumptions. These are scenarios, not bounds, and each attack row assumes **no attack loan settles and no other loan frees ceiling room before containment**.
-- **A local shock.** One cycle at a 30% settlement rate costs about $13,200 at the base scale.
+**Stress scenarios**, at the pilot's settings and with their assumptions. These are scenarios, not bounds, and each attack row assumes **no attack loan settles and no other loan frees ceiling room before containment**.
+- **A local shock.** One cycle at a 30% settlement rate costs about $1,500 that cycle and about $2,000 that year, a fifth of the fund.
 - **A compromised identity service** (issuer and gatekeeper together; neither alone can register anyone, section 4):
-  - contained in three days with the fund in normal use, it can lend the ceiling's headroom, $5,000, and lose $3,750;
-  - with an empty book, $20,000 lent and $15,000 lost;
-  - a week to contain reaches the $25,000 ceiling, $18,750 lost.
-  Settlements free ceiling room, so the ceiling is not a lifetime limit. The **lifetime budget** is: unnoticed for a month with $10,000 of the $40,000 budget left, it can lend $10,000 and lose $7,500, then nothing until the administrator raises the budget, with notice. Realised losses are tracked apart from open exposure for this reason.
-- **Sponsor abuse.** Strangers can spend only the onboarding budget, and only on transaction fees: about $22 a year. Version 5 allowed about $264,000 a year. Every verified member at their caps for a year would cost the sponsor about $2,300.
-- **An outage across cutoffs** costs the fund nothing, and costs the two or so affected loans their co-signers' deposits until they are paid back, the borrowers' cap credit, and a review of the lifts.
+  - contained in three days with the fund in normal use: $1,800 lent, $1,350 lost;
+  - with an empty book: $4,000 lent, $3,000 lost;
+  - a week to contain: $8,000 lent, $6,000 lost.
+  Settlements free ceiling room, so the ceiling is not a lifetime limit. Unnoticed for a month, the attack is bounded by the $15,000 budget and, below it, by the fund itself: fake loans never come back, so it can take at most the $10,000 the fund holds, losing $7,500. That is the pilot's worst case, and the reason it is small.
+- **Sponsor abuse.** Strangers can spend only the onboarding budget, and only on transaction fees: about $22 a year.
+- **An outage across cutoffs** costs the fund nothing; it costs the affected people their deposits until loans are paid back, their cap credit, and a volunteer's review.
 
-**Collusion is limited, not prevented.** Three people can form a ring with no reciprocal pair, each borrowing once with the next as co-signer: $338 on the first-loan cap, $1,125 if all three had grown to $500. It costs each of them years of eligibility and an ID on record, and cannot repeat with the same people. A colluding co-signer can no longer end the borrower's debt to the fund.
+**Collusion is limited, not prevented.** Three people can form a ring with no reciprocal pair, each borrowing once with the next as co-signer: $338 on the first-loan cap, $1,125 if all three had grown to $500. It costs each of them years of eligibility and an ID on record, and cannot repeat with the same people. A colluding co-signer cannot end the borrower's debt to the fund.
 
 ## 10. Risks
 
@@ -260,8 +268,8 @@ Please read these before donating, borrowing or co-signing.
 
 - **Smart contract bugs.** Code can have mistakes even after review and testing. During the pilot the program can be upgraded to fix one, by a multisig after a delay; that power could also be misused.
 - **Co-signer risk.** Your deposit covers what the borrower does not repay and comes back only if the loan is paid back, which nothing forces. If the fund lost money you are barred for a year, or until the fund is paid back on every loan you guaranteed, whichever comes first. You can give up your own claim; you cannot end the borrower's debt to the fund. Only co-sign for someone you trust, with money you could lose.
-- **Settlements draining the fund.** Deposits cover a quarter of each loan. If many loans are settled at once, the fund shrinks; there is no guarantee it is replenished.
-- **Scale risk.** At the launch ceiling the fund costs more per person reached than giving the money away.
+- **Settlements draining the fund.** Deposits cover a quarter of each loan. If many loans are settled at once, the fund shrinks; there is no guarantee it is replenished. In the pilot the whole fund, $10,000, is the most that can be lost.
+- **Scale and volunteer risk.** The pilot reaches more people than grants only because the founder pays the platform's costs and volunteers do the work. If volunteers leave and the work is paid, or if the fund grows without the volume to match, grants can again reach more people for the same money.
 - **Regulatory change** could force changes or a shutdown; the wind-down path exists so that a shutdown is orderly.
 - **Stablecoin risk.** USDC could lose its $1 value, and its issuer can freeze any account, including yours, the fund's and an escrow.
 - **Identity risk.** The partner could decline people wrongly or go away; our keys could be compromised (section 4); a stored fingerprint is data about you that could leak.

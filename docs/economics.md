@@ -6,9 +6,11 @@ they are signing up for. The arithmetic lives in `app/src/lib/economics.ts` (uni
 prints every table below. The assumptions are estimates to be replaced with measured values after launch. Where a
 table says "scenario", read it as one: the inputs are listed and none of them is a guarantee.
 
-The headline comes first and it is the launch scale, with the launch population: new members start on the $150
-first-loan cap, so the first year's loans are smaller than the mature $300 average. The base scale that follows is
-what the same fund does once the ceiling on money out on loan is raised and the members have grown into their caps.
+The headline is the **v7 pilot**: a $10,000 fund with at most $9,000 out on loan, run by volunteers, with the
+platform's one-off costs (audit, legal work, the development already done) paid by the founder rather than by donors.
+The v6 launch plan (a $100,000 fund held to a $25,000 ceiling, paid staff, one-offs charged to donors) follows for
+comparison, because it is where the case for lending failed: under it, grants reached more people than loans. The base
+scale after that is what a larger fund does once its members have grown into their caps.
 
 ## Definitions
 
@@ -40,9 +42,61 @@ what the same fund does once the ceiling on money out on loan is raised and the 
   when someone else pays the running costs, and how long it lasts when it pays them itself. The second is the honest
   one for a fund with no backer.
 
-## At launch scale (the headline)
+## The pilot (the headline)
 
-Launch assumptions: fund $100,000, the $25,000 ceiling on principal out on loan binds (so 25% lent), 120-day cycle,
+Pilot assumptions: fund $10,000, at most $9,000 out on loan, at most $1,000 lent a day, $15,000 lent in total before
+the budget is reviewed (about six months of pilot lending), 120-day cycle, settlement rate 5% of loans per cycle, 25%
+escrow, 20% of principal repaid before a settlement, nothing paid back after one, two loans per borrower a year, about
+100 new members a year. Running costs are the members' identity checks and renewals, the sponsor, and $1,800 of
+hosting; support, disputes, fraud response and bookkeeping are volunteer time.
+
+| scenario                                            | loans/yr | completed/yr | borrower-years/yr | loss/cycle | loss/yr | loss % fund | gifts needed/yr | per completed loan | per borrower-year | half-life (capital only) | runway (pays its own way) | collusion payoff |
+|-----------------------------------------------------|----------|--------------|-------------------|------------|---------|-------------|-----------------|--------------------|-------------------|--------------------------|---------------------------|------------------|
+| pilot ($10,000 fund, $9,000 ceiling, volunteer-run) | 91       | 87           | 43                | $248       | $753    | 7.5%        | $2,859          | $33                | $66               | 8.9                      | 3.9                       | $225             |
+| pilot, settlement 10%                               | 91       | 82           | 41                | $495       | $1,506  | 15.1%       | $3,611          | $44                | $88               | 4.2                      | 3.4                       | $225             |
+| pilot, settlement 2%                                | 91       | 89           | 45                | $99        | $301    | 3.0%        | $2,407          | $27                | $54               | 22.7                     | 4.4                       | $225             |
+
+What the founder pays, so that donors do not:
+
+| item           | amount           | note                                                                                                          |
+|----------------|------------------|---------------------------------------------------------------------------------------------------------------|
+| audit          | $30,000          | before any real money moves                                                                                   |
+| legal          | $15,000          | before any real money moves                                                                                   |
+| development    | $20,000          | already spent: the program, app and services exist                                                            |
+| total          | $65,000          | a cost of building the platform, not of running the pilot                                                     |
+| volunteer time | 150 hours a year | support, disputes, fraud response, bookkeeping: unpaid, and the first thing to cost money if volunteers leave |
+
+Lending against giving, the same money on both sides (the endowment and the gifts the pilot needs):
+
+|                                 | money in over ten years | people reached                                                                                    | what is left          | costs the fund does not pay                                          |
+|---------------------------------|-------------------------|---------------------------------------------------------------------------------------------------|-----------------------|----------------------------------------------------------------------|
+| grants of one average loan each | $38,586                 | 129 people, once                                                                                  | $0                    | -                                                                    |
+| loans                           | $38,586                 | 238 people (433 borrower-years, 867 completed loans; 50.0% of a year's borrowers borrowed before) | $10,000 still lending | co-signers lost $3,422 of deposits; borrowers paid $5,475 to convert |
+
+Over three years: about $18,600 in; as grants 62 people once, as loans 87 people, with the $10,000 still lending.
+
+The assumptions behind that comparison:
+
+| assumption                                            | value          | note                                                                                                                |
+|-------------------------------------------------------|----------------|---------------------------------------------------------------------------------------------------------------------|
+| completed loans per year                              | 87             | loans in the year that were not settled (settlement rate 5.0%)                                                      |
+| loans per borrower per year                           | 2              | turns completed loans into borrower-years                                                                           |
+| unique borrowers in year one                          | 43             | every borrower in the first year is new                                                                             |
+| share of a later year's borrowers who borrowed before | 50.0%          | retention: the rest are new people                                                                                  |
+| new borrowers each later year                         | 22             |                                                                                                                     |
+| terminal value of the fund                            | $10,000        | the endowment is still there after ten years (with the gifts the table counts); grants leave nothing                |
+| benefit compared                                      | people reached | not equal: a loan is the use of the money for a few months; a grant is the money, with no co-signer, deposit or bar |
+
+**Why the pilot passes where the v6 plan did not.** Three things. The fund is sized to the ceiling, so no endowment
+sits idle while counted as money spent. The running costs that do not scale with loans (paid support, bookkeeping,
+fraud response) are volunteer time, which takes about $11,000 a year off the donors' side. And the one-off costs are the
+founder's, which takes $65,000 off it. Each of these is a choice, and the comparison rests on it: charged to donors, the
+founder's costs alone would put grants ahead again (the model's test checks this), and paid volunteers would narrow
+the margin. Donors should read the pilot's figure as "what your gift does", not "what the whole project costs".
+
+## The v6 launch plan, for comparison
+
+Fund $100,000, the $25,000 ceiling on principal out on loan binds (so 25% lent), 120-day cycle,
 settlement rate 5% of loans per cycle, 25% escrow, 20% of principal repaid before a settlement, nothing paid back
 after one, two loans per borrower a year. The first row uses the first year's average loan from the ramp below; the
 others use the mature $300.
@@ -223,22 +277,24 @@ What the bad cases cost under stated assumptions. These are scenarios, not bound
 them. The first is the containment time (from the first bad loan to the pause), which is the operator's, not the
 program's. The second, for the attack rows, is that **no attack loan settles and no existing loan frees ceiling room
 before containment**: a settlement takes a loan off the open book, so after one the ceiling would let lending start
-again. The lifetime lending budget (`max_total_lent`, $40,000 for the pilot's first phase) is what bounds the total
-whatever the timing, and the recognised loss (`total_lost`) is tracked apart from open exposure for the same reason.
+again. The lifetime lending budget (`max_total_lent`, $15,000 for the pilot's first phase) is what bounds the total
+whatever the timing, and below it the cash the fund holds: fake loans never come back, so the pilot cannot lend more than
+its $10,000. The recognised loss (`total_lost`) is tracked apart from open exposure for the same reason. The rows use the
+pilot's settings: a $9,000 ceiling, $1,000 a day, a $15,000 budget.
 
-| scenario                                                                                      | assumptions                                                                                                                                                                                             | cost                                                                                                                                                                                                                   |
-|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| one cycle at a 30% settlement rate (correlated trouble)                                       | base, one cycle at 30% instead of 5%; escrow 25%; nothing paid back                                                                                                                                     | $13,200 that cycle; $17,692 that year (17.7% of the fund)                                                                                                                                                              |
-| compromised identity service (issuer and gatekeeper), contained in 3 days, fund in normal use | no loan settles or is repaid before containment; $5,000 per fixed one-day window (4 windows straddled), first-loan cap $150, 25% escrow forfeited, $25,000 outstanding ceiling with $20,000 already out | up to $5,000 to 33 fake members, $3,750 lost (the ceiling's headroom binds)                                                                                                                                            |
-| compromised identity service, contained in 3 days, nothing out                                | as above with the whole ceiling free                                                                                                                                                                    | up to $20,000 to 133 fake members, $15,000 lost                                                                                                                                                                        |
-| compromised identity service, contained in 7 days, nothing out                                | as above, a week to notice and pause                                                                                                                                                                    | up to $25,000 (the ceiling binds), $18,750 lost                                                                                                                                                                        |
-| compromised identity service, no window cap, nothing out                                      | 50 fake memberships a day, 3 days, the ceiling still binds                                                                                                                                              | $22,500 lent, $16,875 lost                                                                                                                                                                                             |
-| compromised identity service, unnoticed for a month                                           | settlements free the ceiling as fast as the attacker lends; only the $40,000 lifetime budget, with $10,000 of it left, binds                                                                            | $10,000 lent, $7,500 lost, then nothing until the administrator raises the budget, with notice                                                                                                                         |
-| 1,000 strangers' wallets for a day                                                            | onboarding lane: 60 sponsored transactions and 20 new wallets a day; no token accounts for non-members                                                                                                  | $0.06 of sponsor money (20 wallets get in); the protected and member lanes are untouched                                                                                                                               |
-| strangers every day for a year                                                                | the same lane, 365 days                                                                                                                                                                                 | $22 a year (v5's single 2,000-transaction budget allowed $263,530)                                                                                                                                                     |
-| every verified member at their caps for a year                                                | 600 members, 40 tx a day and 12 token accounts each, member lane 300 tx a day                                                                                                                           | $2,270 a year at most; each of them passed an identity check                                                                                                                                                           |
-| 24-hour outage across deadlines                                                               | base volume; each affected loan is settled and reviewed (half an hour at $40)                                                                                                                           | about 2.2 loans settled late through no fault of theirs; $44 of review; the fund's money is unchanged, but each co-signer's deposit is used until the borrower pays back and each borrower loses the loan's cap credit |
-| a ring of three who never repay                                                               | each borrows the $150 first-loan cap once with the next as co-signer (no reciprocal pair), 25% escrow                                                                                                   | $338 taken ($113 each), $338 lost; $1,125 if all three had grown to the $500 cap (fits the $1,000 exposure limit)                                                                                                      |
+| scenario                                                                                      | assumptions                                                                                                                                                                                           | cost                                                                                                                                                                                                                  |
+|-----------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| one cycle at a 30% settlement rate (correlated trouble)                                       | pilot, one cycle at 30% instead of 5%; escrow 25%; nothing paid back                                                                                                                                  | $1,485 that cycle; $1,990 that year (19.9% of the fund)                                                                                                                                                               |
+| compromised identity service (issuer and gatekeeper), contained in 3 days, fund in normal use | no loan settles or is repaid before containment; $1,000 per fixed one-day window (4 windows straddled), first-loan cap $150, 25% escrow forfeited, $9,000 outstanding ceiling with $7,200 already out | up to $1,800 to 12 fake members, $1,350 lost (the ceiling's headroom binds)                                                                                                                                           |
+| compromised identity service, contained in 3 days, nothing out                                | as above with the whole ceiling free                                                                                                                                                                  | up to $4,000 to 26 fake members, $3,000 lost                                                                                                                                                                          |
+| compromised identity service, contained in 7 days, nothing out                                | as above, a week to notice and pause                                                                                                                                                                  | up to $8,000 (the ceiling binds), $6,000 lost                                                                                                                                                                         |
+| compromised identity service, no window cap, nothing out                                      | 50 fake memberships a day, 3 days, the ceiling still binds                                                                                                                                            | $9,000 lent, $6,750 lost                                                                                                                                                                                              |
+| compromised identity service, unnoticed for a month                                           | settlements free the ceiling as fast as the attacker lends; the $15,000 lifetime budget binds, and below it the $10,000 the fund holds                                                                | $10,000 lent, $7,500 lost: the whole fund less the forfeited deposits, and the worst case of the pilot                                                                                                                |
+| 1,000 strangers' wallets for a day                                                            | onboarding lane: 60 sponsored transactions and 20 new wallets a day; no token accounts for non-members                                                                                                | $0.06 of sponsor money (20 wallets get in); the protected and member lanes are untouched                                                                                                                              |
+| strangers every day for a year                                                                | the same lane, 365 days                                                                                                                                                                               | $22 a year (v5's single 2,000-transaction budget allowed $263,530)                                                                                                                                                    |
+| every verified member at their caps for a year                                                | 100 members, 40 tx a day and 12 token accounts each, member lane 300 tx a day                                                                                                                         | $470 a year at most; each of them passed an identity check                                                                                                                                                            |
+| 24-hour outage across deadlines                                                               | pilot volume; each affected loan is settled and reviewed (half an hour of volunteer time, priced at $40 an hour)                                                                                      | about 0.3 loans settled late through no fault of theirs; $5 of review; the fund's money is unchanged, but each co-signer's deposit is used until the borrower pays back and each borrower loses the loan's cap credit |
+| a ring of three who never repay                                                               | each borrows the $150 first-loan cap once with the next as co-signer (no reciprocal pair), 25% escrow                                                                                                 | $338 taken ($113 each), $338 lost; $1,125 if all three had grown to the $500 cap (fits the $1,000 exposure limit)                                                                                                     |
 
 - **Correlated settlements** (a local employer closing, a storm) are the realistic worst case for a fund whose members
   live in one place. A cycle at 30% costs six times a normal cycle; the escrow rate and the loan cap are the only
@@ -264,10 +320,13 @@ whatever the timing, and the recognised loss (`total_lost`) is tracked apart fro
 
 ## What the numbers say
 
-- **At launch scale, grants reach more people.** With $25,000 out on loan at most, the fund completes about 240 loans
-  a year and each costs the donors about $160; the same money over ten years reaches about 1,100 people as grants and
-  about 660 as loans. The ceiling is a safety setting, and its price is that the fund does not pay off until it is
-  raised.
+- **The pilot reaches more people as loans than as grants**: about 240 people against 130 over ten years, 87 against 62
+  over three, for about $2,900 a year beyond the $10,000 endowment. That rests on the founder paying the platform's
+  one-off costs and on volunteers doing the work; the paper says so.
+- **The worst case is the fund.** A compromised identity service unnoticed for a month can take at most what the
+  fund holds, losing $7,500 after the forfeited deposits; contained in three days it takes $1,800 to $4,000.
+- **Under the v6 plan, grants reached more people.** With $25,000 out on loan from a $100,000 fund, paid staff and the
+  one-offs charged to donors, each completed loan cost the donors about $160.
 - **Loan volume against fixed costs decides the result, not the settlement rate.** Operating costs are about $37,000 a
   year at any scale; the capital loss is about $2,000 at launch scale and $6,700 at the base scale.
 - **The first year is smaller loans.** New members start at $150 and most reach $300 in about eight months; the first
