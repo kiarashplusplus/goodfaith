@@ -48,7 +48,7 @@ the CI env, and the white paper's appendix. Commit; tag the release; record the 
 
 ```sh
 solana config set --url devnet            # or your RPC
-anchor deploy --provider.cluster devnet --program-keypair target/deploy/goodfaith-keypair.json
+anchor deploy --program-name goodfaith --provider.cluster devnet --program-keypair target/deploy/goodfaith-keypair.json
 solana program show <program id>          # note the upgrade authority; move it to the upgrade multisig
 ```
 
