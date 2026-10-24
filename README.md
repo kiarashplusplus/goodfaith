@@ -3,7 +3,8 @@
 Interest-free, fee-free community loans on Solana, funded by gifts. Texas residents only. Version 7 of the design,
 running on a test network.
 
-Proprietary. Copyright (c) 2026 Kiarash Adl. All rights reserved. See [LICENSE](LICENSE).
+Proprietary. Copyright (c) 2026 Kiarash Adl. All rights reserved. The source is published to be read and checked, not
+reused; see [LICENSE](LICENSE).
 
 ## Layout
 - `programs/goodfaith` — on-chain program (Anchor 1.2.1)
