@@ -1,13 +1,17 @@
 # Good Faith
 
-Interest-free, fee-free community loans on Solana. Texas residents only. Devnet MVP.
+Interest-free, fee-free community loans on Solana, funded by gifts. Texas residents only. Version 3 of the design,
+running on a test network.
 
-Proprietary. Copyright (c) 2026 Kiarash Adl. All rights reserved. See [LICENSE](LICENSE).
+Source is published under the [Apache License 2.0](LICENSE) so that anyone can inspect what the program and the
+services do; the name "Good Faith" identifies this project and is not licensed (see [NOTICE](NOTICE)).
+Copyright 2026 Kiarash Adl.
 
 ## Layout
 - `programs/goodfaith` — on-chain program (Anchor 1.2.1)
 - `app` — web app (Next.js)
-- `docs` — [spec](docs/spec.md), [white paper](docs/whitepaper.md), [audit](docs/audit.md)
+- `scripts` — fork deployment, end-to-end runs, the operator's cranker, the member CLI, the economic model
+- `docs` — [spec](docs/spec.md), [white paper](docs/whitepaper.md), [audit](docs/audit.md), [identity](docs/identity.md), [economics](docs/economics.md)
 
 ## Build and test
 ```sh
@@ -29,9 +33,10 @@ npm run dev
 
 ## Identity
 
-Members are people, not wallets: the app's identity issuer (see `app/README.md`) verifies a government ID with a
-provider, keeps a keyed hash per person, issues a pass on the fund's own gatekeeper network and co-signs the on-chain
-registration. One person, one wallet; a lost wallet is replaced without losing the membership.
+Members are people, not wallets: the app's identity issuer (see `app/README.md` and `docs/identity.md`) verifies a
+government ID with a provider, keeps a keyed fingerprint per credential and an opaque random id per person, issues a
+pass on the fund's own gatekeeper network and co-signs the on-chain registration. One person, one wallet; a lost
+wallet is recovered through a proposal the old wallet can veto during a delay, without losing the membership.
 
 ## Continuous integration
 `.github/workflows/ci.yml`: program format and clippy; Anchor build with the Rust and app-side LiteSVM test suites;

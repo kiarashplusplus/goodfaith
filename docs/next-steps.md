@@ -1,6 +1,12 @@
 # Next steps (handoff)
 
-State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch parameters (decided)"), `docs/audit.md` first.
+State as of 2026-10-24. Read `README.md`, `docs/spec.md` (incl. "Launch parameters (decided)"), `docs/audit.md`, `docs/identity.md` first.
+
+## Completed: version 3 (bounded trust, precise defaults, resilient settlement)
+- Program: opaque person ids (no credential hash on chain); two-step wallet recovery (`propose_rebind` by the new wallet + issuer + recovery authority, `veto_rebind` by the old wallet or the authority during `recovery_delay_seconds`, `finalize_rebind` by anyone); deadline-based lateness (`RepaidLate`, `late_ban_seconds`) so repayment and default give the same money in either order; pull-based escrow claims (`refund_pending`, `pending_claims`, `claim_escrow`) so a frozen or closed token account never blocks settlement or a sweep; request expiry and `close_expired_request`; first-loan cap with cooldown and a graduated cap; per-person exposure limit; no reciprocal guarantees; disbursement window cap; `pause_lending`/`resume_lending`; `MIN_TIMELOCK_SECONDS`; configurable ban durations. 70 LiteSVM tests + property test; `docs/spec.md` v3; `docs/audit.md` GF-14..20.
+- Identity service: async store with persons, versioned credential fingerprints (`PERSON_HASH_SECRETS` rotation re-links people), credential linking (`/api/identity/link`), reviewed recovery (`RECOVERY_REVIEW_SECONDS`), bans that revoke every wallet of a person. `docs/identity.md`.
+- Sponsor proxy policy (`sponsor-policy.ts`): transactions decoded and checked before Kora; per-wallet caps. `scripts/member.ts` fallback CLI. Cranker: claims, expired requests, due recoveries, `--dry-run`.
+- Economics model with cost split, balance sheet, trajectory, subsidy per completed loan and bounded stress cases; `docs/economics.md` regenerated. Licence switched to Apache-2.0 with a name notice. White paper v3.
 
 ## Done
 - Program (Anchor 1.2.1): two-step loans (`request_loan` → `cosign_loan`, `cancel_request`), co-signer escrow, repay, default. 39 LiteSVM + property tests, clippy clean. Internal audit in `docs/audit.md`.
@@ -46,9 +52,10 @@ State as of 2026-10-23. Read `README.md`, `docs/spec.md` (incl. "Launch paramete
 - Operations: `scripts/cranker.ts` (defaults, apply, sweep, bans), `scripts/model.ts` + `docs/economics.md`, `cranker-e2e`. White paper v2 (`docs/whitepaper.md`).
 
 ## Then
+- Launch tooling (planned next): `scripts/program-id.sh` (new program keypair, `anchor keys sync`), `scripts/launch.json` + `launch.ts` (idempotent gatekeeper network, pool with the launch parameters, env block), `scripts/admin.ts` (operator CLI used by e2e), Dockerfiles and compose for app, Kora and cranker, `/api/health`, a Postgres store, `docs/launch.md` and `docs/operations.md`.
 - Persona production mode: create the inquiry template (government ID + address), confirm the field keys in `app/src/lib/identity/persona.ts` against a sandbox inquiry, set `PERSONA_*`, `PERSON_HASH_SECRET`, `ISSUER_SECRET` and `GATEKEEPER_SECRET` (separate keys from the pool authority), point the webhook at `/api/identity/webhook`.
-- Devnet deploy: needs ~3 devnet SOL in `2agNDw6soEttnATLgkhxup22GGoeCa7KVNfxyeeuHbve` (airdrops were rate-limited; owner to send from faucet.solana.com via GitHub login). Then `gatekeeper-setup` on devnet, init the pool with the launch params ($500, 180 days, 30-day grace, 25% escrow, 2 guarantees, 7-day timelock, the issuer key, devnet USDC), host the app with the identity env and run the cranker on a schedule (`npm run cranker -- --once` from cron, or `--interval`).
-- Squads 2-of-3 multisig (three owner devices) as pool authority before mainnet; freezing is optional now that changes are timelocked.
+- Devnet deploy: needs ~3 devnet SOL in `2agNDw6soEttnATLgkhxup22GGoeCa7KVNfxyeeuHbve` (airdrops were rate-limited; owner to send from faucet.solana.com via GitHub login). Then `gatekeeper-setup` on devnet, init the pool with the launch params in `docs/spec.md` (v3: $500 max, $150 first-loan cap, $100 step, 30-day cooldown, $1,000 exposure, $5,000/day disbursement cap, 7-day notice, 3-day recovery delay, 7-day request TTL, bans 2 years / 90 days / 1 year, separate issuer, recovery and pause keys, devnet USDC), host the app with the identity env and run the cranker on a schedule (`npm run cranker -- --once` from cron, or `--interval`).
+- A multisig of independent people as pool authority and a separate one as program upgrade authority (behind its own timelock) before mainnet; the pilot is upgradeable and capped, immutability comes later.
 - Host the app (goodfaith.fi, register the domain) and Kora; Postgres instead of SQLite if the identity service runs on more than one instance.
 - Fill the white paper's verification appendix at each deploy (program id, tag, build hash, upgrade authority, keys).
 - Independent audit before mainnet; legal review of the open questions listed in the white paper.
