@@ -32,7 +32,10 @@ restrictedUntil: bigint;
 pendingWallet: Option<Address>; pendingWalletAt: bigint; bump: number; 
 /** When `completed_loans` last went up; spaces cap steps out in time. */
 lastCapStepAt: bigint; 
-/** Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0. */
+/**
+ * Settled loans this person co-signed whose fund loss is not yet paid back (a forgiven loss stays
+ * counted); the co-signer bar lifts when this reaches 0.
+ */
 unrestitutedLosses: number; 
 /**
  * Bar from this person's own default (0 when none). Relaxed only by their own pay-back of the loan
@@ -40,8 +43,8 @@ unrestitutedLosses: number;
  */
 borrowerBarUntil: bigint; 
 /**
- * Bar from a loss on a loan this person co-signed (0 when none). Lifted once every such loss is
- * paid back, or by `lift_bar`.
+ * Bar from a loss on a loan this person co-signed (0 when none): the latest expiry among those
+ * settlements. Ends at that time, or earlier once every such loss is paid back, or by `lift_bar`.
  */
 cosignerBarUntil: bigint; 
 /** The loan whose settlement set `borrower_bar_until`; only its pay-back relaxes that bar. */
@@ -67,7 +70,10 @@ restrictedUntil: number | bigint;
 pendingWallet: OptionOrNullable<Address | HasAddress>; pendingWalletAt: number | bigint; bump: number; 
 /** When `completed_loans` last went up; spaces cap steps out in time. */
 lastCapStepAt: number | bigint; 
-/** Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0. */
+/**
+ * Settled loans this person co-signed whose fund loss is not yet paid back (a forgiven loss stays
+ * counted); the co-signer bar lifts when this reaches 0.
+ */
 unrestitutedLosses: number; 
 /**
  * Bar from this person's own default (0 when none). Relaxed only by their own pay-back of the loan
@@ -75,8 +81,8 @@ unrestitutedLosses: number;
  */
 borrowerBarUntil: number | bigint; 
 /**
- * Bar from a loss on a loan this person co-signed (0 when none). Lifted once every such loss is
- * paid back, or by `lift_bar`.
+ * Bar from a loss on a loan this person co-signed (0 when none): the latest expiry among those
+ * settlements. Ends at that time, or earlier once every such loss is paid back, or by `lift_bar`.
  */
 cosignerBarUntil: number | bigint; 
 /** The loan whose settlement set `borrower_bar_until`; only its pay-back relaxes that bar. */

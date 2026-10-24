@@ -85,6 +85,7 @@ impl Env {
             cap_step_interval_seconds: 0,
             max_outstanding_principal: 0,
             successor_authority: self.successor_authority.pubkey(),
+            max_total_lent: 0,
         }
     }
 
@@ -1346,20 +1347,37 @@ impl Env {
         self.send(ix, &from.kp, &[])
     }
 
-    fn forgive(&mut self, cosigner: &Keypair, id: u64) -> Result<(), String> {
+    fn waive(&mut self, cosigner: &Keypair, id: u64) -> Result<(), String> {
         let loan = self.loan(id);
         let ix = Instruction::new_with_bytes(
             program_id(),
-            &goodfaith::instruction::Forgive {}.data(),
-            goodfaith::accounts::Forgive {
+            &goodfaith::instruction::WaiveReimbursement {}.data(),
+            goodfaith::accounts::WaiveReimbursement {
                 cosigner: cosigner.pubkey(),
                 pool: self.pool,
                 loan: self.loan_addr(id),
+                borrower_person: loan.borrower_person,
                 cosigner_person: loan.cosigner_person,
             }
             .to_account_metas(None),
         );
         self.send(ix, cosigner, &[])
+    }
+
+    fn forgive_fund(&mut self, signer: &Keypair, id: u64) -> Result<(), String> {
+        let loan = self.loan(id);
+        let ix = Instruction::new_with_bytes(
+            program_id(),
+            &goodfaith::instruction::ForgiveFundClaim { reason: [9u8; 32] }.data(),
+            goodfaith::accounts::ForgiveFundClaim {
+                authority: signer.pubkey(),
+                pool: self.pool,
+                loan: self.loan_addr(id),
+                borrower_person: loan.borrower_person,
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, signer, &[])
     }
 
     /// Escrow balance of a loan, or None once the account is closed.
@@ -2596,8 +2614,8 @@ fn default_with_zero_escrow_and_repay_after_grace() {
     assert!(env.barred(&borrower) && env.barred(&cosigner));
 
     // Repaying late is refused: after the deadline the only way is to settle and pay back. With a zero
-    // late ban the borrower who does so themselves is not barred, and the co-signer gets the whole
-    // escrow back. A third party's payment counts for the fund and the co-signer, not for the borrower.
+    // late ban the borrower is not barred once everything is paid back, whoever paid, and the
+    // co-signer gets the whole escrow back.
     let (mut env, borrower, cosigner, id) = setup_default(2500, 1_000);
     let payer = env.tracked_actor(5_000);
     env.set_time(T0 + 30 * DAY + 7 * DAY + 100 * DAY);
@@ -4458,7 +4476,7 @@ fn a_lift_clears_the_bars_but_keeps_the_count_of_open_losses() {
 }
 
 #[test]
-fn only_the_borrowers_own_pay_back_relaxes_their_bar() {
+fn any_full_pay_back_relaxes_the_borrowers_bar() {
     let mut env = Env::new(2500);
     env.fund(10_000);
     env.tune(|p| {
@@ -4473,11 +4491,12 @@ fn only_the_borrowers_own_pay_back_relaxes_their_bar() {
     env.after_grace(id);
     let t = env.now();
     env.settle(&friend.kp, id).unwrap();
-    // A friend pays everything: the fund and the co-signer are whole, the borrower stays barred.
+    // A friend pays everything: the fund and the co-signer are whole, and the borrower's bar becomes
+    // the late bar. The program sees the signing wallet, not whose money it was, so it does not ask.
     env.restitute(&friend, id, 1_000).unwrap();
     assert_eq!(env.loan(id).status, LoanStatus::Restituted);
-    assert_eq!(env.person(&a).borrower_bar_until, t + 30 * DAY);
-    assert_eq!(env.loan(id).borrower_bar_until, t + 30 * DAY);
+    assert_eq!(env.person(&a).borrower_bar_until, t + 5 * DAY);
+    assert_eq!(env.loan(id).borrower_bar_until, t + 5 * DAY);
     assert!(env.barred(&a) && !env.barred(&c));
     assert_eq!(env.balance(&c.token), 10_000);
     // Another borrower pays their own loan back after 20 days: barred until 25 days from the
@@ -4819,53 +4838,161 @@ fn a_wind_down_needs_the_authority_and_the_successor_authority() {
 }
 
 #[test]
-fn the_cosigner_may_forgive_the_rest_of_a_shortfall() {
+fn the_cosigner_waives_only_their_own_claim() {
     let mut env = Env::new(2500);
     env.fund(10_000);
     env.tune(|p| {
         p.default_ban_seconds = 30 * DAY;
+        p.late_ban_seconds = 5 * DAY;
         p.cosigner_ban_seconds = 10 * DAY;
     });
-    let a = env.tracked_actor(0);
+    let a = env.tracked_actor(1_000);
     let c = env.tracked_actor(10_000);
     let stranger = env.tracked_actor(1_000);
     let id = env.open_simple(&a, &c, 1_000);
     assert_fails(
-        env.forgive(&c.kp.insecure_clone(), id),
+        env.waive(&c.kp.insecure_clone(), id),
         GoodFaithError::LoanNotSettled,
     );
     env.after_grace(id);
     let t = env.now();
     env.settle(&stranger.kp, id).unwrap();
+    // $1,000 unpaid, $250 deposit: the fund is owed $750, the co-signer $250.
+    let l = env.loan(id);
+    assert_eq!((l.owed_to_fund(), l.owed_to_cosigner()), (750, 250));
     env.restitute_only(&stranger, id, 100).unwrap();
-    assert_fails(env.forgive(&stranger.kp, id), GoodFaithError::Unauthorized);
+    assert_fails(env.waive(&stranger.kp, id), GoodFaithError::Unauthorized);
     assert_fails(
-        env.forgive(&a.kp.insecure_clone(), id),
+        env.waive(&a.kp.insecure_clone(), id),
         GoodFaithError::Unauthorized,
     );
-    env.forgive(&c.kp.insecure_clone(), id).unwrap();
+    env.waive(&c.kp.insecure_clone(), id).unwrap();
+    assert_fails(
+        env.waive(&c.kp.insecure_clone(), id),
+        GoodFaithError::NothingToWaive,
+    );
+    // The fund's claim is untouched and still payable; the co-signer's is gone.
+    let l = env.loan(id);
+    assert_eq!(l.status, LoanStatus::Defaulted);
+    assert_eq!(l.cosigner_waived_at, t);
+    assert_eq!((l.owed_to_fund(), l.owed_to_cosigner()), (650, 0));
+    assert_eq!(env.pool_state().total_lost, 650);
+    assert_eq!(env.person(&c).unrestituted_losses, 1);
+    // Paying the fund's claim in full settles the loan: nothing goes to the co-signer, the
+    // co-signer's bar lifts, and the borrower gets the late bar.
+    assert_fails(env.restitute_only(&a, id, 651), GoodFaithError::OverRepay);
+    let c_before = env.balance(&c.token);
+    env.restitute(&a, id, 650).unwrap();
     let l = env.loan(id);
     assert_eq!(l.status, LoanStatus::Restituted);
+    assert_eq!(l.reimbursement_pending + l.refund_pending, 0);
+    assert_eq!(env.balance(&c.token), c_before);
+    assert_eq!(env.pool_state().total_lost, 0);
+    assert!(!env.barred(&c));
+    assert_eq!(env.person(&a).borrower_bar_until, t + 5 * DAY);
+}
+
+#[test]
+fn only_the_authority_forgives_the_funds_claim_and_it_is_not_a_recovery() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    env.tune(|p| {
+        p.default_ban_seconds = 30 * DAY;
+        p.late_ban_seconds = 5 * DAY;
+        p.cosigner_ban_seconds = 10 * DAY;
+    });
+    let a = env.tracked_actor(1_000);
+    let c = env.tracked_actor(10_000);
+    let id = env.open_simple(&a, &c, 1_000);
+    env.after_grace(id);
+    let t = env.now();
+    env.settle(&a.kp, id).unwrap();
+    let admin = env.admin.insecure_clone();
+    assert_fails(
+        env.forgive_fund(&c.kp.insecure_clone(), id),
+        GoodFaithError::Unauthorized,
+    );
+    env.forgive_fund(&admin, id).unwrap();
+    assert_fails(env.forgive_fund(&admin, id), GoodFaithError::NothingOwed);
+    let l = env.loan(id);
     assert_eq!(
-        (l.restituted, l.forgiven_at, l.owed_after_settlement()),
-        (100, t, 0)
+        (l.fund_forgiven_at, l.fund_forgiveness_reason),
+        (t, [9u8; 32])
     );
-    // Nobody can pay it back any more, and the money side is unchanged: the loss stays a loss.
-    assert_fails(
-        env.restitute_only(&a, id, 1),
-        GoodFaithError::LoanNotSettled,
-    );
-    assert_fails(
-        env.forgive(&c.kp.insecure_clone(), id),
-        GoodFaithError::LoanNotSettled,
-    );
-    assert_eq!(env.pool_state().total_lost, 650);
-    // Forgiving ends the debt, not the consequences: both bars run their course.
-    assert_eq!(env.person(&a).borrower_bar_until, t + 30 * DAY);
-    assert_eq!(env.person(&c).cosigner_bar_until, t + 10 * DAY);
+    assert_eq!((l.owed_to_fund(), l.owed_to_cosigner()), (0, 250));
+    let p = env.pool_state();
+    // The loss stays recognised; the forgiveness is counted on its own.
+    assert_eq!((p.total_lost, p.total_forgiven), (750, 750));
+    // No bar moves: forgiveness is not recovery.
     assert_eq!(env.person(&c).unrestituted_losses, 1);
+    assert_eq!(env.person(&c).cosigner_bar_until, t + 10 * DAY);
+    assert_eq!(env.person(&a).borrower_bar_until, t + 30 * DAY);
+    // What the borrower still pays goes to the co-signer, and closing the loan this way does not
+    // relax the borrower's bar (the fund was not paid back).
+    env.restitute(&a, id, 250).unwrap();
+    let l = env.loan(id);
+    assert_eq!(l.status, LoanStatus::Restituted);
+    assert_eq!(env.balance(&c.token), 10_000);
+    assert_eq!(env.person(&a).borrower_bar_until, t + 30 * DAY);
     env.set_time(t + 10 * DAY);
     assert!(!env.barred(&c) && env.barred(&a));
+}
+
+#[test]
+fn the_lending_budget_counts_everything_ever_lent() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    env.tune(|p| p.max_total_lent = 1_500);
+    let a = env.tracked_actor(1_000);
+    let c = env.tracked_actor(10_000);
+    let id = env.open_simple(&a, &c, 1_000);
+    env.repay(&a, id, 1_000).unwrap();
+    // Repaid, so nothing is outstanding, but the budget remembers: only $500 is left.
+    assert_eq!(env.pool_state().outstanding_principal, 0);
+    let b = env.tracked_actor(0);
+    let bk = b.kp.insecure_clone();
+    assert_fails(
+        env.open_loan(&bk, &b, &c, 501, 30),
+        GoodFaithError::LendingBudgetReached,
+    );
+    env.cancel_request(&bk, &b.key()).unwrap();
+    env.open_simple(&b, &c, 500);
+    assert_eq!(env.pool_state().total_lent, 1_500);
+}
+
+#[test]
+fn the_cosigner_bar_ends_at_the_latest_expiry_or_when_every_loss_is_paid_back() {
+    let mut env = Env::new(2500);
+    env.fund(10_000);
+    env.tune(|p| {
+        p.default_ban_seconds = 300 * DAY;
+        p.cosigner_ban_seconds = 10 * DAY;
+        p.max_guarantees_per_member = 2;
+    });
+    let a = env.tracked_actor(1_000);
+    let b = env.tracked_actor(1_000);
+    let c = env.tracked_actor(10_000);
+    let id1 = env.open_simple(&a, &c, 1_000);
+    env.set_time(env.now() + 5 * DAY);
+    let id2 = env.open_simple(&b, &c, 1_000);
+    env.after_grace(id1);
+    let t1 = env.now();
+    env.settle(&a.kp, id1).unwrap();
+    env.after_grace(id2);
+    let t2 = env.now();
+    env.settle(&b.kp, id2).unwrap();
+    assert!(t2 > t1);
+    assert_eq!(env.person(&c).cosigner_bar_until, t2 + 10 * DAY);
+    // The later loan is paid back; the earlier is not. The bar stays at the latest expiry: one
+    // number per person, not per loan.
+    env.restitute(&b, id2, 1_000).unwrap();
+    assert_eq!(env.person(&c).unrestituted_losses, 1);
+    assert_eq!(env.person(&c).cosigner_bar_until, t2 + 10 * DAY);
+    env.set_time(t2 + 10 * DAY);
+    assert!(
+        !env.barred(&c),
+        "the expiry ends it even with a loss unpaid"
+    );
 }
 
 #[test]
@@ -4959,7 +5086,8 @@ mod props {
         /// The mint's freeze authority freezing or thawing an escrow account.
         Freeze(u64),
         Thaw(u64),
-        Forgive(u64),
+        Waive(u64),
+        ForgiveFund(u64),
         Wait(u8),
         Schedule {
             bps: u16,
@@ -5002,7 +5130,8 @@ mod props {
             1 => a.clone().prop_map(Op::LiftBar),
             1 => (0..8u64).prop_map(Op::Freeze),
             2 => (0..8u64).prop_map(Op::Thaw),
-            1 => (0..8u64).prop_map(Op::Forgive),
+            1 => (0..8u64).prop_map(Op::Waive),
+            1 => (0..8u64).prop_map(Op::ForgiveFund),
             6 => (0..40u8).prop_map(Op::Wait),
             3 => (
                 0..=10_000u16,
@@ -5081,6 +5210,7 @@ mod props {
             cap_step_interval_seconds: pool.cap_step_interval_seconds,
             max_outstanding_principal: pool.max_outstanding_principal,
             successor_authority: pool.successor_authority,
+            max_total_lent: pool.max_total_lent,
         }
     }
 
@@ -5180,6 +5310,8 @@ mod props {
         let mut pending_claims = 0u64;
         let mut recoveries_pending = 0u64;
         let mut vault_claims = 0u64;
+        let mut lost_total = 0u64;
+        let mut forgiven = 0u64;
         let mut losses = vec![0u16; actors.len()];
         let mut pairs: Vec<(usize, usize)> = Vec::new();
         // bars set by settlements since the person's last lift: the person is barred at least that long
@@ -5234,7 +5366,7 @@ mod props {
                     pairs.push((b, c));
                     assert_eq!(loan.refund_pending, 0);
                     assert_eq!(loan.shortfall, 0);
-                    assert_eq!(loan.forgiven_at, 0);
+                    assert_eq!((loan.cosigner_waived_at, loan.fund_forgiven_at), (0, 0));
                 }
                 LoanStatus::Repaid => {
                     assert_eq!(loan.repaid, loan.principal);
@@ -5249,7 +5381,7 @@ mod props {
                     );
                     pending_claims += loan.refund_pending;
                     assert_eq!(loan.shortfall, 0);
-                    assert_eq!(loan.forgiven_at, 0);
+                    assert_eq!((loan.cosigner_waived_at, loan.fund_forgiven_at), (0, 0));
                 }
                 LoanStatus::Defaulted | LoanStatus::Restituted => {
                     assert!(loan.closed_at > deadline);
@@ -5258,10 +5390,27 @@ mod props {
                     assert_eq!(loan.recovered, loan.shortfall.min(loan.escrowed));
                     assert!(loan.restituted <= loan.shortfall);
                     assert!(loan.recovery_pending <= loan.recovered);
+                    // the two claims, each paid only up to its own size
+                    let lost = loan.shortfall - loan.recovered;
+                    let to_cosigner = loan.restituted - loan.restituted_to_fund;
+                    assert!(loan.restituted_to_fund <= lost, "fund paid beyond its loss");
+                    assert!(
+                        to_cosigner <= loan.recovered,
+                        "co-signer paid beyond the deposit used"
+                    );
+                    if loan.fund_forgiven_at == 0 {
+                        assert!(
+                            to_cosigner == 0 || loan.restituted_to_fund == lost,
+                            "co-signer paid before the fund"
+                        );
+                    } else {
+                        forgiven += lost - loan.restituted_to_fund;
+                    }
+                    lost_total += lost - loan.restituted_to_fund;
                     assert_eq!(
                         loan.status == LoanStatus::Restituted,
-                        loan.restituted == loan.shortfall || loan.forgiven_at != 0,
-                        "Restituted iff the shortfall is back or forgiven"
+                        loan.owed_to_fund() == 0 && loan.owed_to_cosigner() == 0,
+                        "Restituted iff neither claim is owed"
                     );
                     // the escrow holds at least what is owed from it, or is gone
                     assert!(
@@ -5271,9 +5420,8 @@ mod props {
                     pending_claims += loan.refund_pending;
                     recoveries_pending += loan.recovery_pending;
                     vault_claims += loan.reimbursement_pending;
-                    // reimbursement never exceeds the restitution left after the loss
-                    let lost = loan.shortfall - loan.recovered;
-                    assert!(loan.reimbursement_pending <= loan.restituted.saturating_sub(lost));
+                    // reimbursement never exceeds what was paid to the co-signer's claim
+                    assert!(loan.reimbursement_pending <= to_cosigner);
                     // a settlement puts the borrower back on the first-loan cap
                     completed[b] = 0;
                     // the borrower's bar: the default bar, or relaxed to a late bar from the pay-back
@@ -5282,7 +5430,7 @@ mod props {
                     } else {
                         0
                     };
-                    if loan.status == LoanStatus::Defaulted {
+                    if loan.status == LoanStatus::Defaulted || !loan.paid_back() {
                         assert_eq!(loan.borrower_bar_until, default_until);
                     } else {
                         let x = loan.borrower_bar_until;
@@ -5298,7 +5446,8 @@ mod props {
                     }
                     // the co-signer's bar: set with the loss, and about the fund's loss alone
                     if lost > 0 {
-                        let covered = loan.restituted >= lost;
+                        // forgiveness is not recovery
+                        let covered = loan.restituted_to_fund >= lost;
                         let cos_until = if loan.cosigner_ban_seconds > 0 {
                             loan.closed_at.saturating_add(loan.cosigner_ban_seconds)
                         } else {
@@ -5325,6 +5474,11 @@ mod props {
         assert_eq!(pool.pending_claims, pending_claims);
         assert_eq!(pool.recoveries_pending, recoveries_pending);
         assert_eq!(pool.vault_claims, vault_claims);
+        assert_eq!(
+            pool.total_lost, lost_total,
+            "recognised loss = sum of unpaid fund losses"
+        );
+        assert_eq!(pool.total_forgiven, forgiven);
         for (i, a) in actors.iter().enumerate() {
             let p = env.person(a);
             assert_eq!(p.active_loan, active[i]);
@@ -5491,13 +5645,18 @@ mod props {
                             env.set_escrow_state(l, 1);
                         }
                     }
-                    Op::Forgive(l) => {
+                    Op::Waive(l) => {
                         if l < env.pool_state().loan_count {
                             let wallet = env.wallet_of(&env.loan(l).cosigner_person);
                             if let Some(c) = actors.iter().find(|a| a.key() == wallet) {
                                 let kp = c.kp.insecure_clone();
-                                let _ = env.forgive(&kp, l);
+                                let _ = env.waive(&kp, l);
                             }
+                        }
+                    }
+                    Op::ForgiveFund(l) => {
+                        if l < env.pool_state().loan_count {
+                            let _ = env.forgive_fund(&admin, l);
                         }
                     }
                     Op::Wait(d) => {

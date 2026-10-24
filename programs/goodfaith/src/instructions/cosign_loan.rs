@@ -182,6 +182,16 @@ pub fn cosign_loan_handler(
         GoodFaithError::OverOutstandingCeiling
     );
     a.pool.outstanding_principal = outstanding;
+    // The lifetime budget: settlements and repayments free none of it.
+    let lent = a
+        .pool
+        .total_lent
+        .checked_add(amount)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    require!(
+        a.pool.max_total_lent == 0 || lent <= a.pool.max_total_lent,
+        GoodFaithError::LendingBudgetReached
+    );
     if a.pool.disbursement_cap_per_window > 0 {
         let window_end = a
             .pool
@@ -288,7 +298,10 @@ pub fn cosign_loan_handler(
         cosigner_ban_seconds: a.pool.cosigner_ban_seconds,
         seasoning_seconds: a.pool.seasoning_seconds,
         cap_step_interval_seconds: a.pool.cap_step_interval_seconds,
-        forgiven_at: 0,
+        restituted_to_fund: 0,
+        cosigner_waived_at: 0,
+        fund_forgiven_at: 0,
+        fund_forgiveness_reason: [0; 32],
     });
     a.borrower_person.active_loan = Some(a.loan.key());
     a.cosigner_person.active_guarantees = a

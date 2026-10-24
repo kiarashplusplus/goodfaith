@@ -40,15 +40,17 @@ pub struct Restitute<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-/// Anyone pays back part or all of a settled loan's shortfall. The fund's loss is made good first; the
-/// rest gives the co-signer back the escrow that was used: escrow the fund has not collected yet is
+/// Anyone pays back part or all of what a settled loan still owes. The fund's claim is paid first; the
+/// rest pays the co-signer's claim (the escrow that was used): escrow the fund has not collected yet is
 /// simply released to them (the vault keeps the payment instead), the rest is owed to them out of the
 /// vault. Once the fund's loss is covered and it was the last loss this co-signer guaranteed, their bar
-/// is lifted, whoever paid. Once the whole shortfall is back and the borrower paid it themselves, their
-/// bar is shortened to a late-payment bar counted from now; a third party's payment leaves it alone.
+/// is lifted. Once nothing is owed, and the fund was paid rather than forgiven, the borrower's bar is
+/// shortened to a late-payment bar counted from now. Who signs does not matter: the program can see the
+/// wallet, not whose money it was.
 pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()> {
     let a = &mut ctx.accounts;
     require!(amount > 0, GoodFaithError::AmountZero);
+    let fund_owed = a.loan.owed_to_fund();
     let owed = a.loan.owed_after_settlement();
     require!(owed > 0, GoodFaithError::NothingOwed);
     require!(amount <= owed, GoodFaithError::OverRepay);
@@ -68,18 +70,21 @@ pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()>
     )?;
 
     let now = Clock::get()?.unix_timestamp;
-    let lost = a.loan.lost();
-    let fund_had_back = a.loan.restituted.min(lost);
-    let to_fund = amount.min(lost.saturating_sub(fund_had_back));
+    let to_fund = amount.min(fund_owed);
     let to_cosigner = amount
         .checked_sub(to_fund)
         .ok_or(GoodFaithError::MathOverflow)?;
-    let fund_covered_now = lost > 0 && fund_had_back < lost && fund_had_back + to_fund >= lost;
+    let fund_covered_now = to_fund > 0 && to_fund == fund_owed;
 
     a.loan.restituted = a
         .loan
         .restituted
         .checked_add(amount)
+        .ok_or(GoodFaithError::MathOverflow)?;
+    a.loan.restituted_to_fund = a
+        .loan
+        .restituted_to_fund
+        .checked_add(to_fund)
         .ok_or(GoodFaithError::MathOverflow)?;
     a.pool.total_restituted = a
         .pool
@@ -143,22 +148,8 @@ pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()>
         }
     }
 
-    let complete = a.loan.restituted == a.loan.shortfall;
-    let mut borrower_relaxed = false;
-    if complete {
-        a.loan.status = LoanStatus::Restituted;
-        // Only the borrower's own pay-back speaks for them; and the late bar runs from today, so a
-        // pay-back years later still carries it.
-        if a.payer.key() == a.borrower_person.wallet {
-            let relaxed_to = now.saturating_add(a.loan.late_ban_seconds);
-            if a.borrower_person
-                .relax_borrower_bar(a.loan.key(), relaxed_to)
-            {
-                a.loan.borrower_bar_until = relaxed_to;
-                borrower_relaxed = true;
-            }
-        }
-    }
+    let (complete, borrower_relaxed) =
+        close_if_settled_up(&mut a.loan, &mut a.borrower_person, now);
 
     emit!(Restituted {
         pool: a.pool.key(),
@@ -170,6 +161,8 @@ pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()>
         to_cosigner,
         restituted: a.loan.restituted,
         shortfall: a.loan.shortfall,
+        fund_owed: a.loan.owed_to_fund(),
+        cosigner_owed: a.loan.owed_to_cosigner(),
         converted,
         complete,
         borrower_relaxed,
@@ -181,4 +174,29 @@ pub fn restitute_handler(mut ctx: Context<Restitute>, amount: u64) -> Result<()>
         cosigner_ineligible_until: a.cosigner_person.ineligible_until,
     });
     Ok(())
+}
+
+/// Closes a settled loan once neither claim is owed. The borrower's bar is relaxed only when the fund was
+/// paid back in full (not forgiven) and the co-signer was paid back or waived. Returns
+/// (closed now, borrower bar relaxed).
+pub(crate) fn close_if_settled_up(
+    loan: &mut Account<Loan>,
+    borrower_person: &mut Account<Person>,
+    now: i64,
+) -> (bool, bool) {
+    if loan.owed_after_settlement() > 0 {
+        return (false, false);
+    }
+    loan.status = LoanStatus::Restituted;
+    if !loan.paid_back() {
+        return (true, false);
+    }
+    // The late bar runs from today, so a pay-back years later still carries it.
+    let relaxed_to = now.saturating_add(loan.late_ban_seconds);
+    let key = loan.key();
+    if borrower_person.relax_borrower_bar(key, relaxed_to) {
+        loan.borrower_bar_until = relaxed_to;
+        return (true, true);
+    }
+    (true, false)
 }

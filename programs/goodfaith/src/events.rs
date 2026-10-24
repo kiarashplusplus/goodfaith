@@ -115,14 +115,34 @@ pub struct RecoveryCollected {
 }
 
 #[event]
-pub struct Forgiven {
+pub struct ReimbursementWaived {
     pub pool: Pubkey,
     pub loan: Pubkey,
     pub loan_id: u64,
     pub cosigner_person: Pubkey,
     pub by: Pubkey,
-    /// What the borrower no longer owes.
-    pub unpaid: u64,
+    /// What pay-backs would still have returned to the co-signer.
+    pub waived: u64,
+    /// The fund's claim, unchanged by the waiver.
+    pub fund_owed: u64,
+    /// Nothing is owed any more: the loan is Restituted.
+    pub complete: bool,
+    pub borrower_relaxed: bool,
+    pub borrower_ineligible_until: i64,
+}
+
+#[event]
+pub struct FundClaimForgiven {
+    pub pool: Pubkey,
+    pub loan: Pubkey,
+    pub loan_id: u64,
+    pub by: Pubkey,
+    /// Hash of the authority's written reason; the log it points to is public.
+    pub reason: [u8; 32],
+    pub forgiven: u64,
+    /// The co-signer's claim, unchanged by the forgiveness.
+    pub cosigner_owed: u64,
+    pub complete: bool,
 }
 
 #[event]
@@ -134,16 +154,20 @@ pub struct Restituted {
     pub amount: u64,
     /// Part of `amount` that made the fund's loss good.
     pub to_fund: u64,
-    /// Part of `amount` now owed to the co-signer out of the vault.
+    /// Part of `amount` that pays the co-signer's claim.
     pub to_cosigner: u64,
     pub restituted: u64,
     pub shortfall: u64,
+    /// The two claims after this payment.
+    pub fund_owed: u64,
+    pub cosigner_owed: u64,
     /// Of `to_cosigner`, escrow still uncollected that is released back to the co-signer instead of
     /// being collected and reimbursed from the vault.
     pub converted: u64,
-    /// The whole shortfall is paid back: the loan is Restituted.
+    /// Nothing is owed any more: the loan is Restituted.
     pub complete: bool,
-    /// The borrower paid back their own loan in full: their bar now ends at `now + late_ban_seconds`.
+    /// The fund was paid back in full and the co-signer paid or waived: the borrower's bar now ends at
+    /// `now + late_ban_seconds`.
     pub borrower_relaxed: bool,
     /// The fund's loss on this loan is covered and it was the co-signer's last one: their bar is lifted.
     pub cosigner_lifted: bool,

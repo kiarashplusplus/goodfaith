@@ -28,7 +28,7 @@ shortfall: bigint;
 recovered: bigint; 
 /** Of `recovered`, what is still in the escrow account until `collect_recovery`. */
 recoveryPending: bigint; 
-/** Paid back after settlement, by or for the borrower. */
+/** Paid back after settlement, by or for the borrower (to the fund and to the co-signer). */
 restituted: bigint; 
 /** Reimbursement owed to the co-signer out of the vault (their escrow, paid back by restitution). */
 reimbursementPending: bigint; 
@@ -38,8 +38,14 @@ borrowerBarUntil: bigint; cosignerBarUntil: bigint;
 defaultBanSeconds: bigint; lateBanSeconds: bigint; cosignerBanSeconds: bigint; 
 /** Cap-credit rules fixed when the loan opened. */
 seasoningSeconds: bigint; capStepIntervalSeconds: bigint; 
-/** When the co-signer forgave the unpaid rest of the shortfall (0 = not forgiven). */
-forgivenAt: bigint;  };
+/** Of `restituted`, what made the fund's loss good; the rest reimbursed the co-signer. */
+restitutedToFund: bigint; 
+/** When the co-signer waived the rest of their reimbursement (0 = not waived). */
+cosignerWaivedAt: bigint; 
+/** When the authority forgave the rest of the fund's claim (0 = not forgiven). */
+fundForgivenAt: bigint; 
+/** Hash of the authority's written reason for forgiving the fund's claim. */
+fundForgivenessReason: ReadonlyUint8Array;  };
 
 export type LoanArgs = { id: number | bigint; borrower: Address | HasAddress; cosigner: Address | HasAddress; rentPayer: Address | HasAddress; principal: number | bigint; repaid: number | bigint; escrowed: number | bigint; openedAt: number | bigint; dueAt: number | bigint; 
 /** Grace period fixed when the loan opened; later pool changes do not apply. */
@@ -56,7 +62,7 @@ shortfall: number | bigint;
 recovered: number | bigint; 
 /** Of `recovered`, what is still in the escrow account until `collect_recovery`. */
 recoveryPending: number | bigint; 
-/** Paid back after settlement, by or for the borrower. */
+/** Paid back after settlement, by or for the borrower (to the fund and to the co-signer). */
 restituted: number | bigint; 
 /** Reimbursement owed to the co-signer out of the vault (their escrow, paid back by restitution). */
 reimbursementPending: number | bigint; 
@@ -66,17 +72,23 @@ borrowerBarUntil: number | bigint; cosignerBarUntil: number | bigint;
 defaultBanSeconds: number | bigint; lateBanSeconds: number | bigint; cosignerBanSeconds: number | bigint; 
 /** Cap-credit rules fixed when the loan opened. */
 seasoningSeconds: number | bigint; capStepIntervalSeconds: number | bigint; 
-/** When the co-signer forgave the unpaid rest of the shortfall (0 = not forgiven). */
-forgivenAt: number | bigint;  };
+/** Of `restituted`, what made the fund's loss good; the rest reimbursed the co-signer. */
+restitutedToFund: number | bigint; 
+/** When the co-signer waived the rest of their reimbursement (0 = not waived). */
+cosignerWaivedAt: number | bigint; 
+/** When the authority forgave the rest of the fund's claim (0 = not forgiven). */
+fundForgivenAt: number | bigint; 
+/** Hash of the authority's written reason for forgiving the fund's claim. */
+fundForgivenessReason: ReadonlyUint8Array;  };
 
 /** Gets the encoder for {@link LoanArgs} account data. */
 export function getLoanEncoder(): FixedSizeEncoder<LoanArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['id', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['rentPayer', getAddressEncoder()], ['principal', getU64Encoder()], ['repaid', getU64Encoder()], ['escrowed', getU64Encoder()], ['openedAt', getI64Encoder()], ['dueAt', getI64Encoder()], ['graceDays', getU16Encoder()], ['status', getLoanStatusEncoder()], ['bump', getU8Encoder()], ['escrowBump', getU8Encoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()], ['closedAt', getI64Encoder()], ['refundPending', getU64Encoder()], ['shortfall', getU64Encoder()], ['recovered', getU64Encoder()], ['recoveryPending', getU64Encoder()], ['restituted', getU64Encoder()], ['reimbursementPending', getU64Encoder()], ['borrowerBarUntil', getI64Encoder()], ['cosignerBarUntil', getI64Encoder()], ['defaultBanSeconds', getI64Encoder()], ['lateBanSeconds', getI64Encoder()], ['cosignerBanSeconds', getI64Encoder()], ['seasoningSeconds', getI64Encoder()], ['capStepIntervalSeconds', getI64Encoder()], ['forgivenAt', getI64Encoder()]]), (value) => ({ ...value, discriminator: LOAN_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['id', getU64Encoder()], ['borrower', getAddressEncoder()], ['cosigner', getAddressEncoder()], ['rentPayer', getAddressEncoder()], ['principal', getU64Encoder()], ['repaid', getU64Encoder()], ['escrowed', getU64Encoder()], ['openedAt', getI64Encoder()], ['dueAt', getI64Encoder()], ['graceDays', getU16Encoder()], ['status', getLoanStatusEncoder()], ['bump', getU8Encoder()], ['escrowBump', getU8Encoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()], ['closedAt', getI64Encoder()], ['refundPending', getU64Encoder()], ['shortfall', getU64Encoder()], ['recovered', getU64Encoder()], ['recoveryPending', getU64Encoder()], ['restituted', getU64Encoder()], ['reimbursementPending', getU64Encoder()], ['borrowerBarUntil', getI64Encoder()], ['cosignerBarUntil', getI64Encoder()], ['defaultBanSeconds', getI64Encoder()], ['lateBanSeconds', getI64Encoder()], ['cosignerBanSeconds', getI64Encoder()], ['seasoningSeconds', getI64Encoder()], ['capStepIntervalSeconds', getI64Encoder()], ['restitutedToFund', getU64Encoder()], ['cosignerWaivedAt', getI64Encoder()], ['fundForgivenAt', getI64Encoder()], ['fundForgivenessReason', fixEncoderSize(getBytesEncoder(), 32)]]), (value) => ({ ...value, discriminator: LOAN_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link Loan} account data. */
 export function getLoanDecoder(): FixedSizeDecoder<Loan> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['id', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['rentPayer', getAddressDecoder()], ['principal', getU64Decoder()], ['repaid', getU64Decoder()], ['escrowed', getU64Decoder()], ['openedAt', getI64Decoder()], ['dueAt', getI64Decoder()], ['graceDays', getU16Decoder()], ['status', getLoanStatusDecoder()], ['bump', getU8Decoder()], ['escrowBump', getU8Decoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()], ['closedAt', getI64Decoder()], ['refundPending', getU64Decoder()], ['shortfall', getU64Decoder()], ['recovered', getU64Decoder()], ['recoveryPending', getU64Decoder()], ['restituted', getU64Decoder()], ['reimbursementPending', getU64Decoder()], ['borrowerBarUntil', getI64Decoder()], ['cosignerBarUntil', getI64Decoder()], ['defaultBanSeconds', getI64Decoder()], ['lateBanSeconds', getI64Decoder()], ['cosignerBanSeconds', getI64Decoder()], ['seasoningSeconds', getI64Decoder()], ['capStepIntervalSeconds', getI64Decoder()], ['forgivenAt', getI64Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['id', getU64Decoder()], ['borrower', getAddressDecoder()], ['cosigner', getAddressDecoder()], ['rentPayer', getAddressDecoder()], ['principal', getU64Decoder()], ['repaid', getU64Decoder()], ['escrowed', getU64Decoder()], ['openedAt', getI64Decoder()], ['dueAt', getI64Decoder()], ['graceDays', getU16Decoder()], ['status', getLoanStatusDecoder()], ['bump', getU8Decoder()], ['escrowBump', getU8Decoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()], ['closedAt', getI64Decoder()], ['refundPending', getU64Decoder()], ['shortfall', getU64Decoder()], ['recovered', getU64Decoder()], ['recoveryPending', getU64Decoder()], ['restituted', getU64Decoder()], ['reimbursementPending', getU64Decoder()], ['borrowerBarUntil', getI64Decoder()], ['cosignerBarUntil', getI64Decoder()], ['defaultBanSeconds', getI64Decoder()], ['lateBanSeconds', getI64Decoder()], ['cosignerBanSeconds', getI64Decoder()], ['seasoningSeconds', getI64Decoder()], ['capStepIntervalSeconds', getI64Decoder()], ['restitutedToFund', getU64Decoder()], ['cosignerWaivedAt', getI64Decoder()], ['fundForgivenAt', getI64Decoder()], ['fundForgivenessReason', fixDecoderSize(getBytesDecoder(), 32)]]);
 }
 
 /** Gets the codec for {@link Loan} account data. */
@@ -129,5 +141,5 @@ export async function fetchAllMaybeLoan(
 }
 
 export function getLoanSize(): number {
-  return 341;
+  return 389;
 }

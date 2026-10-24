@@ -152,7 +152,11 @@ pub mod goodfaith {
         instructions::update_pool::lift_bar_handler(ctx, reason)
     }
 
-    pub fn forgive(ctx: Context<Forgive>) -> Result<()> {
-        instructions::forgive::forgive_handler(ctx)
+    pub fn waive_reimbursement(ctx: Context<WaiveReimbursement>) -> Result<()> {
+        instructions::forgive::waive_reimbursement_handler(ctx)
+    }
+
+    pub fn forgive_fund_claim(ctx: Context<ForgiveFundClaim>, reason: [u8; 32]) -> Result<()> {
+        instructions::forgive::forgive_fund_claim_handler(ctx, reason)
     }
 }

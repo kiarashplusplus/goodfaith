@@ -78,6 +78,11 @@ pub struct Pool {
     pub keys_changed_at: i64,
     /// Second key that must sign a wind-down announcement beside the authority's.
     pub successor_authority: Pubkey,
+    /// Ceiling on `total_lent`, everything ever lent (0 = none). Unlike `max_outstanding_principal`, a
+    /// settlement frees none of it: raising it is a settings change, made after a review, with notice.
+    pub max_total_lent: u64,
+    /// Fund claims the authority forgave (still counted in `total_lost`, which is the recognised loss).
+    pub total_forgiven: u64,
 }
 
 impl Pool {
@@ -116,13 +121,14 @@ pub struct Person {
     pub bump: u8,
     /// When `completed_loans` last went up; spaces cap steps out in time.
     pub last_cap_step_at: i64,
-    /// Settled loans this person co-signed whose loss is not yet paid back; the co-signer bar lifts at 0.
+    /// Settled loans this person co-signed whose fund loss is not yet paid back (a forgiven loss stays
+    /// counted); the co-signer bar lifts when this reaches 0.
     pub unrestituted_losses: u16,
     /// Bar from this person's own default (0 when none). Relaxed only by their own pay-back of the loan
     /// that set it, or by `lift_bar`.
     pub borrower_bar_until: i64,
-    /// Bar from a loss on a loan this person co-signed (0 when none). Lifted once every such loss is
-    /// paid back, or by `lift_bar`.
+    /// Bar from a loss on a loan this person co-signed (0 when none): the latest expiry among those
+    /// settlements. Ends at that time, or earlier once every such loss is paid back, or by `lift_bar`.
     pub cosigner_bar_until: i64,
     /// The loan whose settlement set `borrower_bar_until`; only its pay-back relaxes that bar.
     pub borrower_bar_loan: Option<Pubkey>,
@@ -259,7 +265,7 @@ pub struct Loan {
     pub recovered: u64,
     /// Of `recovered`, what is still in the escrow account until `collect_recovery`.
     pub recovery_pending: u64,
-    /// Paid back after settlement, by or for the borrower.
+    /// Paid back after settlement, by or for the borrower (to the fund and to the co-signer).
     pub restituted: u64,
     /// Reimbursement owed to the co-signer out of the vault (their escrow, paid back by restitution).
     pub reimbursement_pending: u64,
@@ -273,8 +279,14 @@ pub struct Loan {
     /// Cap-credit rules fixed when the loan opened.
     pub seasoning_seconds: i64,
     pub cap_step_interval_seconds: i64,
-    /// When the co-signer forgave the unpaid rest of the shortfall (0 = not forgiven).
-    pub forgiven_at: i64,
+    /// Of `restituted`, what made the fund's loss good; the rest reimbursed the co-signer.
+    pub restituted_to_fund: u64,
+    /// When the co-signer waived the rest of their reimbursement (0 = not waived).
+    pub cosigner_waived_at: i64,
+    /// When the authority forgave the rest of the fund's claim (0 = not forgiven).
+    pub fund_forgiven_at: i64,
+    /// Hash of the authority's written reason for forgiving the fund's claim.
+    pub fund_forgiveness_reason: [u8; 32],
 }
 
 impl Loan {
@@ -290,12 +302,35 @@ impl Loan {
         self.shortfall.saturating_sub(self.recovered)
     }
 
-    /// Still owed by the borrower after settlement (nothing once the co-signer forgave the rest).
-    pub fn owed_after_settlement(&self) -> u64 {
-        if self.forgiven_at != 0 {
+    /// The fund's claim after settlement: its loss, less what was paid back to it (0 once forgiven).
+    pub fn owed_to_fund(&self) -> u64 {
+        if self.fund_forgiven_at != 0 {
             return 0;
         }
-        self.shortfall.saturating_sub(self.restituted)
+        self.lost().saturating_sub(self.restituted_to_fund)
+    }
+
+    /// The co-signer's claim after settlement: the escrow used, less what was paid back to them (0 once
+    /// they waived it).
+    pub fn owed_to_cosigner(&self) -> u64 {
+        if self.cosigner_waived_at != 0 {
+            return 0;
+        }
+        self.recovered
+            .saturating_sub(self.restituted.saturating_sub(self.restituted_to_fund))
+    }
+
+    /// Still owed by the borrower after settlement: both claims.
+    pub fn owed_after_settlement(&self) -> u64 {
+        self.owed_to_fund().saturating_add(self.owed_to_cosigner())
+    }
+
+    /// The borrower's late bar is earned: the fund was paid back in full (not forgiven) and the
+    /// co-signer was paid back or waived, whoever paid.
+    pub fn paid_back(&self) -> bool {
+        self.fund_forgiven_at == 0
+            && self.restituted_to_fund >= self.lost()
+            && self.owed_to_cosigner() == 0
     }
 }
 
@@ -328,6 +363,7 @@ pub struct PoolParams {
     pub max_outstanding_principal: u64,
     /// Second key for `announce_wind_down`.
     pub successor_authority: Pubkey,
+    pub max_total_lent: u64,
 }
 
 impl PoolParams {
@@ -416,6 +452,7 @@ impl PoolParams {
         pool.cap_step_interval_seconds = self.cap_step_interval_seconds;
         pool.max_outstanding_principal = self.max_outstanding_principal;
         pool.successor_authority = self.successor_authority;
+        pool.max_total_lent = self.max_total_lent;
     }
 
     /// The keys that can move a membership: a change to any of them starts the recovery quarantine.

@@ -15,16 +15,21 @@ export function getRestitutedEventDiscriminatorBytes(): ReadonlyUint8Array { ret
 export type RestitutedEvent = { pool: Address; loan: Address; loanId: bigint; payer: Address; amount: bigint; 
 /** Part of `amount` that made the fund's loss good. */
 toFund: bigint; 
-/** Part of `amount` now owed to the co-signer out of the vault. */
+/** Part of `amount` that pays the co-signer's claim. */
 toCosigner: bigint; restituted: bigint; shortfall: bigint; 
+/** The two claims after this payment. */
+fundOwed: bigint; cosignerOwed: bigint; 
 /**
  * Of `to_cosigner`, escrow still uncollected that is released back to the co-signer instead of
  * being collected and reimbursed from the vault.
  */
 converted: bigint; 
-/** The whole shortfall is paid back: the loan is Restituted. */
+/** Nothing is owed any more: the loan is Restituted. */
 complete: boolean; 
-/** The borrower paid back their own loan in full: their bar now ends at `now + late_ban_seconds`. */
+/**
+ * The fund was paid back in full and the co-signer paid or waived: the borrower's bar now ends at
+ * `now + late_ban_seconds`.
+ */
 borrowerRelaxed: boolean; 
 /** The fund's loss on this loan is covered and it was the co-signer's last one: their bar is lifted. */
 cosignerLifted: boolean; unrestitutedLosses: number; borrowerPerson: Address; cosignerPerson: Address; borrowerIneligibleUntil: bigint; cosignerIneligibleUntil: bigint;  };
@@ -32,28 +37,33 @@ cosignerLifted: boolean; unrestitutedLosses: number; borrowerPerson: Address; co
 export type RestitutedEventArgs = { pool: Address | HasAddress; loan: Address | HasAddress; loanId: number | bigint; payer: Address | HasAddress; amount: number | bigint; 
 /** Part of `amount` that made the fund's loss good. */
 toFund: number | bigint; 
-/** Part of `amount` now owed to the co-signer out of the vault. */
+/** Part of `amount` that pays the co-signer's claim. */
 toCosigner: number | bigint; restituted: number | bigint; shortfall: number | bigint; 
+/** The two claims after this payment. */
+fundOwed: number | bigint; cosignerOwed: number | bigint; 
 /**
  * Of `to_cosigner`, escrow still uncollected that is released back to the co-signer instead of
  * being collected and reimbursed from the vault.
  */
 converted: number | bigint; 
-/** The whole shortfall is paid back: the loan is Restituted. */
+/** Nothing is owed any more: the loan is Restituted. */
 complete: boolean; 
-/** The borrower paid back their own loan in full: their bar now ends at `now + late_ban_seconds`. */
+/**
+ * The fund was paid back in full and the co-signer paid or waived: the borrower's bar now ends at
+ * `now + late_ban_seconds`.
+ */
 borrowerRelaxed: boolean; 
 /** The fund's loss on this loan is covered and it was the co-signer's last one: their bar is lifted. */
 cosignerLifted: boolean; unrestitutedLosses: number; borrowerPerson: Address | HasAddress; cosignerPerson: Address | HasAddress; borrowerIneligibleUntil: number | bigint; cosignerIneligibleUntil: number | bigint;  };
 
 /** Gets the encoder for {@link RestitutedEventArgs} event data. */
 export function getRestitutedEventEncoder(): FixedSizeEncoder<RestitutedEventArgs> {
-    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['payer', getAddressEncoder()], ['amount', getU64Encoder()], ['toFund', getU64Encoder()], ['toCosigner', getU64Encoder()], ['restituted', getU64Encoder()], ['shortfall', getU64Encoder()], ['converted', getU64Encoder()], ['complete', getBooleanEncoder()], ['borrowerRelaxed', getBooleanEncoder()], ['cosignerLifted', getBooleanEncoder()], ['unrestitutedLosses', getU16Encoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()], ['borrowerIneligibleUntil', getI64Encoder()], ['cosignerIneligibleUntil', getI64Encoder()]]), [getConstantEncoder(RESTITUTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixEncoder(getStructEncoder([['pool', getAddressEncoder()], ['loan', getAddressEncoder()], ['loanId', getU64Encoder()], ['payer', getAddressEncoder()], ['amount', getU64Encoder()], ['toFund', getU64Encoder()], ['toCosigner', getU64Encoder()], ['restituted', getU64Encoder()], ['shortfall', getU64Encoder()], ['fundOwed', getU64Encoder()], ['cosignerOwed', getU64Encoder()], ['converted', getU64Encoder()], ['complete', getBooleanEncoder()], ['borrowerRelaxed', getBooleanEncoder()], ['cosignerLifted', getBooleanEncoder()], ['unrestitutedLosses', getU16Encoder()], ['borrowerPerson', getAddressEncoder()], ['cosignerPerson', getAddressEncoder()], ['borrowerIneligibleUntil', getI64Encoder()], ['cosignerIneligibleUntil', getI64Encoder()]]), [getConstantEncoder(RESTITUTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the decoder for {@link RestitutedEvent} event data. */
 export function getRestitutedEventDecoder(): FixedSizeDecoder<RestitutedEvent> {
-    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['payer', getAddressDecoder()], ['amount', getU64Decoder()], ['toFund', getU64Decoder()], ['toCosigner', getU64Decoder()], ['restituted', getU64Decoder()], ['shortfall', getU64Decoder()], ['converted', getU64Decoder()], ['complete', getBooleanDecoder()], ['borrowerRelaxed', getBooleanDecoder()], ['cosignerLifted', getBooleanDecoder()], ['unrestitutedLosses', getU16Decoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()], ['borrowerIneligibleUntil', getI64Decoder()], ['cosignerIneligibleUntil', getI64Decoder()]]), [getConstantDecoder(RESTITUTED_EVENT_DISCRIMINATOR)]);
+    return getHiddenPrefixDecoder(getStructDecoder([['pool', getAddressDecoder()], ['loan', getAddressDecoder()], ['loanId', getU64Decoder()], ['payer', getAddressDecoder()], ['amount', getU64Decoder()], ['toFund', getU64Decoder()], ['toCosigner', getU64Decoder()], ['restituted', getU64Decoder()], ['shortfall', getU64Decoder()], ['fundOwed', getU64Decoder()], ['cosignerOwed', getU64Decoder()], ['converted', getU64Decoder()], ['complete', getBooleanDecoder()], ['borrowerRelaxed', getBooleanDecoder()], ['cosignerLifted', getBooleanDecoder()], ['unrestitutedLosses', getU16Decoder()], ['borrowerPerson', getAddressDecoder()], ['cosignerPerson', getAddressDecoder()], ['borrowerIneligibleUntil', getI64Decoder()], ['cosignerIneligibleUntil', getI64Decoder()]]), [getConstantDecoder(RESTITUTED_EVENT_DISCRIMINATOR)]);
 }
 
 /** Gets the codec for {@link RestitutedEvent} event data. */

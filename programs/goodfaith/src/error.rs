@@ -96,4 +96,8 @@ pub enum GoodFaithError {
     RecoveryDelayBelowMinimum,
     #[msg("The identity keys changed recently; wallet recoveries wait out the quarantine")]
     KeysRecentlyChanged,
+    #[msg("This would exceed the fund's lending budget")]
+    LendingBudgetReached,
+    #[msg("The co-signer has nothing left to waive on this loan")]
+    NothingToWaive,
 }
