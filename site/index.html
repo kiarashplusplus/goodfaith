@@ -44,10 +44,10 @@
     <section id="borrow" class="card">
       <h2>Borrowing</h2>
       <ul>
-        <li>First loan up to <span data-launch="firstLoanCap">150</span> USDC. Each loan repaid on time raises your limit by <span data-launch="loanCapStep">100</span>, up to <span data-launch="maxLoan">500</span>.</li>
+        <li>First loan up to <span data-launch="firstLoanCap">150</span> USDC. Each loan repaid on time that ran at least <span data-launch="seasoningDays">30</span> days raises your limit by <span data-launch="loanCapStep">100</span>, at most once every <span data-launch="capStepIntervalDays">30</span> days, up to <span data-launch="maxLoan">500</span>. A loan that is not repaid resets it.</li>
         <li>No interest and no fees: you repay exactly what you borrowed, any amount, from any wallet.</li>
         <li>Terms up to <span data-launch="maxTermDays">180</span> days, then <span data-launch="graceDays">30</span> days of grace.</li>
-        <li>After a loan, <span data-launch="cooldownDays">30</span> days before the next one.</li>
+        <li>For your first <span data-launch="cooldownDays">30</span> days as a member (and after a wallet recovery or an unpaid loan) you stay on the first-loan limit.</li>
         <li>A request nobody co-signs expires after <span data-launch="requestTtlDays">7</span> days.</li>
       </ul>
     </section>
@@ -88,7 +88,7 @@
       <ul>
         <li><strong>Donors</strong> give USDC to a shared fund as gifts: they earn nothing and cannot take it back, which lets the fund lend at zero cost.</li>
         <li><strong>The rules are a public program</strong> on the Solana blockchain. Settings changes are announced ahead of time, and anyone can check what is deployed.</li>
-        <li><strong>Your money stays in your own wallet.</strong> Good Faith never holds it.</li>
+        <li><strong>Your money stays in your own wallet</strong> until you donate it or put down a co-signer deposit. The fund and the deposits are held by the public program under its rules, not by a person.</li>
       </ul>
       <p class="note">Still to settle before real money: the legal entity that runs the fund, and the questions we are putting to a Texas attorney. <span class="tbc">To confirm</span> Persona's data-retention policy will be published before launch.</p>
     </section>
@@ -105,6 +105,7 @@
 
   <footer class="wrap foot">
     <p>Good Faith is not affiliated with or endorsed by the State of Texas. MoneyGram is a trademark of MoneyGram International, Inc.; cash services are provided by MoneyGram, which runs its own identity check. USDC is not a bank deposit and is not FDIC-insured.</p>
+    <p><a href="privacy.html">Privacy notice</a> · <a href="terms.html">Terms of use</a></p>
     <p>Copyright © 2026 Kiarash Adl. All rights reserved.</p>
   </footer>
 </body>

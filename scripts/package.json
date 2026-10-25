@@ -16,7 +16,8 @@
     "recovery": "tsx recovery.ts",
     "launch": "tsx launch.ts",
     "admin": "tsx admin.ts",
-    "site-check": "tsx site-check.ts"
+    "site-check": "tsx site-check.ts",
+    "site-legal": "tsx site-legal.ts"
   },
   "dependencies": {
     "@solana/kit": "^8.5.0"

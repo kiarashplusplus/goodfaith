@@ -11,6 +11,19 @@ Every loan figure on the page is a `<span data-launch="key">` naming a field of 
 site-check` fails if one differs or a required one is missing; CI runs it in the web-app job. Change `launch.json`
 and the page together.
 
+## Privacy notice and terms of use
+
+`privacy.html` and `terms.html` are generated: the source is `legal/privacy.md` and `legal/terms.md`. To change one:
+
+1. Edit the Markdown. Supported: front matter, `## ` / `### ` headings, paragraphs, `- ` lists, **bold**, *italic*,
+   links, `[[TO CONFIRM: ...]]` (shown as a "To confirm" tag) and `{{launch:field}}` (`|percent`, `|years`), which
+   takes the figure from `scripts/launch.json` so the terms never drift from the settings.
+2. Bump `version` and `effective` in its front matter, and add a line under its "Changes" heading saying what changed.
+3. `cd scripts && npm run site-legal` rewrites the HTML. CI runs `npm run site-legal -- --check`, which fails when a
+   page is out of date with its Markdown or with `launch.json`.
+
+Both are drafts for counsel's review: every `[[TO CONFIRM]]` must be resolved by counsel before real money moves.
+
 ## Deploy (Cloudflare Pages)
 
 Create a Pages project from this repository with no build command and `site` as the output directory, then add the

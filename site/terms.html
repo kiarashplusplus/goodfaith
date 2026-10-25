@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terms of use — Good Faith</title>
+  <link rel="icon" href="assets/texas-flag.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Generated from site/legal/terms.md by scripts/site-legal.ts: edit the Markdown, then run npm run site-legal. -->
+  <p class="banner" role="note"><strong>Test network only.</strong> Good Faith runs on Solana devnet with test money. Nothing here moves real dollars yet.</p>
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow"><a href="index.html">Good Faith</a></p>
+      <h1>Terms of use</h1>
+      <p class="meta">Version 0.1 · effective 2026-10-25</p>
+      <p class="status">Draft for counsel's review. Good Faith runs on a test network with test money only.</p>
+      <nav class="jump" aria-label="Sections">
+        <a href="#about-these-terms">About these terms</a>
+        <a href="#who-we-are">Who we are</a>
+        <a href="#status-test-network-only">Status: test network only</a>
+        <a href="#who-can-use-good-faith">Who can use Good Faith</a>
+        <a href="#what-good-faith-is-and-is-not">What Good Faith is, and is not</a>
+        <a href="#donations-are-gifts">Donations are gifts</a>
+        <a href="#borrowing">Borrowing</a>
+        <a href="#after-the-cutoff">After the cutoff</a>
+        <a href="#co-signing">Co-signing</a>
+        <a href="#bars">Bars</a>
+        <a href="#forgiveness">Forgiveness</a>
+        <a href="#your-wallet-and-keys">Your wallet and keys</a>
+        <a href="#lost-wallet-recovery">Lost wallet: recovery</a>
+        <a href="#the-administrator-and-settings-changes">The administrator and settings changes</a>
+        <a href="#outages-and-network-fees">Outages and network fees</a>
+        <a href="#third-parties">Third parties</a>
+        <a href="#the-software">The software</a>
+        <a href="#liability-and-disputes">Liability and disputes</a>
+        <a href="#contact">Contact</a>
+        <a href="#changes-to-these-terms">Changes to these terms</a>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap doc">
+<h2 id="about-these-terms">About these terms</h2>
+<p>These terms explain how Good Faith works and what you agree to when you join, borrow, co-sign or donate. They describe the rules the Good Faith program runs. If these terms and the program ever differ, the program is what happens on chain, and we will correct these terms. This draft has not yet been reviewed by a lawyer.</p>
+<h2 id="who-we-are">Who we are</h2>
+<p>Good Faith is a community loan fund run by two roles. The <strong>administrator</strong> is a multisig of independent people that holds the fund's settings. The <strong>operator</strong> is the organisation that runs the website, the identity service and the other services. &quot;We&quot; means the operator. &quot;You&quot; means you, the person using Good Faith.</p>
+<p><span class="tbc">To confirm: legal entity, address and governing law</span></p>
+<p><span class="tbc">To confirm: who the lender is in law, who holds the keys, and who owns the donated assets</span></p>
+<h2 id="status-test-network-only">Status: test network only</h2>
+<p>Good Faith runs on a Solana test network with test money. Test USDC has no value. There is no real-money service yet.</p>
+<p>The test fund may run with different settings from the launch settings in these terms, such as a shorter notice period and recovery delay. The settings that apply are the ones stored in the fund's account on chain. These terms will be revised before any real-money launch.</p>
+<h2 id="who-can-use-good-faith">Who can use Good Faith</h2>
+<p>To join, borrow or co-sign, you must be a <strong>Texas resident, 18 or older</strong>, and pass a one-time identity check with our verification partner, Persona. Persona checks a government ID, your age, and that the ID was issued in Texas. We use a Texas ID as a sign of where you live; it is not proof. Do not join if you do not live in Texas.</p>
+<p><strong>One verified person, one membership.</strong> We keep a keyed fingerprint of your ID so the same ID is recognised if it is used again. Each membership has one wallet at a time. Do not hold more than one membership or join for someone else.</p>
+<p>Your identity pass lasts about a year and renews from the app. Anyone may donate without a membership.</p>
+<h2 id="what-good-faith-is-and-is-not">What Good Faith is, and is not</h2>
+<p>Good Faith makes interest-free loans from a fund made of gifts. You repay exactly what you borrowed. There is no interest, no fee and no penalty, and no setting in the program can add one.</p>
+<p>Good Faith is <strong>not a bank</strong> and takes no deposits. Money in your wallet, the fund or an escrow is <strong>not FDIC-insured</strong>.</p>
+<p>Loans are made in <strong>USDC</strong>, a stablecoin designed to be worth one US dollar. USDC is not dollars in a bank, and it could lose its value. Its issuer, Circle, can freeze any USDC account, including yours, the fund's and an escrow. A freeze delays money but does not change who it belongs to.</p>
+<p>Nothing we publish is financial, legal or tax advice.</p>
+<h2 id="donations-are-gifts">Donations are gifts</h2>
+<p>A donation is a <strong>gift</strong>. You will not get it back, and it earns no interest or return. Donations leave the fund only as loans.</p>
+<p><span class="tbc">To confirm: tax treatment of donations</span></p>
+<h2 id="borrowing">Borrowing</h2>
+<p><strong>How much.</strong> Your first loan can be up to <span data-launch="firstLoanCap">150</span> USDC. Each loan repaid in full by its cutoff raises your limit by <span data-launch="loanCapStep">100</span> USDC, up to <span data-launch="maxLoan">500</span> USDC. A repaid loan counts only if it ran at least <span data-launch="seasoningDays">30</span> days, and your limit rises at most once every <span data-launch="capStepIntervalDays">30</span> days. For <span data-launch="cooldownDays">30</span> days after you join, recover a wallet or have a loan settled, your limit is <span data-launch="firstLoanCap">150</span> USDC.</p>
+<p>You can have one open loan at a time, whichever wallet you use. What you borrow plus what you guarantee for others cannot exceed <span data-launch="maxExposurePerPerson">1000</span> USDC.</p>
+<p><strong>The fund's limits.</strong> The fund caps how much it lends each day, how much is out at once, and how much it lends in total during the pilot. When a limit is reached, new loans wait.</p>
+<p><strong>Asking.</strong> You choose the amount and a term of up to <span data-launch="maxTermDays">180</span> days, and name your co-signer's wallet. A request nobody co-signs expires after <span data-launch="requestTtlDays">7</span> days. When your co-signer approves, the USDC arrives in your wallet.</p>
+<p><strong>Term, grace and cutoff.</strong> Each loan has a due date, then <span data-launch="graceDays">30</span> days of grace. The last second of the grace period is the <strong>cutoff</strong>. The term, grace period, deposit rate, bar lengths and limit rules are written into your loan when it opens. Later settings changes never touch it.</p>
+<p><strong>Repaying.</strong> Repay any amount, from any wallet, at any time until the cutoff. Repaying during the grace period costs nothing extra. The app shows the due date, the grace days left and what you still owe.</p>
+<h2 id="after-the-cutoff">After the cutoff</h2>
+<p>After the cutoff, no repayment is accepted and the loan is <strong>settled</strong>, usually by the fund's scheduled job within minutes. Settling moves no money. It records two separate claims:</p>
+<ul>
+  <li><strong>the fund's claim</strong>: what the co-signer's deposit did not cover;</li>
+  <li><strong>the co-signer's claim</strong>: the part of their deposit that was used.</li>
+</ul>
+<p>Anyone can <strong>pay back</strong> a settled loan, in any amounts, from any wallet, at any time. Payments go to the fund's claim first, then to the co-signer's. &quot;Settle and pay back&quot; in the app does both in one step, with the same result.</p>
+<p>A settled loan bars you (see &quot;Bars&quot;), resets your limit, and never raises it, even once paid back.</p>
+<p>There are no late fees, no collection agencies and no credit reporting. Nothing forces you to pay back a settled loan; what it owes stays recorded on chain.</p>
+<p><span class="tbc">To confirm: whether the no-collections, no-credit-reporting and no-legal-action policy is a binding commitment, and its wording</span></p>
+<h2 id="co-signing">Co-signing</h2>
+<p>Every loan needs a <strong>co-signer</strong>: a different verified member who puts up <span data-launch="cosignerEscrowBps" data-unit="percent">25</span>% of the loan as a deposit, held in escrow by the program until the loan ends. You approve the exact terms the app shows you: amount, term, grace period, deposit and bar. If they change, you must look again.</p>
+<ul>
+  <li><strong>If the loan is repaid by the cutoff</strong>, your deposit is yours again, in full.</li>
+  <li><strong>If not</strong>, your deposit covers what is missing, up to all of it. You get the used part back only if the loan is later paid back.</li>
+  <li><strong>You can waive</strong> what you are owed on a settled loan. That gives up your claim only; you cannot end the borrower's debt to the fund.</li>
+  <li>If your deposit did not cover everything, so the fund lost money, you are barred (see &quot;Bars&quot;).</li>
+</ul>
+<p>You can back at most <span data-launch="maxGuaranteesPerMember">2</span> loans at once, and two people cannot guarantee each other at the same time.</p>
+<p><strong>Only co-sign for someone you trust, with money you could lose.</strong></p>
+<p><span class="tbc">To confirm: what the loan and co-signer agreements must say, whether a co-signer is a guarantor or a surety, and whether the FTC co-signer notice is required</span></p>
+<h2 id="bars">Bars</h2>
+<p>While barred, you cannot take or co-sign a new loan. You keep every other right: repaying, paying back, collecting, waiving and recovering your wallet. Only a settlement sets a bar; no key can bar anyone.</p>
+<ul>
+  <li><strong>Borrower bar.</strong> A settled loan bars you for <span data-launch="defaultBanDays" data-unit="years">2</span> years from the settlement. When that loan is paid back (the fund's claim paid, the co-signer's paid or waived), the bar shortens to <span data-launch="lateBanDays">90</span> days from the pay-back date, if that is sooner. It does not matter who pays. Paying back an earlier loan never shortens a bar set by a later one.</li>
+  <li><strong>Co-signer bar.</strong> Each settled loan you guaranteed that left the fund a loss bars you for at least <span data-launch="cosignerBanDays" data-unit="years">1</span> year from its settlement. The bar ends at the earlier of the latest such date and the moment the fund is paid back on <strong>every</strong> loss you guaranteed.</li>
+  <li><strong>Separate roles.</strong> Paying back a loan you borrowed never ends a bar you carry as a co-signer, and the other way round.</li>
+</ul>
+<p><strong>Lifts.</strong> The administrator can lift your bars early, in public, with a published reason. A lift clears the bars, not the record. Bar lengths for future loans can change with notice, and could be made permanent; they are not at launch.</p>
+<p><strong>Appeals.</strong> If you think a bar is wrong, write to us. The administrator may do nothing, lift the bar, forgive the fund's claim, or change bar lengths for future loans, each with a published reason.</p>
+<p><span class="tbc">To confirm: whether ECOA and Regulation B apply, what notice a refused or barred person must receive, and which disclosure rules apply to time-limited bars</span></p>
+<h2 id="forgiveness">Forgiveness</h2>
+<p>Only the owner of a claim can give it up: the co-signer can waive theirs, and the administrator can forgive the fund's, in public, with a published reason. Forgiveness ends what is owed on that claim; it is not being paid back. After the fund's claim is forgiven, the borrower's and the co-signer's bars stay as they were, and the co-signer's claim stays payable.</p>
+<h2 id="your-wallet-and-keys">Your wallet and keys</h2>
+<p>You use Good Faith with your own wallet app, such as Phantom or Solflare; the app's Checking page shows and moves the USDC in it, under a key only you hold. <strong>Your wallet, keys and recovery phrase are your responsibility.</strong> We cannot see, reset or use them, or move your money. Solana transfers are final, so check before you sign.</p>
+<p>Your membership's history is public on chain. Anyone who learns your wallet can read it. Your documents and fingerprint stay off chain.</p>
+<h2 id="lost-wallet-recovery">Lost wallet: recovery</h2>
+<p>If you lose your wallet, you can move your membership to a new one. Your loans, guarantees and bars move with you.</p>
+<ul>
+  <li>Verify again from the new wallet and ask to move, with a message it signs.</li>
+  <li>Your contact on file is told first, and the new wallet's contact too.</li>
+  <li>After at least a day, a person at the operator checks the request and proposes the move.</li>
+  <li>Nothing moves for <span data-launch="recoveryDelayDays">3</span> days. Your old wallet keeps working, and nothing you are owed as a co-signer is paid out meanwhile.</li>
+  <li><strong>Your old wallet can cancel the move</strong> with one click during that time. The administrator can cancel too.</li>
+  <li>After the delay, anyone can finish the move.</li>
+</ul>
+<p>For seven days after the fund changes its identity keys, no membership can be moved.</p>
+<p><strong>A stolen wallet</strong> can also cancel your recovery, because the program cannot tell an owner from a thief. Tell us at once: we freeze the stolen wallet's pass and your case goes to the administrator. What you owe can still be paid back from any wallet, but a thief may collect what you are owed as a co-signer. A recovery you do not notice in time cannot be cancelled, so leave a contact.</p>
+<h2 id="the-administrator-and-settings-changes">The administrator and settings changes</h2>
+<p>The administrator can change the settings: limits, terms, the deposit rate, bar lengths, the request lifetime, the recovery delay, the keys and the notice period. <strong>Every change is announced first</strong> and takes effect after a notice period of <span data-launch="timelockDays">7</span> days at launch, never less than two. Open loans are never changed.</p>
+<p>At once, the administrator can pause and resume new lending, suspend the identity issuer, cancel a recovery, lift a bar or forgive a fund claim. A pause stops new loans only; repaying and paying back carry on.</p>
+<p>The administrator cannot move money, except to an announced successor at a wind-down. It cannot change an open loan, set a bar or waive a co-signer's claim.</p>
+<p><strong>Upgrades.</strong> During the pilot, a separate multisig can replace the program's code after a delay, visibly on chain. Until that power is removed, every rule here holds unless the code is changed that way.</p>
+<p><strong>Wind-down.</strong> The administrator and a second key can announce a wind-down to a named successor. After the notice period, no new loans or donations are taken. Open loans run their course. The balance then moves to the successor, less what co-signers are owed, which is never moved.</p>
+<p><span class="tbc">To confirm: how unclaimed escrow and co-signer entitlements are treated</span></p>
+<h2 id="outages-and-network-fees">Outages and network fees</h2>
+<p>Solana has had outages. During one, nobody can borrow or repay; money is not lost, but access pauses. <strong>An outage across your cutoff still settles your loan.</strong> We will publish the cutoffs it covered, the administrator can lift the borrower's and co-signer's bars in public, and we will help you pay back. The limit increase is not restored.</p>
+<p>A <strong>fee sponsor</strong> (Kora) pays the network fees of Good Faith's transactions, so you need no SOL. If it is down, your wallet pays the network fee itself, and the app tells you first.</p>
+<p>Repaying, settling, paying back, collecting, waiving and cancelling a recovery never depend on our website. A command-line tool does them against the blockchain alone.</p>
+<h2 id="third-parties">Third parties</h2>
+<p>These services are run by others, under their own terms and privacy policies:</p>
+<ul>
+  <li><strong>Persona</strong> checks your identity and keeps your selfie and documents under its own policy. <span class="tbc">To confirm: link to Persona's terms and data-retention policy</span></li>
+  <li><strong>MoneyGram</strong> offers cash-out and cash-in at its counters from the app's Checking page. It is the licensed party, runs its own identity check, and shows and charges its own fee and rate. <strong>Good Faith adds no fee.</strong> <span class="tbc">To confirm: link to MoneyGram's terms, production fees and Texas coverage</span></li>
+  <li><strong>Wallet apps</strong>, <strong>Circle</strong> (USDC) and the <strong>Solana</strong> network.</li>
+  <li>A relay sends notices to your contact. <span class="tbc">To confirm: name of the notice relay</span></li>
+</ul>
+<p><span class="tbc">To confirm: whether licensing, money-transmission or sanctions-screening rules apply, including to the MoneyGram service in the app</span></p>
+<p>How we handle your data, including the fingerprint, is in the <a href="privacy.html">privacy notice</a>. <span class="tbc">To confirm: whether the selfie match is a biometric identifier under Texas law</span></p>
+<h2 id="the-software">The software</h2>
+<p>The source is published so anyone can read and check it, under a <strong>proprietary licence</strong>: all rights are reserved, and publication grants no right to use, copy or change it. See the <a href="https://github.com/kiarashplusplus/goodfaith">source code</a> and the <a href="https://github.com/kiarashplusplus/goodfaith/blob/main/docs/whitepaper.md">white paper</a>, including its risks.</p>
+<p>The software and the service are offered <strong>as is</strong>, without warranty of any kind. Code can have mistakes even after review and testing.</p>
+<h2 id="liability-and-disputes">Liability and disputes</h2>
+<p><span class="tbc">To confirm: limitation of liability and any cap</span></p>
+<p><span class="tbc">To confirm: dispute resolution, arbitration and class-action waiver, and courts</span></p>
+<p><span class="tbc">To confirm: consumer-credit disclosures required for a 0% loan</span></p>
+<h2 id="contact">Contact</h2>
+<p><span class="tbc">To confirm: contact address for questions, appeals, stolen wallets and legal notices</span></p>
+<p>You may leave an email for notices about your membership. It can be changed only from your current wallet, and the old contact is told.</p>
+<h2 id="changes-to-these-terms">Changes to these terms</h2>
+<p>These terms are versioned, and every change is listed below with its date. We post a new version here before it takes effect and tell members who left a contact. <span class="tbc">To confirm: notice period for changes to these terms</span> A change to these terms never changes an open loan.</p>
+<ul>
+  <li>0.1 (2026-10-25): first draft.</li>
+</ul>
+  </main>
+  <footer class="wrap foot">
+    <p><a href="index.html">Home</a> · <a href="privacy.html">Privacy notice</a> · <a href="terms.html">Terms of use</a></p>
+    <p>Copyright © 2026 Kiarash Adl. All rights reserved.</p>
+  </footer>
+</body>
+</html>

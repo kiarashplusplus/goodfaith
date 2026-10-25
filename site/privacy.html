@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy notice — Good Faith</title>
+  <link rel="icon" href="assets/texas-flag.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Generated from site/legal/privacy.md by scripts/site-legal.ts: edit the Markdown, then run npm run site-legal. -->
+  <p class="banner" role="note"><strong>Test network only.</strong> Good Faith runs on Solana devnet with test money. Nothing here moves real dollars yet.</p>
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow"><a href="index.html">Good Faith</a></p>
+      <h1>Privacy notice</h1>
+      <p class="meta">Version 0.1 · effective 2026-10-25</p>
+      <p class="status">Draft for counsel's review. Good Faith runs on a test network with test money only.</p>
+      <nav class="jump" aria-label="Sections">
+        <a href="#who-we-are">Who we are</a>
+        <a href="#the-short-version">The short version</a>
+        <a href="#what-we-collect-and-why">What we collect and why</a>
+        <a href="#what-is-public-on-the-blockchain">What is public on the blockchain</a>
+        <a href="#who-we-share-with">Who we share with</a>
+        <a href="#how-long-we-keep-it">How long we keep it</a>
+        <a href="#how-we-protect-it">How we protect it</a>
+        <a href="#your-choices-and-rights">Your choices and rights</a>
+        <a href="#children">Children</a>
+        <a href="#contact">Contact</a>
+        <a href="#changes-to-this-notice">Changes to this notice</a>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap doc">
+<h2 id="who-we-are">Who we are</h2>
+<p>Good Faith is an interest-free community loan fund for Texas residents aged 18 or older, run by a public program on the Solana blockchain. The <strong>operator</strong> runs the website, the app and the identity service. This notice explains what the operator collects and who else sees it.</p>
+<p>The operator is <span class="tbc">To confirm: legal entity and contact address</span>.</p>
+<p>On today's test network the identity check may be a stand-in that asks for no ID. This notice describes the service as built for real checks.</p>
+<h2 id="the-short-version">The short version</h2>
+<ul>
+  <li>Our verification partner, Persona, sees your ID document and selfie. We do not.</li>
+  <li>Our server keeps a keyed fingerprint of your ID, a random person id, your wallet addresses and, if you give one, an email.</li>
+  <li>Your wallet, your person id, your loans and any bar are public on Solana. They cannot be deleted.</li>
+  <li>Our app and website have no advertising and no analytics.</li>
+</ul>
+<h2 id="what-we-collect-and-why">What we collect and why</h2>
+<h3 id="your-identity-check">Your identity check</h3>
+<p>Everyone who borrows or co-signs verifies once, in Persona's own flow. Persona sees your ID document and selfie and keeps them under its own policy. We give Persona your wallet address to match the check to it.</p>
+<p>When the check ends, our server learns the outcome. For an approved check it reads a few fields from your ID: the ID number, the state, your birth date and the document type. It uses them to confirm Texas and age 18 or older, and to make a fingerprint. It does not store those fields. It never receives your name, address, photo or selfie.</p>
+<h3 id="the-fingerprint-and-your-person-id">The fingerprint and your person id</h3>
+<p>The fingerprint is a keyed code made from your ID number, state and birth date, so the same ID is recognised on a later check and one person holds one membership. Without our secret key, it cannot be linked back to an ID. It never goes on the blockchain.</p>
+<p>Your <strong>person id</strong> is a random number drawn when you are first approved. It carries nothing from your ID, and it is the only identity value that goes on the blockchain.</p>
+<h3 id="what-our-database-holds">What our database holds</h3>
+<ul>
+  <li>For each wallet that starts a check: the wallet address, the Persona inquiry id, the status (such as approved or declined) with a short reason, your pass address, your person id, and any email you gave.</li>
+  <li>For each person: the person id, the first wallet, any bar copied from the blockchain with its end date, and your email if you gave one.</li>
+  <li>For each fingerprint: the person it belongs to, when and how it was added, and which key version made it.</li>
+  <li>For a wallet recovery request: the new wallet, when you asked, whether the notice to you went out, the operator's proposal and how the request ended.</li>
+  <li>For the fee sponsor: per-wallet counts of sponsored transactions, and fund-wide daily totals.</li>
+</ul>
+<h3 id="your-email-optional">Your email (optional)</h3>
+<p>You may give an email for notices about your membership: a recovery request, a bar set or lifted, a pass renewed, or a contact change. We use it for those notices only. It can be changed or removed only from the wallet linked to your membership, and your previous email is told about the change.</p>
+<h3 id="ip-addresses-and-logs">IP addresses and logs</h3>
+<p>Our server uses your IP address to limit how often one device can call it. The address is held only in the server's memory. It is not written to our database, and it is lost when the server restarts.</p>
+<p>Our hosting provider may keep standard request logs, with your IP address and the address requested, which can contain your wallet address. Our own server log records notices by a shortened person id, not by email. <span class="tbc">To confirm: hosting provider and how long request logs are kept</span></p>
+<h3 id="cookies-and-browser-storage">Cookies and browser storage</h3>
+<p>Our app sets no cookies and has no analytics or advertising tools. The website is a plain page with no scripts. The app's wallet connector remembers which wallet you chose in your browser's local storage, so you stay connected. You can clear it in your browser settings.</p>
+<h2 id="what-is-public-on-the-blockchain">What is public on the blockchain</h2>
+<p>Solana is a public ledger. Anyone can read it, and nobody, including us, can change or delete what is written there. This includes:</p>
+<ul>
+  <li>your wallet address, your person id, and the link between them;</li>
+  <li>your membership and your pass, with its expiry and whether it is frozen;</li>
+  <li>every loan you borrow or co-sign: amounts, terms, deposits, repayments, settlements and pay-backs;</li>
+  <li>any bar, any lift of a bar, and any forgiveness, with the hash of a written reason;</li>
+  <li>a wallet recovery, which links your old wallet to your new one;</li>
+  <li>your other transfers, including a MoneyGram cash-out, which carries MoneyGram's reference number in a note.</li>
+</ul>
+<p>Your person id is not anonymous. Anyone who learns your wallet can read this history, and our database can link the id back to your record. The operator publishes the written reasons behind bar lifts and forgiveness. <span class="tbc">To confirm: how published reasons avoid identifying members</span></p>
+<p>Our app's status check also answers for any wallet address. Someone who knows your wallet can see whether it passed the check and, if it was declined, the short reason, such as age or state. <span class="tbc">To confirm: whether the status check will require a wallet signature before launch</span></p>
+<h2 id="who-we-share-with">Who we share with</h2>
+<ul>
+  <li><strong>Persona</strong> runs the ID check and holds your ID document and selfie. Its own policy covers them. <span class="tbc">To confirm: Persona's retention policy, published before launch</span></li>
+  <li><strong>MoneyGram</strong> runs cash-out and cash-in in its own widget, with its own ID check. For cash-in it asks for your Social Security number and a second ID. Good Faith does not receive those. Our server only opens a session with MoneyGram and sends it nothing about you. The app gives the widget your wallet address and sees the transfer you sign. The widget loads its own tools, such as analytics and maps. MoneyGram's own privacy policy covers all of this.</li>
+  <li><strong>The notice relay</strong> sends notices for us. For each notice it receives your person id, the wallet concerned, your email and a short message. When you change your email, the notice to your old email includes the new one. <span class="tbc">To confirm: name of the notice relay service</span></li>
+  <li><strong>The blockchain access provider (RPC)</strong> carries the app's requests to Solana. It sees your IP address and the wallets and transactions the app looks up. On the test network this is Solana's public devnet service. <span class="tbc">To confirm: RPC provider for production</span></li>
+  <li><strong>The fee sponsor (Kora)</strong> pays network fees for Good Faith transactions. It receives the transaction you signed, which becomes public anyway, but not your IP address. In production its signing key is meant to be held by a key-custody service. <span class="tbc">To confirm: Kora hosting and signer provider</span></li>
+  <li><strong>Hosting providers</strong> run our servers, database and website. <span class="tbc">To confirm: hosting providers</span></li>
+  <li><strong>When the law requires it</strong>, we may disclose information. <span class="tbc">To confirm: policy for legal requests, reviewed by counsel</span></li>
+</ul>
+<p>We do not sell your information or use it for advertising.</p>
+<h2 id="how-long-we-keep-it">How long we keep it</h2>
+<p>The code deletes nothing on a schedule. Wallet, person, fingerprint and sponsor records stay while the fund runs, including declined checks. Your latest recovery request stays as history until a new one replaces it. Database backups are kept with the keys.</p>
+<p>Your email is also held outside our database: in the notice relay's records, and in an export of contact history the operator keeps off the web service, so it can check recovery requests. <span class="tbc">To confirm: retention periods for each record, backups, the relay and the operator's export</span></p>
+<p>Records on the blockchain are permanent.</p>
+<h2 id="how-we-protect-it">How we protect it</h2>
+<ul>
+  <li>Your ID fields are not stored. The fingerprint is keyed with a secret on the server, so it cannot be worked out from the database alone.</li>
+  <li>Separate keys do separate jobs. The key that approves a wallet recovery lives on the operator's own machine, never on the web server.</li>
+  <li>Anyone with the fingerprint key and someone's ID fields could tell whether that person is a member, so a leaked key is treated as a breach: we replace it and tell members. Nothing public changes, because fingerprints never reach the blockchain.</li>
+  <li><span class="tbc">To confirm: breach notification steps and timelines under applicable law</span></li>
+</ul>
+<p>No system is perfectly safe: a stored fingerprint and your email could leak.</p>
+<h2 id="your-choices-and-rights">Your choices and rights</h2>
+<ul>
+  <li>You can choose not to give an email. Without notices, a recovery request you did not make is harder to spot.</li>
+  <li>You can change or remove your email from your linked wallet at any time. <span class="tbc">To confirm: removing an email also clears copies kept on records of older wallets</span></li>
+  <li>You can ask what we hold about you, and ask us to correct or delete it. We may need to keep some records, such as the fingerprint that stops one person holding two memberships. Nobody can delete anything from the blockchain.</li>
+  <li>Ask Persona and MoneyGram directly about the data they hold.</li>
+</ul>
+<p><span class="tbc">To confirm: rights under applicable law, reviewed by counsel</span></p>
+<p><span class="tbc">To confirm: whether Texas law on biometric identifiers applies to the selfie check, and what consent it needs</span></p>
+<h2 id="children">Children</h2>
+<p>Good Faith is only for people 18 or older. The check refuses anyone younger, using the birth date on their ID. We keep the record that the check was refused, not the birth date.</p>
+<h2 id="contact">Contact</h2>
+<p>For questions or requests about your information, write to <span class="tbc">To confirm: legal entity and contact address</span>.</p>
+<h2 id="changes-to-this-notice">Changes to this notice</h2>
+<p>When this notice changes, we update its version and date and list the change below. <span class="tbc">To confirm: how members are told about material changes</span></p>
+<ul>
+  <li>0.1 (2026-10-25): first draft.</li>
+</ul>
+  </main>
+  <footer class="wrap foot">
+    <p><a href="index.html">Home</a> · <a href="privacy.html">Privacy notice</a> · <a href="terms.html">Terms of use</a></p>
+    <p>Copyright © 2026 Kiarash Adl. All rights reserved.</p>
+  </footer>
+</body>
+</html>

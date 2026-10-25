@@ -98,3 +98,14 @@ li { margin: 6px 0; }
   h1 { font-size: 2rem; }
   .card { padding: 16px; }
 }
+
+/* Legal pages (generated from site/legal/*.md by scripts/site-legal.ts) */
+.eyebrow a { color: var(--muted); text-decoration: none; }
+.meta { margin: 0 0 4px; color: var(--muted); font-size: 0.875rem; }
+.status { margin: 0 0 16px; padding: 8px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); font-size: 0.9375rem; }
+.doc { padding-top: 24px; padding-bottom: 8px; }
+.doc h2 { margin: 28px 0 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.doc h2:first-child { margin-top: 0; border-top: 0; }
+.doc h3 { margin: 18px 0 6px; font-size: 1.0625rem; }
+.doc p, .doc ul { margin: 0 0 10px; max-width: 42rem; }
+.foot a { color: var(--muted); }
