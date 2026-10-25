@@ -44,13 +44,14 @@ the Checking page keep working.
 
 ## Sign-in wallets (Turnkey)
 
-Members never install a wallet app. "Sign in" opens Turnkey's modal (`@turnkey/react-wallet-kit`): a passkey first,
-an emailed code as the fallback and the way in on a new device. Turnkey's Auth Proxy does sign-up and sign-in with no
+Members never install a wallet app. "Sign in" opens Turnkey's modal (`@turnkey/react-wallet-kit`): the member enters
+their email and types the code sent to it. That is the only method: passkeys, social logins and external wallets are
+off in the Turnkey dashboard, and off in `providers.tsx` to match. Turnkey's Auth Proxy does sign-up and sign-in with no
 backend of ours; each member gets their own Turnkey sub-organisation, and sign-up creates its Solana account
 (`src/app/providers.tsx`, which also creates one for a signed-in member who has none).
 
-- **Email is required.** A passkey-only sign-up has no email at Turnkey, so it could not get back in on a new device
-  and would get no notices. `RequireWallet` asks such an account to add one (Turnkey's `handleAddEmail`, verified by
+- **Email is required.** Email-code sign-in gives every new account one. An older passkey-only account (from before
+  passkeys were turned off) has none, so `RequireWallet` asks it to add one (Turnkey's `handleAddEmail`, verified by
   an emailed code) before any page but Repay (`essential`), which shows the request above the page instead: repaying
   is never blocked. Join sends that email as the notice contact; `/api/identity/start` and `/api/identity/contact`
   refuse a missing or malformed one.
@@ -74,8 +75,6 @@ backend of ours; each member gets their own Turnkey sub-organisation, and sign-u
     plan (turnkey.com/pricing).
   - **Allowed origins.** They default to `*`. List the exact production URL (no wildcards are supported), plus
     `http://localhost:3000` on the devnet organisation only.
-  - **Passkey domain.** Set `NEXT_PUBLIC_TURNKEY_RP_ID` to the top-level domain before the first real sign-up:
-    passkeys are bound to it for good.
   - **Account lookups.** Turn on "Require verification token for account lookups", or anyone can ask the Auth Proxy
     whether an email has an account.
   - **Captcha.** Turn on Cloudflare Turnstile; the wallet kit (2.3.0 or later) handles it. With it on, the kit loads the widget on every
@@ -85,10 +84,11 @@ backend of ours; each member gets their own Turnkey sub-organisation, and sign-u
   - **Sessions.** The default is 15 minutes (900 seconds), which the privacy notice states.
   - **Fee sponsorship.** Leave Turnkey's own gas and rent sponsorship off: Kora pays fees under
     `sponsor-policy.ts`, and the issuer's partly signed transactions name Kora as the fee payer.
-  - **Email as a full sign-in.** Anyone who controls a member's email can sign in as them (Turnkey's "email recovery"
-    is the same thing). Turnkey's MFA recovery (a second factor) is the stronger option if that risk is not accepted.
-- **Devnet check.** A passkey sign-up (a Chrome virtual authenticator), both identity proofs and a USDC send from the
-  Checking page were run against the devnet organisation.
+  - **Email as the only sign-in.** Anyone who controls a member's email can sign in as them. Before real money,
+    decide whether to add a second factor (Turnkey MFA, e.g. a passkey); if passkeys come back, set the passkey domain
+    (`passkeyConfig.rpId`, the top-level domain) before the first passkey sign-up, since passkeys are bound to it.
+- **Devnet check.** A sign-up (with a Chrome virtual passkey, before passkeys were turned off), both identity proofs
+  and a USDC send from the Checking page were run against the devnet organisation.
 
 ## Health and deployment
 

@@ -20,7 +20,6 @@ export type RawConfig = {
   poolAuthority?: string;
   turnkeyOrganizationId?: string;
   turnkeyAuthProxyConfigId?: string;
-  turnkeyRpId?: string;
 };
 
 export type AppConfig = {
@@ -36,8 +35,7 @@ export type AppConfig = {
   /** Expected pool authority: an address, "none" for a frozen pool, or "" if unset. */
   poolAuthority: string;
   /** Turnkey (members' sign-in wallets): the parent organisation and its Auth Proxy config, both public values. */
-  /** `rpId`: the domain members' passkeys belong to, or "" for the page's own host (Turnkey's default). */
-  turnkey: { organizationId: string; authProxyConfigId: string; rpId: string };
+  turnkey: { organizationId: string; authProxyConfigId: string };
   errors: string[];
 };
 
@@ -105,15 +103,6 @@ function turnkeyId(name: string, value: string | undefined, fallback: string, er
   return fallback;
 }
 
-// A passkey is bound to its domain for good, so this is set once, before launch: the site's top-level domain lets one
-// passkey work on every subdomain (Turnkey's advice).
-function rpIdOf(value: string | undefined, errors: string[]): string {
-  const v = clean(value).toLowerCase();
-  if (!v || /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(v)) return v;
-  errors.push("NEXT_PUBLIC_TURNKEY_RP_ID must be a domain such as goodfaith.fi (no scheme, port or path).");
-  return "";
-}
-
 export function parseConfig(raw: RawConfig): AppConfig {
   const errors: string[] = [];
 
@@ -151,7 +140,6 @@ export function parseConfig(raw: RawConfig): AppConfig {
         cluster === "devnet" ? DEVNET_TURNKEY.authProxyConfigId : "",
         errors,
       ),
-      rpId: rpIdOf(raw.turnkeyRpId, errors),
     },
     errors,
   };
@@ -169,7 +157,6 @@ const config = parseConfig({
   poolAuthority: process.env.NEXT_PUBLIC_POOL_AUTHORITY,
   turnkeyOrganizationId: process.env.NEXT_PUBLIC_TURNKEY_ORGANIZATION_ID,
   turnkeyAuthProxyConfigId: process.env.NEXT_PUBLIC_TURNKEY_AUTH_PROXY_CONFIG_ID,
-  turnkeyRpId: process.env.NEXT_PUBLIC_TURNKEY_RP_ID,
 });
 
 export const CLUSTER: Cluster = config.cluster;

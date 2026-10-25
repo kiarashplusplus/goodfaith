@@ -23,23 +23,21 @@ const SOLANA_WALLET = {
   ],
 } satisfies CustomWallet;
 
-// Sign-in is a passkey first, an emailed code as the fallback (and the way in on a new device). No wallet apps and
-// no social logins. Sign-up creates the member's Solana account straight away.
+// Sign-in is a code sent to the member's email, the only method enabled in the Turnkey dashboard (no passkeys, wallet
+// apps or social logins), so every member has an email. Sign-up creates the member's Solana account straight away.
 const turnkeyConfig: TurnkeyProviderConfig = {
   organizationId: TURNKEY.organizationId,
   authProxyConfigId: TURNKEY.authProxyConfigId,
-  ...(TURNKEY.rpId && { passkeyConfig: { rpId: TURNKEY.rpId } }),
   auth: {
     autoRefreshSession: true,
     createSuborgParams: {
-      passkeyAuth: { passkeyName: "Good Faith", customWallet: SOLANA_WALLET },
       emailOtpAuth: { customWallet: SOLANA_WALLET },
     },
   },
   ui: {
     authModal: {
       methods: {
-        passkeyAuthEnabled: true,
+        passkeyAuthEnabled: false,
         emailOtpAuthEnabled: true,
         smsOtpAuthEnabled: false,
         walletAuthEnabled: false,
@@ -49,7 +47,7 @@ const turnkeyConfig: TurnkeyProviderConfig = {
         discordOauthEnabled: false,
         facebookOauthEnabled: false,
       },
-      methodOrder: ["passkey", "email"],
+      methodOrder: ["email"],
     },
     borderRadius: 12,
     colors: { light: { primary: "#065f46" }, dark: { primary: "#6ee7b7" } },

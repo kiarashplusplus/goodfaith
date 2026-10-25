@@ -59,7 +59,7 @@ linked to the membership (`POST /api/identity/contact`, signed), and the previou
 taking over a wallet cannot silently redirect the notices that protect it.
 
 **The contact is required.** Members sign in with Turnkey, where the email is the way back in on a new device, so
-every member has one: the app asks a passkey-only account to add a verified email before anything but repaying, and
+every member has one: sign-in is an emailed code (the only method on in the Turnkey dashboard), and the app asks any older account without one to add a verified email before anything but repaying, and
 sends it as `contact` when the check starts. `start` and `contact` refuse a missing or malformed email (400); the
 contact can be changed, not removed. The store still allows a person without one (records from before this rule, or
 an email the operator removed at the member's request when closing the membership). The service does not yet check
@@ -88,9 +88,8 @@ caps and cooldowns would treat as new members. Keep the old key listed until the
 
 ## Wallet recovery
 
-Members' wallets are Turnkey sign-in wallets (`app/README.md`), so a lost passkey is not a lost wallet: the member
-signs in with an emailed code and adds a new passkey, and nothing here is involved. This flow is for a wallet that is
-truly gone (the passkey and the email account both lost, or a key that leaked).
+Members' wallets are Turnkey sign-in wallets (`app/README.md`), signed into with a code sent to the member's email. This
+flow is for a wallet that is truly gone: the email account lost, or the wallet's key leaked.
 
 Losing a wallet must not mean losing a membership, and recovering one must not be a way to take one over. The flow:
 

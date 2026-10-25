@@ -10,7 +10,7 @@ Before you start, here is what you need. Tick what applies to you.
 - I live in Texas. The state on your government ID must be Texas; we use that as a proxy for where you live.
 - I'm 18 or older. Your ID's birth date is checked once. We keep the result, not the date.
 - I can do a one-time ID check with a selfie. Our verification partner, Persona, checks a government ID and a selfie. Good Faith keeps only a keyed fingerprint of the ID so one person holds one membership; your documents are never stored by us or put on the blockchain.
-- I have an email address I can read. You sign in with it (a code is sent to check it), and with a passkey too if you like: your phone's or computer's Face ID, fingerprint or PIN. The email is also how you get back in on a new device, and where notices about your membership go, such as a recovery request or a bar. Your wallet is made for you when you sign up, with Turnkey: no app to install, no recovery phrase to write down, and no SOL, since a fee sponsor pays network fees.
+- I have an email address I can read. You sign in with it: each time, a code is sent to it. It is also how you get back in on a new device, and where notices about your membership go, such as a recovery request or a bar. Your wallet is made for you when you sign up, with Turnkey: no app to install, no recovery phrase to write down, and no SOL, since a fee sponsor pays network fees.
 - To borrow: a friend will co-sign. A different person who has also verified, and who puts down a deposit of 25% of the loan.
 To turn USDC into cash, MoneyGram runs an identity check of its own and you show the same ID at the counter. To pay cash in, MoneyGram also asks for your Social Security number.
 One membership per person, one wallet per membership. A lost wallet can be recovered without losing your membership; it takes a few days and you are told first.
@@ -73,7 +73,7 @@ Their deposit of 25% of the loan, which comes back in full if you repay on time.
 Your first loan can be up to 150 USDC. Each loan repaid on time raises your limit by 100, up to 500, for terms of up to 180 days plus 30 days of grace.
 
 ### Do I need crypto experience or SOL?
-No. You sign in with a passkey (Face ID, fingerprint or PIN) or a code sent to your email, and a wallet is made for you: no app, no recovery phrase. A fee sponsor pays network fees, so you need no SOL, and the app shows your USDC like a checking account.
+No. You sign in with a code sent to your email, and a wallet is made for you: no app, no recovery phrase. A fee sponsor pays network fees, so you need no SOL, and the app shows your USDC like a checking account.
 
 ### How do I turn USDC into cash?
 From the app's Checking page, at a MoneyGram location. MoneyGram checks your ID, shows its own fee before you commit, and gives you a reference number to collect US dollars with that ID. Good Faith adds no fee.

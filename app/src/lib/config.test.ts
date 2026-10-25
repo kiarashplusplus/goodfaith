@@ -14,7 +14,7 @@ describe("parseConfig", () => {
     expect(c.programId).toBe(DEFAULT_PROGRAM_ID);
     expect(c.gatekeeperNetwork).toBe("");
     expect(c.poolAuthority).toBe("");
-    expect(c.turnkey).toEqual({ ...DEVNET_TURNKEY, rpId: "" });
+    expect(c.turnkey).toEqual(DEVNET_TURNKEY);
   });
 
   it("accepts a full valid configuration", () => {
@@ -40,7 +40,7 @@ describe("parseConfig", () => {
 
   it("needs mainnet's own Turnkey IDs and refuses ones that are not UUIDs", () => {
     const main = parseConfig({ cluster: "mainnet-beta" });
-    expect(main.turnkey).toEqual({ organizationId: "", authProxyConfigId: "", rpId: "" });
+    expect(main.turnkey).toEqual({ organizationId: "", authProxyConfigId: "" });
     expect(main.errors.map((e) => e.split(" ")[0])).toEqual([
       "NEXT_PUBLIC_TURNKEY_ORGANIZATION_ID",
       "NEXT_PUBLIC_TURNKEY_AUTH_PROXY_CONFIG_ID",
@@ -48,13 +48,6 @@ describe("parseConfig", () => {
     const bad = parseConfig({ turnkeyOrganizationId: "org-1" });
     expect(bad.turnkey.organizationId).toBe(DEVNET_TURNKEY.organizationId);
     expect(bad.errors[0]).toMatch(/not a Turnkey ID/);
-  });
-
-  it("takes a passkey domain and refuses a URL", () => {
-    expect(parseConfig({ turnkeyRpId: " GoodFaith.fi " }).turnkey.rpId).toBe("goodfaith.fi");
-    const bad = parseConfig({ turnkeyRpId: "https://goodfaith.fi" });
-    expect(bad.turnkey.rpId).toBe("");
-    expect(bad.errors[0]).toMatch(/NEXT_PUBLIC_TURNKEY_RP_ID/);
   });
 
   it("records a bad cluster and falls back to devnet", () => {

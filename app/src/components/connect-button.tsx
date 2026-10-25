@@ -108,7 +108,7 @@ export function ConnectButton() {
   return <AccountMenu wallet={wallet} />;
 }
 
-/** Asks a member with no sign-in email (a passkey-only sign-up) to add one, verified by Turnkey with an emailed code. */
+/** Asks an account with no sign-in email (a passkey sign-up from before email-only sign-in) to add one, verified with a code. */
 function AddEmail({ compact = false }: { compact?: boolean }) {
   const { handleAddEmail } = useTurnkey();
   const [error, setError] = useState<string | null>(null);
@@ -132,10 +132,7 @@ function AddEmail({ compact = false }: { compact?: boolean }) {
       }
     >
       <p className={compact ? "" : "font-medium text-stone-800"}>Add your email to continue.</p>
-      <p className="mt-1 text-sm">
-        It is how you sign in on a new device or after losing your passkey, and where notices about your membership go. We send a code to
-        check it.
-      </p>
+      <p className="mt-1 text-sm">It is how you sign in, and where notices about your membership go. We send a code to check it.</p>
       <Button className="mt-3" onClick={add}>
         Add my email
       </Button>
@@ -169,7 +166,7 @@ export function RequireWallet({
   if (!wallet) {
     return (
       <div className="rounded-2xl border border-dashed border-stone-300 p-8 text-center text-stone-600">
-        <p>Sign in with a passkey or your email to continue.</p>
+        <p>Sign in with your email to continue: we send you a code.</p>
         <p className="mt-1 text-sm">A wallet is made for you: no app to install, no recovery phrase, no SOL needed.</p>
         <Button className="mt-3" disabled={clientState !== ClientState.Ready} onClick={() => signIn(handleLogin)}>
           Sign in
