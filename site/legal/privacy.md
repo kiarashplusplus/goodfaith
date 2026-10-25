@@ -1,6 +1,6 @@
 ---
 title: Privacy notice
-version: 0.2
+version: 0.3
 effective: 2026-10-25
 status: Draft for counsel's review. Good Faith runs on a test network with test money only.
 ---
@@ -65,7 +65,7 @@ Solana is a public ledger. Anyone can read it, and nobody, including us, can cha
 - every loan you borrow or co-sign: amounts, terms, deposits, repayments, settlements and pay-backs;
 - any bar, any lift of a bar, and any forgiveness, with the hash of a written reason;
 - a wallet recovery, which links your old wallet to your new one;
-- your other transfers, including a MoneyGram cash-out, which carries MoneyGram's reference number in a note.
+- your other transfers, including a MoneyGram cash-out, which carries a note with MoneyGram's ID for matching the deposit. That ID is a random code; the reference number you collect cash with is never put on the blockchain.
 
 Your person id is not anonymous. Anyone who learns your wallet can read this history, and our database can link the id back to your record. The operator publishes the written reasons behind bar lifts and forgiveness. [[TO CONFIRM: how published reasons avoid identifying members]]
 
@@ -123,5 +123,6 @@ For questions or requests about your information, write to [[TO CONFIRM: legal e
 
 When this notice changes, we update its version and date and list the change below. [[TO CONFIRM: how members are told about material changes]]
 
+- 0.3 (2026-10-25): what a cash-out's note contains, and that the pickup reference number is not on the blockchain.
 - 0.2 (2026-10-25): a check's reason and link need your wallet's signature; changing or removing your email also updates older wallets' copies.
 - 0.1 (2026-10-25): first draft.

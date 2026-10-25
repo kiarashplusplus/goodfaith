@@ -61,7 +61,8 @@ export function CashCard({ wallet, onDone }: { wallet: Address; onDone: () => vo
   async function sendCashOut(tx: OnChainTransaction): Promise<string> {
     const check = checkCashOut(tx, { wallet, mint: POOL_MINT, decimals: TOKEN_DECIMALS, cluster: CLUSTER });
     if (!check.ok) throw new Error(check.reason);
-    // Sponsored, MoneyGram's reference memo included; only a new token account for the recipient is the sender's to pay.
+    // Sponsored, MoneyGram's memo included; only a new token account for the recipient is the sender's to pay. The memo is
+    // MoneyGram's deposit-matching ID (public on chain); the pickup reference number is never in the transaction.
     const plan = await planCashOut(rpc, wallet, POOL_MINT, TOKEN_DECIMALS, check.cashOut);
     const sig = await sendInstructions(rpc, signer!, plan.instructions, { sponsor: plan.sponsor });
     lastSig.current = sig;
@@ -92,7 +93,9 @@ export function CashCard({ wallet, onDone }: { wallet: Address; onDone: () => vo
         // Cash-in never asks the app to sign: MoneyGram sends USDC to the wallet after the counter takes the cash.
         onSignTransaction: mode === "off-ramp" ? sendCashOut : undefined,
         onComplete: (record) => {
-          const code = record.referenceNumber ? ` Reference number: ${record.referenceNumber}.` : "";
+          const code = record.referenceNumber
+            ? ` Reference number: ${record.referenceNumber}. Keep it to yourself: with your ID it collects the cash. It is not on the blockchain.`
+            : "";
           setOutcome({
             tone: "ok",
             text:
