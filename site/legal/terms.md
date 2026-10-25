@@ -111,9 +111,9 @@ Only the owner of a claim can give it up: the co-signer can waive theirs, and th
 
 ## Your wallet and keys
 
-Your wallet is made for you when you sign up, by our wallet provider, Turnkey. You sign in with a passkey (your device's Face ID, fingerprint or PIN) or a code sent to your email. Its key is kept by Turnkey in secure hardware and is used only when you are signed in and approve an action in the app; we cannot see it or use it, and cannot move your money. The app's Checking page shows and moves the USDC in it. [[TO CONFIRM: counsel's view of the custody model, and whether Good Faith's Turnkey organisation can ever act in a member's account]]
+Your wallet is made for you when you sign up, by our wallet provider, Turnkey. You sign in with a passkey (your device's Face ID, fingerprint or PIN) or a code sent to your email. Its key is kept encrypted by Turnkey and is only decrypted inside Turnkey's secure hardware when your own sign-in asks it to sign. Your account is yours alone: Good Faith's Turnkey organisation can read it but cannot sign, change or delete anything in it, and we do not add any other user or key to it. So we cannot see or use your key, and cannot move your money. While you are signed in, the app signs what you approve in it; use it only at its real address. The app's Checking page shows and moves the USDC in it. [[TO CONFIRM: counsel's view that this is not custody of members' funds]]
 
-**Keeping your sign-in is your responsibility.** If you lose your passkey, sign in with a code sent to your email and add a new one. Keep that email account safe: anyone who controls it can sign in as you. Sessions end after a short time and you sign in again. You can export your wallet's key from the app's account menu, for the command-line tool that works without the website. Anyone with that key controls your wallet, so keep it secret. Solana transfers are final, so check before you sign.
+**Keeping your sign-in is your responsibility.** If you lose your passkey, sign in with a code sent to your email and add a new one. Keep that email account safe: anyone who controls it can sign in as you. Sessions end after a short time and you sign in again. You can export your wallet's key from the app's account menu, for the command-line tool that works without the website. Exporting copies the key: the wallet keeps working in the app too. Anyone with that key controls your wallet, so keep it secret. Solana transfers are final, so check before you sign.
 
 Your membership's history is public on chain. Anyone who learns your wallet can read it. Your documents and fingerprint stay off chain.
 
@@ -160,7 +160,7 @@ These services are run by others, under their own terms and privacy policies:
 
 - **Persona** checks your identity and keeps your selfie and documents under its own policy. [[TO CONFIRM: link to Persona's terms and data-retention policy]]
 - **MoneyGram** offers cash-out and cash-in at its counters from the app's Checking page. It is the licensed party, runs its own identity check, and shows and charges its own fee and rate. **Good Faith adds no fee.** [[TO CONFIRM: link to MoneyGram's terms, production fees and Texas coverage]]
-- **Turnkey** makes and keeps your wallet and runs sign-in (passkeys and emailed codes). [[TO CONFIRM: link to Turnkey's terms]]
+- **Turnkey** makes and keeps your wallet and runs sign-in (passkeys and emailed codes); its security and compliance details are at trust.turnkey.com. [[TO CONFIRM: link to Turnkey's terms]]
 - **Circle** (USDC) and the **Solana** network.
 - A relay sends notices to your contact. [[TO CONFIRM: name of the notice relay]]
 

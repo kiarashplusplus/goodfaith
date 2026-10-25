@@ -58,7 +58,29 @@ backend of ours; each member gets their own Turnkey sub-organisation, and sign-u
 - **Export.** The address menu's "Export my wallet key" opens Turnkey's export flow (Solana format). Saved in a file,
   that key works as `MEMBER_KEYPAIR` for `scripts/member.ts`, which takes a solana-keygen JSON file or an exported key
   in base58 or hex.
-- **Turnkey dashboard.** The Auth Proxy config must allow this site's origin and enable passkey and email OTP.
+- **Custody.** Each member is their own sub-organisation whose only user is the member (created by the Auth Proxy at
+  sign-up). The parent organisation can read it but cannot sign, change or delete anything in it, and the app adds no
+  delegated user or policy. Keep it that way: Turnkey's delegated access would make Good Faith able to sign for members
+  and changes the custody answer in the terms. Spot-check in the dashboard that a member's sub-organisation lists one
+  user.
+- **Before launch, in the Turnkey dashboard** (Embedded Wallets → Configuration), from Turnkey's docs
+  (docs.turnkey.com/llms.txt):
+  - **Plan.** The free plan allows 25 signatures a month; every member action is at least one. The pilot needs a paid
+    plan (turnkey.com/pricing).
+  - **Allowed origins.** They default to `*`. List the exact production URL (no wildcards are supported), plus
+    `http://localhost:3000` on the devnet organisation only.
+  - **Passkey domain.** Set `NEXT_PUBLIC_TURNKEY_RP_ID` to the top-level domain before the first real sign-up:
+    passkeys are bound to it for good.
+  - **Account lookups.** Turn on "Require verification token for account lookups", or anyone can ask the Auth Proxy
+    whether an email has an account.
+  - **Captcha.** Turn on Cloudflare Turnstile; the wallet kit (2.3.0 or later) handles it. Each sign-up creates a
+    sub-organisation, so bots cost money without it.
+  - **Email.** Set the application name and logo shown in sign-in emails ("Good Faith").
+  - **Sessions.** The default is 15 minutes (900 seconds), which the privacy notice states.
+  - **Fee sponsorship.** Leave Turnkey's own gas and rent sponsorship off: Kora pays fees under
+    `sponsor-policy.ts`, and the issuer's partly signed transactions name Kora as the fee payer.
+  - **Email as a full sign-in.** Anyone who controls a member's email can sign in as them (Turnkey's "email recovery"
+    is the same thing). Turnkey's MFA recovery (a second factor) is the stronger option if that risk is not accepted.
 - **Devnet check.** A passkey sign-up (a Chrome virtual authenticator), both identity proofs and a USDC send from the
   Checking page were run against the devnet organisation.
 

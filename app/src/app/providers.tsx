@@ -28,6 +28,7 @@ const SOLANA_WALLET = {
 const turnkeyConfig: TurnkeyProviderConfig = {
   organizationId: TURNKEY.organizationId,
   authProxyConfigId: TURNKEY.authProxyConfigId,
+  ...(TURNKEY.rpId && { passkeyConfig: { rpId: TURNKEY.rpId } }),
   auth: {
     autoRefreshSession: true,
     createSuborgParams: {
