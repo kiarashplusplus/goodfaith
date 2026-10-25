@@ -40,7 +40,7 @@
 <ul>
   <li>Our verification partner, Persona, sees your ID document and selfie. We do not.</li>
   <li>Our wallet provider, Turnkey, holds your sign-in (your email and your passkey's public key) and your wallet's key. We cannot use your key, but we can read the account details Turnkey keeps for you.</li>
-  <li>Our server keeps a keyed fingerprint of your ID, a random person id, your wallet addresses and, if you give one, an email.</li>
+  <li>Our server keeps a keyed fingerprint of your ID, a random person id, your wallet addresses and your email.</li>
   <li>Your wallet, your person id, your loans and any bar are public on Solana. They cannot be deleted.</li>
   <li>Our app and website have no advertising and no analytics.</li>
 </ul>
@@ -53,14 +53,14 @@
 <p>Your <strong>person id</strong> is a random number drawn when you are first approved. It carries nothing from your ID, and it is the only identity value that goes on the blockchain.</p>
 <h3 id="what-our-database-holds">What our database holds</h3>
 <ul>
-  <li>For each wallet that starts a check: the wallet address, the Persona inquiry id, the status (such as approved or declined) with a short reason, your pass address, your person id, and any email you gave.</li>
-  <li>For each person: the person id, the first wallet, any bar copied from the blockchain with its end date, and your email if you gave one.</li>
+  <li>For each wallet that starts a check: the wallet address, the Persona inquiry id, the status (such as approved or declined) with a short reason, your pass address, your person id, and the email you gave for notices.</li>
+  <li>For each person: the person id, the first wallet, any bar copied from the blockchain with its end date, and your email.</li>
   <li>For each fingerprint: the person it belongs to, when and how it was added, and which key version made it.</li>
   <li>For a wallet recovery request: the new wallet, when you asked, whether the notice to you went out, the operator's proposal and how the request ended.</li>
   <li>For the fee sponsor: per-wallet counts of sponsored transactions, and fund-wide daily totals.</li>
 </ul>
-<h3 id="your-email-optional">Your email (optional)</h3>
-<p>You may give an email for notices about your membership: a recovery request, a bar set or lifted, a pass renewed, or a contact change. We use it for those notices only. It can be changed or removed only from the wallet linked to your membership, and your previous email is told about the change.</p>
+<h3 id="your-email">Your email</h3>
+<p>Every member gives an email. You sign in with it at Turnkey, which checks it with a code, and the app gives the same address to our server when you start your ID check, for notices about your membership: a recovery request, a bar set or lifted, a pass renewed, or a contact change. We use it for those notices only. It can be changed, not removed, and only from the wallet linked to your membership; your previous email is told about the change.</p>
 <h3 id="ip-addresses-and-logs">IP addresses and logs</h3>
 <p>Our server uses your IP address to limit how often one device can call it. The address is held only in the server's memory. It is not written to our database, and it is lost when the server restarts.</p>
 <p>Our hosting provider may keep standard request logs, with your IP address and the address requested, which can contain your wallet address. Our own server log records notices by a shortened person id, not by email. <span class="tbc">To confirm: hosting provider and how long request logs are kept</span></p>
@@ -81,7 +81,7 @@
 <h2 id="who-we-share-with">Who we share with</h2>
 <ul>
   <li><strong>Persona</strong> runs the ID check and holds your ID document and selfie. Its own policy covers them. <span class="tbc">To confirm: Persona's retention policy, published before launch</span></li>
-  <li><strong>Turnkey</strong> makes and keeps your wallet. When you sign up it receives your email (if you sign in by email) and your passkey's public key, never your fingerprint or face, which stay on your device. It keeps the wallet's private key encrypted in its secure hardware and signs only when you sign in. It sends the emailed sign-in codes. Your account is a separate Turnkey sub-organisation that only your passkey or emailed code can act in; Good Faith's Turnkey organisation can <strong>read</strong> it (your email, your passkey's name and public key, your wallet addresses and the record of what was signed) but cannot sign, change or delete anything in it. We look at it only to support you or to investigate abuse. Turnkey's own privacy policy and its Trust Center (trust.turnkey.com, which lists its subprocessors) cover the rest. <span class="tbc">To confirm: Turnkey's data retention, from its Trust Center or its data processing agreement</span></li>
+  <li><strong>Turnkey</strong> makes and keeps your wallet. It receives your email (required: you sign in with it) and, if you add one, your passkey's public key, never your fingerprint or face, which stay on your device. It keeps the wallet's private key encrypted in its secure hardware and signs only when you sign in. It sends the emailed sign-in codes. Your account is a separate Turnkey sub-organisation that only your passkey or emailed code can act in; Good Faith's Turnkey organisation can <strong>read</strong> it (your email, your passkey's name and public key, your wallet addresses and the record of what was signed) but cannot sign, change or delete anything in it. We look at it only to support you or to investigate abuse. Turnkey's own privacy policy and its Trust Center (trust.turnkey.com, which lists its subprocessors) cover the rest. <span class="tbc">To confirm: Turnkey's data retention, from its Trust Center or its data processing agreement</span></li>
   <li><strong>MoneyGram</strong> runs cash-out and cash-in in its own widget, with its own ID check. For cash-in it asks for your Social Security number and a second ID. Good Faith does not receive those. Our server only opens a session with MoneyGram and sends it nothing about you. The app gives the widget your wallet address and sees the transfer you sign. The widget loads its own tools, such as analytics and maps. MoneyGram's own privacy policy covers all of this.</li>
   <li><strong>The notice relay</strong> sends notices for us. For each notice it receives your person id, the wallet concerned, your email and a short message. When you change your email, the notice to your old email includes the new one. <span class="tbc">To confirm: name of the notice relay service</span></li>
   <li><strong>The blockchain access provider (RPC)</strong> carries the app's requests to Solana. It sees your IP address and the wallets and transactions the app looks up. On the test network this is Solana's public devnet service. <span class="tbc">To confirm: RPC provider for production</span></li>
@@ -104,8 +104,7 @@
 <p>No system is perfectly safe: a stored fingerprint and your email could leak.</p>
 <h2 id="your-choices-and-rights">Your choices and rights</h2>
 <ul>
-  <li>You can choose not to give an email. Without notices, a recovery request you did not make is harder to spot.</li>
-  <li>You can change or remove your email from your linked wallet at any time. That also replaces the copies kept on the records of your older wallets. An email you gave when verifying another wallet stays on that wallet's record; ask us to remove it.</li>
+  <li>You can change your email from your linked wallet at any time. That also replaces the copies kept on the records of your older wallets. An email you gave when verifying another wallet stays on that wallet's record; ask us to remove it. To remove your email altogether, ask us to close your membership: it is required while you are a member.</li>
   <li>You can ask what we hold about you, and ask us to correct or delete it. We may need to keep some records, such as the fingerprint that stops one person holding two memberships. Nobody can delete anything from the blockchain.</li>
   <li>Ask Persona, Turnkey and MoneyGram directly about the data they hold.</li>
 </ul>
@@ -118,7 +117,7 @@
 <h2 id="changes-to-this-notice">Changes to this notice</h2>
 <p>When this notice changes, we update its version and date and list the change below. <span class="tbc">To confirm: how members are told about material changes</span></p>
 <ul>
-  <li>0.4 (2026-10-25): wallets are Turnkey sign-in wallets; what Turnkey holds, what Good Faith can read there, and the browser session it keeps.</li>
+  <li>0.4 (2026-10-25): an email is required (sign-in and notices); wallets are Turnkey sign-in wallets; what Turnkey holds, what Good Faith can read there, and the browser session it keeps.</li>
   <li>0.3 (2026-10-25): what a cash-out's note contains, and that the pickup reference number is not on the blockchain.</li>
   <li>0.2 (2026-10-25): a check's reason and link need your wallet's signature; changing or removing your email also updates older wallets' copies.</li>
   <li>0.1 (2026-10-25): first draft.</li>

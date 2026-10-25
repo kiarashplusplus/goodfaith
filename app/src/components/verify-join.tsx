@@ -27,7 +27,7 @@ import { TexasFlag } from "@/components/texas-flag";
  * the move completes after the fund's recovery delay unless the old wallet objects.
  */
 export function VerifyAndJoin({ wallet }: { wallet: Address }) {
-  const { rpc, signer } = useApp();
+  const { rpc, signer, email } = useApp();
   const pool = usePool();
   const member = useMember(wallet);
   const sponsor = useSponsor();
@@ -71,7 +71,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
     setStartError(null);
     setStarting(true);
     try {
-      const { url } = await startIdentityCheck(signer!, undefined);
+      const { url } = await startIdentityCheck(signer!, undefined, email!);
       setStartedUrl(url);
       window.open(url, "_blank", "noopener");
       await status.mutate();
@@ -97,7 +97,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
   const saveContact = async () => {
     setContactNote(null);
     try {
-      const r = await setContact(signer!, undefined, contact ?? "");
+      const r = await setContact(signer!, undefined, (contact ?? "").trim());
       setContactNote(r.changed ? "Saved. Notices about your membership go there." : "No change.");
     } catch (e) {
       setContactNote(friendlyError(e));
@@ -143,7 +143,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
         )}
         {(s.status === "none" || s.status === "error" || s.status === "declined") && s.next !== "done" && (
           <div className="mt-3">
-            <Button disabled={!signer || starting} onClick={start}>
+            <Button disabled={!signer || !email || starting} onClick={start}>
               {starting ? "Opening..." : s.status === "none" ? "Verify my identity" : "Try again"}
             </Button>
           </div>
@@ -173,7 +173,8 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
             )}
             <div>
               <label className="block text-xs font-medium text-stone-600" htmlFor="contact">
-                Where should notices go? (optional: an email; used only if someone asks to move your membership, or your standing changes)
+                Where notices go: your email, used only if someone asks to move your membership or your standing changes. It starts as your
+                sign-in email{email ? ` (${email})` : ""}; you can change it, not remove it.
               </label>
               <div className="mt-1 flex gap-2">
                 <input
@@ -183,7 +184,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
                   value={contact ?? ""}
                   onChange={(e) => setContactText(e.target.value)}
                 />
-                <GhostButton disabled={!signer || contact === null} onClick={saveContact}>
+                <GhostButton disabled={!signer || !contact?.trim()} onClick={saveContact}>
                   Save
                 </GhostButton>
               </div>

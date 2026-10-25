@@ -59,6 +59,13 @@ export function personIdOf(v: unknown): string | null {
   return typeof v === "string" && /^[0-9a-f]{64}$/.test(v) ? v : null;
 }
 
+/** An email for membership notices: required since members sign in with Turnkey, at most 120 characters. */
+export function emailOf(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const e = v.trim();
+  return e.length <= 120 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : null;
+}
+
 export function walletOf(v: unknown): Address | null {
   if (typeof v !== "string") return null;
   try {

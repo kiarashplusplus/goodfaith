@@ -35,7 +35,7 @@ export function useMounted(): boolean {
 export function useApp() {
   const client = useClient<AppClient>();
   const mounted = useMounted();
-  const { wallets, httpClient, authState } = useTurnkey();
+  const { wallets, httpClient, authState, user } = useTurnkey();
   // Turnkey restores the session from the browser after hydration, so wallet state is hidden until after mount.
   const signedIn = mounted && authState === AuthState.Authenticated;
   const account = signedIn ? solanaAccountOf(wallets) : null;
@@ -44,7 +44,16 @@ export function useApp() {
     [account, httpClient],
   );
   const wallet: Address | null = signer ? signer.address : null;
-  return { client, rpc: client.rpc as unknown as TxRpc & AppClient["rpc"], signedIn, signer: signer as TransactionSigner | null, wallet };
+  // The member's verified sign-in email: required (a new device signs in with it, and notices go to it).
+  const email = signedIn ? user?.userEmail?.trim() || null : null;
+  return {
+    client,
+    rpc: client.rpc as unknown as TxRpc & AppClient["rpc"],
+    signedIn,
+    signer: signer as TransactionSigner | null,
+    wallet,
+    email,
+  };
 }
 
 const POLL = { refreshInterval: 10_000, revalidateOnFocus: true };

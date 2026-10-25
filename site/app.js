@@ -23,12 +23,12 @@
     const list = $("[data-checklist]");
     const out = $("[data-checklist-result]");
     if (!list || !out) return;
-    const NAMES = { texas: "living in Texas", adult: "18 or older", id: "the ID check", wallet: "a way to sign in", cosigner: "a co-signer" };
+    const NAMES = { texas: "living in Texas", adult: "18 or older", id: "the ID check", wallet: "an email", cosigner: "a co-signer" };
     const HINT = {
       texas: "Good Faith is only for Texas residents 18 or older, for now. Anyone can still give to the fund.",
       adult: "Good Faith is only for Texas residents 18 or older, for now. Anyone can still give to the fund.",
       id: "Joining needs the one-time ID check: it is how one person holds one membership.",
-      wallet: "Signing in needs a passkey (Face ID, fingerprint or PIN) or an email address you can read. Your wallet is made for you.",
+      wallet: "Joining needs an email address you can read: you sign in with it, and notices about your membership go there.",
       cosigner: "Without a co-signer you can still join, co-sign for a friend or give. To borrow, you'll need one.",
     };
     const update = () => {

@@ -49,6 +49,11 @@ an emailed code as the fallback and the way in on a new device. Turnkey's Auth P
 backend of ours; each member gets their own Turnkey sub-organisation, and sign-up creates its Solana account
 (`src/app/providers.tsx`, which also creates one for a signed-in member who has none).
 
+- **Email is required.** A passkey-only sign-up has no email at Turnkey, so it could not get back in on a new device
+  and would get no notices. `RequireWallet` asks such an account to add one (Turnkey's `handleAddEmail`, verified by
+  an emailed code) before any page but Repay (`essential`), which shows the request above the page instead: repaying
+  is never blocked. Join sends that email as the notice contact; `/api/identity/start` and `/api/identity/contact`
+  refuse a missing or malformed one.
 - **Signing.** `src/lib/turnkey-signer.ts` is a kit `TransactionPartialSigner` and `MessagePartialSigner`: each
   transaction's message bytes, or proof message, goes to Turnkey's raw-payload signing (ed25519, hex, no hash) and
   the 64-byte signature is verified against the wallet before use. So Kora sponsorship, the issuer's co-signed join and

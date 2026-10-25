@@ -19,7 +19,7 @@ documents under its own retention policy. Several credentials can point at one p
 to a licence). The fingerprint is what makes the same human resolve to the same person on a later check.
 
 The store (`store.ts`) therefore has: `persons` (id, first wallet, the bar mirrored from the chain with its end,
-an optional contact), `credentials` (fingerprint, key version, person, when and how it was attached), `wallets`
+a contact, required for new checks), `credentials` (fingerprint, key version, person, when and how it was attached), `wallets`
 (every wallet that started a check, its status and the person it resolved to), `recoveries` (wallet-recovery
 requests: when opened, whether the notice reached the member, when the operator proposed it and how it closed),
 `sponsorship` and `sponsor_budget` (the per-wallet and fund-wide sponsor counters, reserved atomically) and `events`
@@ -57,6 +57,14 @@ once the bar ends). `status` reports the pass (`pass.expiresAt`, `pass.state`) a
 expires within thirty days; the app shows a button. A member's contact changes only through the wallet currently
 linked to the membership (`POST /api/identity/contact`, signed), and the previous contact is told about the change, so
 taking over a wallet cannot silently redirect the notices that protect it.
+
+**The contact is required.** Members sign in with Turnkey, where the email is the way back in on a new device, so
+every member has one: the app asks a passkey-only account to add a verified email before anything but repaying, and
+sends it as `contact` when the check starts. `start` and `contact` refuse a missing or malformed email (400); the
+contact can be changed, not removed. The store still allows a person without one (records from before this rule, or
+an email the operator removed at the member's request when closing the membership). The service does not yet check
+that the contact is the Turnkey-verified email; reading it from the member's sub-organisation needs a parent-org API
+key on the server.
 
 **Duplicate detection reduces abuse; it does not prove uniqueness.** A person holding two documents the service has
 never seen together can hold two memberships until the documents are linked or the provider's own duplicate

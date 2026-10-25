@@ -61,7 +61,7 @@ async function details(w: KeyPairSigner, purpose: 'status' | 'identity' = 'statu
 async function start(w: KeyPairSigner, tamper = false, route: 'start' | 'link' = 'start') {
   const message = proofMessage(w.address, Math.floor(Date.now() / 1000));
   const sig = await signBytes(w.keyPair.privateKey, new TextEncoder().encode(tamper ? message + '!' : message));
-  return api<{ inquiryId: string; url: string }>(`/api/identity/${route}`, { method: 'POST', body: JSON.stringify({ wallet: w.address, message, signature: getBase64Decoder().decode(sig) }) }, tamper ? 401 : 200);
+  return api<{ inquiryId: string; url: string }>(`/api/identity/${route}`, { method: 'POST', body: JSON.stringify({ wallet: w.address, message, signature: getBase64Decoder().decode(sig), ...(route === 'start' && { contact: `w-${w.address.slice(0, 8)}@example.test` }) }) }, tamper ? 401 : 200);
 }
 const decide = (inquiryId: string, outcome: string, fields: object = MOCK_FIELDS_TX) => api<{ result: string }>('/api/identity/mock', { method: 'POST', body: JSON.stringify({ inquiryId, outcome, fields }) });
 /** Approves an inquiry and expects a pass; otherwise fails with the reason the wallet's own status gives (e.g. why the pass could not be issued). */

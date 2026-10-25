@@ -31,7 +31,7 @@ export default function RepayPage() {
         title="Repay"
         sub="You pay back exactly what you borrowed. No interest. No fees. Anyone can chip in toward a loan, including friends and family. After the deadline the loan is settled first; paying back what is owed then restores your standing."
       />
-      <RequireWallet>{(w) => <Repay wallet={w} />}</RequireWallet>
+      <RequireWallet essential>{(w) => <Repay wallet={w} />}</RequireWallet>
     </>
   );
 }

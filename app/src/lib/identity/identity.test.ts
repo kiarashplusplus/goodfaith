@@ -332,3 +332,12 @@ describe("gatekeeper sends", () => {
     expect(stale.used).toHaveLength(3);
   });
 });
+
+describe("emailOf", () => {
+  it("takes a trimmed email of at most 120 characters and refuses anything else", async () => {
+    const { emailOf } = await import("./http");
+    expect(emailOf("  member@example.test ")).toBe("member@example.test");
+    for (const bad of ["", "   ", "member", "a@b", "two words@example.test", `${"a".repeat(110)}@example.test`, 42, undefined])
+      expect(emailOf(bad)).toBeNull();
+  });
+});

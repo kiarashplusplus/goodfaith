@@ -111,7 +111,7 @@ Only the owner of a claim can give it up: the co-signer can waive theirs, and th
 
 ## Your wallet and keys
 
-Your wallet is made for you when you sign up, by our wallet provider, Turnkey. You sign in with a passkey (your device's Face ID, fingerprint or PIN) or a code sent to your email. Its key is kept encrypted by Turnkey and is only decrypted inside Turnkey's secure hardware when your own sign-in asks it to sign. Your account is yours alone: Good Faith's Turnkey organisation can read it but cannot sign, change or delete anything in it, and we do not add any other user or key to it. So we cannot see or use your key, and cannot move your money. While you are signed in, the app signs what you approve in it; use it only at its real address. The app's Checking page shows and moves the USDC in it. [[TO CONFIRM: counsel's view that this is not custody of members' funds]]
+Your wallet is made for you when you sign up, by our wallet provider, Turnkey. You sign in with a code sent to your email, which every member must have, and with a passkey (your device's Face ID, fingerprint or PIN) if you add one. Its key is kept encrypted by Turnkey and is only decrypted inside Turnkey's secure hardware when your own sign-in asks it to sign. Your account is yours alone: Good Faith's Turnkey organisation can read it but cannot sign, change or delete anything in it, and we do not add any other user or key to it. So we cannot see or use your key, and cannot move your money. While you are signed in, the app signs what you approve in it; use it only at its real address. The app's Checking page shows and moves the USDC in it. [[TO CONFIRM: counsel's view that this is not custody of members' funds]]
 
 **Keeping your sign-in is your responsibility.** If you lose your passkey, sign in with a code sent to your email and add a new one. Keep that email account safe: anyone who controls it can sign in as you. Sessions end after a short time and you sign in again. You can export your wallet's key from the app's account menu, for the command-line tool that works without the website. Exporting copies the key: the wallet keeps working in the app too. Anyone with that key controls your wallet, so keep it secret. Solana transfers are final, so check before you sign.
 
@@ -186,12 +186,12 @@ The software and the service are offered **as is**, without warranty of any kind
 
 [[TO CONFIRM: contact address for questions, appeals, stolen wallets and legal notices]]
 
-You may leave an email for notices about your membership. It can be changed only from your current wallet, and the old contact is told.
+Every member has an email for notices about your membership: the one you sign in with, given when you start your ID check. It can be changed, not removed, and only from your current wallet; the old contact is told.
 
 ## Changes to these terms
 
 These terms are versioned, and every change is listed below with its date. We post a new version here before it takes effect and tell members who left a contact. [[TO CONFIRM: notice period for changes to these terms]] A change to these terms never changes an open loan.
 
-- 0.3 (2026-10-25): wallets are Turnkey sign-in wallets (passkey or emailed code), with key export for the command-line tool.
+- 0.3 (2026-10-25): wallets are Turnkey sign-in wallets (emailed code, plus a passkey if you like), with key export for the command-line tool; an email is required.
 - 0.2 (2026-10-25): the Texas check is the state on your ID, as the identity service reads it.
 - 0.1 (2026-10-25): first draft.

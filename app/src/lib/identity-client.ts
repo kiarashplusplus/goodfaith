@@ -53,7 +53,7 @@ export async function cancelRebind(signer: TransactionSigner, walletClient: Mess
 export async function renewPass(signer: TransactionSigner, walletClient: MessageCapable | undefined): Promise<{ expiresAt: number }> {
   return call("/api/identity/renew", { method: "POST", body: JSON.stringify(await proof(signer, walletClient)) });
 }
-/** Changes (or removes, with an empty string) where notices about the membership go. */
+/** Changes where notices about the membership go (an email: it can be changed, not removed). */
 export async function setContact(
   signer: TransactionSigner,
   walletClient: MessageCapable | undefined,
@@ -78,12 +78,16 @@ export async function signText(signer: TransactionSigner, walletClient: MessageC
   throw new Error("This wallet can't sign a message. Sign in again and retry.");
 }
 
-/** Starts the identity check: the wallet signs a dated message proving control, the server opens the inquiry. */
+/**
+ * Starts the identity check: the wallet signs a dated message proving control, the server opens the inquiry.
+ * `contact` is the email notices go to (the member's Turnkey sign-in email); the server requires one.
+ */
 export async function startIdentityCheck(
   signer: TransactionSigner,
   walletClient: MessageCapable | undefined,
+  contact: string,
 ): Promise<{ inquiryId: string; url: string }> {
   const message = proofMessage(signer.address, Math.floor(Date.now() / 1000));
   const signature = getBase64Decoder().decode(await signText(signer, walletClient, message));
-  return call("/api/identity/start", { method: "POST", body: JSON.stringify({ wallet: signer.address, message, signature }) });
+  return call("/api/identity/start", { method: "POST", body: JSON.stringify({ wallet: signer.address, message, signature, contact }) });
 }

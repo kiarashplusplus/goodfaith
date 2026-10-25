@@ -108,24 +108,79 @@ export function ConnectButton() {
   return <AccountMenu wallet={wallet} />;
 }
 
-/** Shows children only when the member is signed in and their wallet is ready. */
-export function RequireWallet({ children }: { children: (wallet: NonNullable<ReturnType<typeof useApp>["wallet"]>) => React.ReactNode }) {
-  const { wallet, signedIn } = useApp();
+/** Asks a member with no sign-in email (a passkey-only sign-up) to add one, verified by Turnkey with an emailed code. */
+function AddEmail({ compact = false }: { compact?: boolean }) {
+  const { handleAddEmail } = useTurnkey();
+  const [error, setError] = useState<string | null>(null);
+  const add = async () => {
+    setError(null);
+    try {
+      await handleAddEmail({
+        title: "Add your email",
+        subTitle: "You sign in with it on a new device, and notices about your membership go there.",
+      });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <div
+      className={
+        compact
+          ? "mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm"
+          : "rounded-2xl border border-dashed border-stone-300 p-8 text-center text-stone-600"
+      }
+    >
+      <p className={compact ? "" : "font-medium text-stone-800"}>Add your email to continue.</p>
+      <p className="mt-1 text-sm">
+        It is how you sign in on a new device or after losing your passkey, and where notices about your membership go. We send a code to
+        check it.
+      </p>
+      <Button className="mt-3" onClick={add}>
+        Add my email
+      </Button>
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-red-700">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Shows children only when the member is signed in, their wallet is ready and their account has an email. `essential`
+ * pages (repaying) never wait for the email: they show the request above the page instead.
+ */
+export function RequireWallet({
+  children,
+  essential = false,
+}: {
+  children: (wallet: NonNullable<ReturnType<typeof useApp>["wallet"]>) => React.ReactNode;
+  essential?: boolean;
+}) {
+  const { wallet, signedIn, email } = useApp();
   const { handleLogin, clientState } = useTurnkey();
   if (signedIn && !wallet)
     return (
       <div className="rounded-2xl border border-dashed border-stone-300 p-8 text-center text-stone-600">Setting up your wallet...</div>
     );
+  if (wallet && !email && !essential) return <AddEmail />;
   if (!wallet) {
     return (
       <div className="rounded-2xl border border-dashed border-stone-300 p-8 text-center text-stone-600">
         <p>Sign in with a passkey or your email to continue.</p>
         <p className="mt-1 text-sm">A wallet is made for you: no app to install, no recovery phrase, no SOL needed.</p>
-        <Button className="mt-4" disabled={clientState !== ClientState.Ready} onClick={() => signIn(handleLogin)}>
+        <Button className="mt-3" disabled={clientState !== ClientState.Ready} onClick={() => signIn(handleLogin)}>
           Sign in
         </Button>
       </div>
     );
   }
-  return <>{children(wallet)}</>;
+  return (
+    <>
+      {!email && <AddEmail compact />}
+      {children(wallet)}
+    </>
+  );
 }
