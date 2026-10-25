@@ -64,6 +64,14 @@ async function start(w: KeyPairSigner, tamper = false, route: 'start' | 'link' =
   return api<{ inquiryId: string; url: string }>(`/api/identity/${route}`, { method: 'POST', body: JSON.stringify({ wallet: w.address, message, signature: getBase64Decoder().decode(sig) }) }, tamper ? 401 : 200);
 }
 const decide = (inquiryId: string, outcome: string, fields: object = MOCK_FIELDS_TX) => api<{ result: string }>('/api/identity/mock', { method: 'POST', body: JSON.stringify({ inquiryId, outcome, fields }) });
+/** Approves an inquiry and expects a pass; otherwise fails with the reason the wallet's own status gives (e.g. why the pass could not be issued). */
+async function issued(w: KeyPairSigner, inquiryId: string, fields?: object) {
+  const r = await decide(inquiryId, 'approved', fields);
+  if (r.result !== 'issued') {
+    const why = await details(w).then((d) => d.reason, (e) => `status unavailable: ${String(e)}`);
+    assert.fail(`check for ${w.address.slice(0, 6)}.. ended as ${r.result}, not issued: ${why}`);
+  }
+}
 /** The dated proof of control the wallet-acting routes want. */
 async function proofOf(w: KeyPairSigner, extra: object = {}) {
   const message = proofMessage(w.address, Math.floor(Date.now() / 1000));
@@ -162,7 +170,7 @@ assert.equal((await status(w1.address)).url, undefined, 'the public status does 
 assert.equal((await details(w1)).url, s1.url, 'the wallet itself gets its link back');
 assert.deepEqual(await start(w1), s1, 'a second start resumes the same inquiry');
 assert.equal((await status(w1.address)).next, 'wait');
-assert.equal((await decide(s1.inquiryId, 'approved')).result, 'issued');
+await issued(w1, s1.inquiryId);
 let st = await status(w1.address);
 assert.equal(st.next, 'join');
 assert.equal(st.person?.onChain, false);
@@ -192,19 +200,19 @@ row('verify + join', `inquiry ${s1.inquiryId}`, `pass ${tokenW1.slice(0, 6)}.. i
 const renewed = { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-1-renewed` };
 const l1 = await start(w1, false, 'link');
 assert.equal((await status(w1.address)).status, 'pending');
-assert.equal((await decide(l1.inquiryId, 'approved', renewed)).result, 'issued');
+await issued(w1, l1.inquiryId, renewed);
 assert.equal((await status(w1.address)).next, 'done');
 const wR = await generateKeyPairSigner();
 const sR = await start(wR);
-assert.equal((await decide(sR.inquiryId, 'approved', renewed)).result, 'issued');
+await issued(wR, sR.inquiryId, renewed);
 assert.equal((await status(wR.address)).next, 'recover', 'the renewed document resolves to the same person');
 assert.equal((await status(wR.address)).person?.currentWallet, w1.address);
 await api('/api/identity/contact', { method: 'POST', body: await proofOf(wR, { contact: 'thief@example.test' }) }, 403);
 const wX = await generateKeyPairSigner();
 const sX = await start(wX);
-assert.equal((await decide(sX.inquiryId, 'approved', { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-x` })).result, 'issued');
+await issued(wX, sX.inquiryId, { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-x` });
 const l1b = await start(w1, false, 'link');
-assert.equal((await decide(l1b.inquiryId, 'approved', { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-x` })).result, 'issued');
+await issued(w1, l1b.inquiryId, { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-x` });
 assert.equal((await details(w1)).reason, 'That document already belongs to another membership.');
 row('link a renewed document', 'same person from a new wallet after linking: recover', `someone else's document: refused`);
 
@@ -214,7 +222,7 @@ const w2Seed = crypto.getRandomValues(new Uint8Array(32));
 const w2 = await createKeyPairSignerFromPrivateKeyBytes(w2Seed);
 await setSol(w2.address, 1_000_000_000n);
 const s2 = await start(w2);
-assert.equal((await decide(s2.inquiryId, 'approved')).result, 'issued');
+await issued(w2, s2.inquiryId);
 st = await status(w2.address);
 assert.equal(st.next, 'recover');
 assert.equal(st.person?.currentWallet, w1.address);
@@ -258,12 +266,12 @@ const w8Seed = crypto.getRandomValues(new Uint8Array(32));
 const w8 = await createKeyPairSignerFromPrivateKeyBytes(w8Seed);
 await setSol(w8.address, 1_000_000_000n);
 const s8 = await start(w8);
-assert.equal((await decide(s8.inquiryId, 'approved')).result, 'issued');
+await issued(w8, s8.inquiryId);
 assert.equal((await status(w8.address)).next, 'recover');
 // a second wallet of the same person asking at the same time is blocked while w8's request waits; the operator can reject one
 const w9 = await generateKeyPairSigner();
 const s9 = await start(w9);
-assert.equal((await decide(s9.inquiryId, 'approved')).result, 'issued');
+await issued(w9, s9.inquiryId);
 await rebind(w9, 202);
 assert.equal((await status(w8.address)).next, 'blocked', 'one request at a time');
 const w9Req = queue().find((q) => q.newWallet === w9.address)!;
@@ -305,7 +313,7 @@ const other = { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-2` };
 const w6 = await generateKeyPairSigner();
 await setSol(w6.address, 1_000_000_000n);
 const s6 = await start(w6);
-assert.equal((await decide(s6.inquiryId, 'approved', other)).result, 'issued');
+await issued(w6, s6.inquiryId, other);
 await finish(w6, 'join', 'register');
 await api('/api/identity/ban', { method: 'POST', body: JSON.stringify({ wallet: w6.address }) }, 401);
 const ban = await api<{ banned: boolean; permanent: boolean; frozen: string[] }>('/api/identity/ban', { method: 'POST', headers: { 'x-identity-admin-key': adminKey }, body: JSON.stringify({ wallet: w6.address }) });
@@ -331,7 +339,7 @@ row('permanent bar, then lifted', 'without the admin key: 401', `pass of ${w6.ad
 const w7 = await generateKeyPairSigner();
 await setSol(w7.address, 1_000_000_000n);
 const s7 = await start(w7);
-assert.equal((await decide(s7.inquiryId, 'approved', { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-3` })).result, 'issued');
+await issued(w7, s7.inquiryId, { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-3` });
 const until = Math.floor(Date.now() / 1000) + 30 * 86_400;
 const temp = await api<{ banned: boolean; permanent: boolean; until: number; frozen: string[]; unfrozen: string[] }>('/api/identity/ban', { method: 'POST', headers: { 'x-identity-admin-key': adminKey }, body: JSON.stringify({ wallet: w7.address, until: String(until) }) });
 assert.deepEqual(temp, { banned: true, until, permanent: false, frozen: [], unfrozen: [] });

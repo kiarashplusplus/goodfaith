@@ -2,7 +2,7 @@
  * Issues and revokes gateway tokens on the fund's own gatekeeper network. Server only: this is the one place
  * that still uses @solana/web3.js v1, because @civic/solana-gateway-ts speaks it.
  */
-import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction, type Signer } from "@solana/web3.js";
 import {
   addGatekeeper,
   findGatewayToken,
@@ -35,6 +35,35 @@ export interface TokenIssuer {
   active(owner: Address): Promise<Address | null>;
   /** The token as it is, whatever its state; null when the wallet never had one. */
   pass(owner: Address): Promise<PassView | null>;
+}
+
+type SendConn = Pick<Connection, "getLatestBlockhash" | "sendRawTransaction" | "confirmTransaction">;
+
+/**
+ * Signs and sends `tx` with a blockhash fetched for this attempt, and confirms it against that blockhash's expiry.
+ * web3.js's own sendAndConfirmTransaction reuses a cached blockhash for about 30 seconds, which a cluster whose
+ * blockhashes moved on (a restarted RPC node; a local fork after time travel) rejects at preflight ("Blockhash not
+ * found"). That rejection means the transaction was never sent, so only it is retried, with a fresh blockhash, up to
+ * `tries` times; anything else (a program error, an expiry while confirming) is thrown as is, so nothing lands twice.
+ */
+export async function sendFresh(conn: SendConn, tx: Transaction, signer: Signer, tries = 3): Promise<string> {
+  for (let attempt = 1; ; attempt++) {
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    tx.lastValidBlockHeight = lastValidBlockHeight;
+    tx.feePayer = signer.publicKey;
+    tx.signatures = [];
+    tx.sign(signer);
+    try {
+      const signature = await conn.sendRawTransaction(tx.serialize(), { preflightCommitment: "confirmed" });
+      const r = await conn.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
+      if (r.value.err) throw new Error(`transaction failed: ${JSON.stringify(r.value.err)}`);
+      return signature;
+    } catch (e) {
+      const unsent = /blockhash not found/i.test(e instanceof Error ? e.message : String(e));
+      if (!unsent || attempt >= tries) throw e;
+    }
+  }
 }
 
 /** A 64-byte secret key as a JSON array (the `solana-keygen` file format). */
@@ -73,7 +102,7 @@ export class Gatekeeper implements TokenIssuer {
 
   private async send(tx: Transaction, label: string): Promise<void> {
     try {
-      await sendAndConfirmTransaction(this.conn, tx, [this.key], { commitment: "confirmed" });
+      await sendFresh(this.conn, tx, this.key);
     } catch (e) {
       throw new Error(`gatekeeper ${label} failed: ${e instanceof Error ? e.message : String(e)}`);
     }

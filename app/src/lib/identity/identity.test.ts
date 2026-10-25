@@ -3,6 +3,8 @@ import { PublicKey } from "@solana/web3.js";
 import { getGatekeeperAccountAddress, getGatewayTokenAddressForOwnerAndGatekeeperNetwork } from "@civic/solana-gateway-ts";
 import { address, generateKeyPairSigner, getBase64Decoder, signBytes, type Address } from "@solana/kit";
 import { gatekeeperAccountAddress, gatewayTokenAddress } from "../gateway";
+import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
+import { sendFresh } from "./gatekeeper";
 import { ageAt, HASH_DOMAIN, HashKeyring, normaliseFields, personHash, toHex } from "./person-hash";
 import { DEFAULT_FIELD_KEYS, PersonaProvider, parsePersonaSignature, personaDigest } from "./persona";
 import { MemoryStore, openSqlite, type IdentityStore } from "./store";
@@ -291,5 +293,42 @@ describe("mock provider", () => {
     expect(() => m.decide("mock-99", "declined")).toThrow(/unknown/);
     const w2 = address("BiJ1fzcq8BcDQrdUDGNaGK9Jq7oxEmXb9iBFJyKMEdw8") as Address;
     expect(m.referenceOf((await m.createInquiry(w2)).inquiryId)).toBe(w2);
+  });
+});
+
+describe("gatekeeper sends", () => {
+  const key = Keypair.generate();
+  const tx = () => new Transaction().add(SystemProgram.transfer({ fromPubkey: key.publicKey, toPubkey: key.publicKey, lamports: 1 }));
+  // A fake connection: a new blockhash per call; `sendRawTransaction` fails with the queued errors first.
+  const conn = (failures: string[]) => {
+    const used: string[] = [];
+    let n = 0;
+    return {
+      used,
+      getLatestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 100 + n++ }),
+      sendRawTransaction: async (raw: Buffer | Uint8Array) => {
+        used.push(Transaction.from(raw).recentBlockhash!);
+        const f = failures.shift();
+        if (f) throw new Error(f);
+        return "sig";
+      },
+      confirmTransaction: async () => ({ context: { slot: 1 }, value: { err: null } }),
+    };
+  };
+
+  it("retries a transaction the cluster never took (stale blockhash) with a fresh blockhash", async () => {
+    const c = conn(["Simulation failed. Message: Transaction simulation failed: Blockhash not found."]);
+    expect(await sendFresh(c as never, tx(), key)).toBe("sig");
+    expect(c.used).toHaveLength(2);
+    expect(c.used[0]).not.toBe(c.used[1]);
+  });
+
+  it("does not retry anything else, and gives up after the last try", async () => {
+    const program = conn(["Transaction simulation failed: custom program error: 0x1"]);
+    await expect(sendFresh(program as never, tx(), key)).rejects.toThrow(/custom program error/);
+    expect(program.used).toHaveLength(1);
+    const stale = conn(["Blockhash not found", "Blockhash not found", "Blockhash not found"]);
+    await expect(sendFresh(stale as never, tx(), key)).rejects.toThrow(/Blockhash not found/);
+    expect(stale.used).toHaveLength(3);
   });
 });
