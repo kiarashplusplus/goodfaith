@@ -27,7 +27,7 @@ import { TexasFlag } from "@/components/texas-flag";
  * the move completes after the fund's recovery delay unless the old wallet objects.
  */
 export function VerifyAndJoin({ wallet }: { wallet: Address }) {
-  const { rpc, signer, client } = useApp();
+  const { rpc, signer } = useApp();
   const pool = usePool();
   const member = useMember(wallet);
   const sponsor = useSponsor();
@@ -44,7 +44,6 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
     refreshInterval: (d?: StatusView) => (d?.next === "wait" ? 4_000 : 20_000),
     revalidateOnFocus: true,
   });
-  const walletClient = (client as unknown as { wallet?: { signMessage?: (m: Uint8Array) => Promise<Uint8Array> } }).wallet;
 
   if (!pool.data) return <Notice tone="info">{pool.isLoading ? "Loading the fund..." : "The fund isn't set up yet."}</Notice>;
   if (status.error) return <Notice tone="warn">{friendlyError(status.error)}</Notice>;
@@ -61,7 +60,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
   const showDetails = async () => {
     setDetailsError(null);
     try {
-      setDetails(await fetchIdentityDetails(signer!, walletClient));
+      setDetails(await fetchIdentityDetails(signer!, undefined));
     } catch (e) {
       setDetailsError(friendlyError(e));
     }
@@ -72,7 +71,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
     setStartError(null);
     setStarting(true);
     try {
-      const { url } = await startIdentityCheck(signer!, walletClient);
+      const { url } = await startIdentityCheck(signer!, undefined);
       setStartedUrl(url);
       window.open(url, "_blank", "noopener");
       await status.mutate();
@@ -91,14 +90,14 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
     });
   const renew = () =>
     run(async () => {
-      const r = await renewPass(signer!, walletClient);
+      const r = await renewPass(signer!, undefined);
       await refresh();
       return `renewed until ${new Date(r.expiresAt * 1000).toLocaleDateString()}`;
     });
   const saveContact = async () => {
     setContactNote(null);
     try {
-      const r = await setContact(signer!, walletClient, contact ?? "");
+      const r = await setContact(signer!, undefined, contact ?? "");
       setContactNote(r.changed ? "Saved. Notices about your membership go there." : "No change.");
     } catch (e) {
       setContactNote(friendlyError(e));
@@ -217,7 +216,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
                 {busy ? "Joining..." : "Join"}
               </Button>
             ) : (
-              <GhostButton disabled={!signer || busy} onClick={() => finish(() => prepareRebind(signer!, walletClient))}>
+              <GhostButton disabled={!signer || busy} onClick={() => finish(() => prepareRebind(signer!, undefined))}>
                 {busy ? "Sending..." : s.next === "recover" ? "Move my membership to this wallet" : "Complete the move"}
               </GhostButton>
             )}

@@ -1,6 +1,6 @@
 # Good Faith web app
 
-Next.js (App Router) + Tailwind. Wallet via Wallet Standard (`@solana/kit-plugin-wallet`), RPC via `@solana/kit`,
+Next.js (App Router) + Tailwind. Members' wallets are Turnkey sign-in wallets (`@turnkey/react-wallet-kit`), RPC via `@solana/kit`,
 program client generated with Codama, the fund's own identity issuer (Persona behind an interface, mock for tests),
 optional Kora fee sponsorship.
 
@@ -15,16 +15,17 @@ npm run format     # Prettier (config in the repo root)
 
 ## Configuration (`.env.local`)
 
-| Variable                         | Meaning                                                                                           |
-| -------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_CLUSTER`            | `devnet` (default) or `mainnet-beta`. Anything else is reported as a configuration error.         |
-| `NEXT_PUBLIC_RPC_URL`            | JSON-RPC endpoint. Must allow `getProgramAccounts` (used for the co-sign inbox and loan history). |
-| `NEXT_PUBLIC_POOL_MINT`          | Loan token mint (defaults to devnet USDC).                                                        |
-| `NEXT_PUBLIC_PROGRAM_ID`         | Deployed program id.                                                                              |
-| `NEXT_PUBLIC_GATEKEEPER_NETWORK` | The fund's gatekeeper network (from `scripts: npm run gatekeeper-setup`); empty uses the pool's.  |
-| `NEXT_PUBLIC_POOL_ADDRESS`       | Pin the canonical pool (defaults to the PDA for the mint).                                        |
-| `NEXT_PUBLIC_POOL_AUTHORITY`     | Required: the expected pool authority, or `none` once the pool is frozen.                         |
-| `NEXT_PUBLIC_KORA_URL`           | Kora fee sponsor; leave empty to have users pay their own fees.                                   |
+| Variable                                                                          | Meaning                                                                                                             |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_CLUSTER`                                                             | `devnet` (default) or `mainnet-beta`. Anything else is reported as a configuration error.                           |
+| `NEXT_PUBLIC_RPC_URL`                                                             | JSON-RPC endpoint. Must allow `getProgramAccounts` (used for the co-sign inbox and loan history).                   |
+| `NEXT_PUBLIC_POOL_MINT`                                                           | Loan token mint (defaults to devnet USDC).                                                                          |
+| `NEXT_PUBLIC_PROGRAM_ID`                                                          | Deployed program id.                                                                                                |
+| `NEXT_PUBLIC_GATEKEEPER_NETWORK`                                                  | The fund's gatekeeper network (from `scripts: npm run gatekeeper-setup`); empty uses the pool's.                    |
+| `NEXT_PUBLIC_POOL_ADDRESS`                                                        | Pin the canonical pool (defaults to the PDA for the mint).                                                          |
+| `NEXT_PUBLIC_POOL_AUTHORITY`                                                      | Required: the expected pool authority, or `none` once the pool is frozen.                                           |
+| `NEXT_PUBLIC_KORA_URL`                                                            | Kora fee sponsor; leave empty to have users pay their own fees.                                                     |
+| `NEXT_PUBLIC_TURNKEY_ORGANIZATION_ID`, `NEXT_PUBLIC_TURNKEY_AUTH_PROXY_CONFIG_ID` | Turnkey sign-in wallets (public IDs). Empty on devnet uses Good Faith's devnet organisation; mainnet must set both. |
 
 The nav shows who pays fees ("Fees covered" / "You pay network fees" / sponsor unavailable). When the sponsor is
 configured but unreachable the wallet pays; when the sponsor refuses a transaction the error is shown and nothing is
@@ -40,6 +41,26 @@ counted in the identity store). `scripts/member.ts` is the fallback client for w
 Values are validated at startup (`src/lib/config.ts`). A bad value, or a pool on chain that doesn't match the pinned
 configuration, shows a red banner and turns off borrowing, co-signing, repaying and donating. Plain wallet transfers on
 the Checking page keep working.
+
+## Sign-in wallets (Turnkey)
+
+Members never install a wallet app. "Sign in" opens Turnkey's modal (`@turnkey/react-wallet-kit`): a passkey first,
+an emailed code as the fallback and the way in on a new device. Turnkey's Auth Proxy does sign-up and sign-in with no
+backend of ours; each member gets their own Turnkey sub-organisation, and sign-up creates its Solana account
+(`src/app/providers.tsx`, which also creates one for a signed-in member who has none).
+
+- **Signing.** `src/lib/turnkey-signer.ts` is a kit `TransactionPartialSigner` and `MessagePartialSigner`: each
+  transaction's message bytes, or proof message, goes to Turnkey's raw-payload signing (ed25519, hex, no hash) and
+  the 64-byte signature is verified against the wallet before use. So Kora sponsorship, the issuer's co-signed join and
+  recovery, the identity proofs and MoneyGram cash-out all work unchanged. `useApp()` (`src/lib/hooks.ts`) returns it.
+- **Sessions** are held in the browser (IndexedDB) and refreshed while the app is open; their length is set in the
+  Turnkey dashboard. Sign out from the address menu in the nav.
+- **Export.** The address menu's "Export my wallet key" opens Turnkey's export flow (Solana format). Saved in a file,
+  that key works as `MEMBER_KEYPAIR` for `scripts/member.ts`, which takes a solana-keygen JSON file or an exported key
+  in base58 or hex.
+- **Turnkey dashboard.** The Auth Proxy config must allow this site's origin and enable passkey and email OTP.
+- **Devnet check.** A passkey sign-up (a Chrome virtual authenticator), both identity proofs and a USDC send from the
+  Checking page were run against the devnet organisation.
 
 ## Health and deployment
 
@@ -120,7 +141,7 @@ account, reference number issued for 7.00 USD in Texas.
 ## Layout
 
 - `src/app/*` — one client page per route plus a server `layout.tsx` for its title; `error.tsx`, `not-found.tsx` and `loading.tsx` at the root.
-- `src/components` — UI primitives (`ui.tsx`: `Field` takes an `error` prop wired for screen readers; `Notice` is a live region), wallet connect, nav, verify-and-join, loan list.
+- `src/components` — UI primitives (`ui.tsx`: `Field` takes an `error` prop wired for screen readers; `Notice` is a live region), sign-in and account menu (`connect-button.tsx`), nav, verify-and-join, loan list.
 - `src/lib/identity` — the identity issuer (provider interface, Persona, mock, person hash, store, gatekeeper, service).
 - `src/app/api/sponsor` — the fee-sponsor proxy (method allow-list, per-client rate limit, Kora auth headers, the sponsorship policy with atomically reserved per-wallet and fund-wide counters; helpers in `src/lib/sponsor-proxy.ts` and `src/lib/sponsor-policy.ts`).
 - `src/lib` — config, program access layer (`program.ts`), transaction flow (`tx.ts`), Kora client (`kora.ts`), send planner (`send.ts`), pure helpers (`format.ts`, `escrow.ts`, `loan-status.ts`, `cosign-link.ts`, `clipboard.ts`). All token math is `bigint`.

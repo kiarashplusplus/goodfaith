@@ -80,6 +80,10 @@ caps and cooldowns would treat as new members. Keep the old key listed until the
 
 ## Wallet recovery
 
+Members' wallets are Turnkey sign-in wallets (`app/README.md`), so a lost passkey is not a lost wallet: the member
+signs in with an emailed code and adds a new passkey, and nothing here is involved. This flow is for a wallet that is
+truly gone (the passkey and the email account both lost, or a key that leaked).
+
 Losing a wallet must not mean losing a membership, and recovering one must not be a way to take one over. The flow:
 
 1. The person verifies from the new wallet; it resolves to their existing person, and `status` says `recover`. A

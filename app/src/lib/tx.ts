@@ -85,7 +85,7 @@ export async function signWith(signer: TransactionSigner, tx: Transaction): Prom
     const [sigs] = await signer.signTransactions([tx as never]);
     return { ...tx, signatures: { ...tx.signatures, ...sigs } };
   }
-  throw new Error("This wallet can't sign here. Try Phantom or Solflare.");
+  throw new Error("This wallet can't sign here. Sign in again and retry.");
 }
 
 async function confirm(rpc: TxRpc, sig: string, timeoutMs = 60_000): Promise<void> {

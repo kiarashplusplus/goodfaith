@@ -4,7 +4,7 @@
  * 200 when the server runs with a valid configuration (component failures are reported inside), 503 otherwise.
  */
 import { createSolanaRpc } from "@solana/kit";
-import { CONFIG_ERRORS, POOL_MINT, PROGRAM_ID, RPC_URL, CLUSTER } from "@/lib/config";
+import { CONFIG_ERRORS, POOL_MINT, PROGRAM_ID, RPC_URL, CLUSTER, TURNKEY } from "@/lib/config";
 import { fetchCanonicalPool, findPoolPda, windingDown } from "@/lib/program";
 import { readServerEnv } from "@/lib/server-env";
 import { openStore } from "@/lib/identity/db";
@@ -27,6 +27,8 @@ export async function GET(): Promise<Response> {
     sponsor: env.sponsor,
     identity: env.identity,
     ramps: env.ramps,
+    // Members' sign-in wallets: both public IDs set (a missing one is also in config.errors).
+    turnkey: { configured: !!TURNKEY.organizationId && !!TURNKEY.authProxyConfigId, organizationId: TURNKEY.organizationId || null },
   };
   try {
     const slot = await timeout(rpc.getSlot({ commitment: "confirmed" }).send(), 5_000);

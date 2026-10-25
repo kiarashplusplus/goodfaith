@@ -1,21 +1,24 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { useConnect, useDisconnect, useWallets, WalletReadyGate } from "@solana/kit-plugin-wallet/react";
+import { AuthState, ClientState, KeyFormat, useTurnkey } from "@turnkey/react-wallet-kit";
 import { useApp, useMounted } from "@/lib/hooks";
 import { shortAddress } from "@/lib/format";
-import { Button, GhostButton } from "./ui";
+import { copyLabel, useCopy } from "@/lib/clipboard";
+import { Button } from "./ui";
 
-function Inner() {
-  const { client, wallet } = useApp();
-  const wallets = useWallets(client);
-  const { dispatch: connect, isRunning } = useConnect(client);
-  const { dispatch: disconnect } = useDisconnect(client);
+const signIn = (handleLogin: ReturnType<typeof useTurnkey>["handleLogin"]) => handleLogin({ title: "Sign in to Good Faith" });
+
+/** The account menu: the member's address, copy it, export the wallet key (for the no-website CLI), sign out. */
+function AccountMenu({ wallet }: { wallet: string }) {
+  const { logout, handleExportWalletAccount } = useTurnkey();
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { state, copy } = useCopy();
   const menuId = useId();
   const wrap = useRef<HTMLDivElement>(null);
 
-  // Close the wallet menu on Escape or a click outside it.
+  // Close the menu on Escape or a click outside it.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -32,50 +35,60 @@ function Inner() {
     };
   }, [open]);
 
-  if (wallet) {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="rounded-lg bg-stone-100 px-2 py-1 font-mono text-sm" aria-label={`Connected wallet ${wallet}`}>
-          {shortAddress(wallet)}
-        </span>
-        <GhostButton onClick={() => disconnect()}>Disconnect</GhostButton>
-      </div>
-    );
-  }
+  const item = "block w-full rounded-lg p-2 text-left hover:bg-stone-100 focus:bg-stone-100 focus:outline-none";
   return (
     <div className="relative" ref={wrap}>
-      <Button
-        onClick={() => setOpen((o) => !o)}
-        disabled={isRunning}
+      <button
+        className="rounded-lg bg-stone-100 px-2 py-1 font-mono text-sm hover:bg-stone-200"
+        aria-label={`Your wallet ${wallet}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen((o) => !o)}
       >
-        {isRunning ? "Connecting..." : "Connect wallet"}
-      </Button>
+        {shortAddress(wallet)}
+      </button>
       {open && (
         <div
           id={menuId}
           role="menu"
-          aria-label="Choose a wallet"
-          className="absolute right-0 z-10 mt-2 w-64 rounded-xl border border-stone-200 bg-white p-2 shadow-lg"
+          aria-label="Your account"
+          className="absolute right-0 z-10 mt-2 w-72 rounded-xl border border-stone-200 bg-white p-2 text-sm shadow-lg"
         >
-          {wallets.length === 0 && <p className="p-2 text-sm text-stone-600">No wallet found. Install Phantom or Solflare, then reload.</p>}
-          {wallets.map((w) => (
-            <button
-              key={w.name}
-              role="menuitem"
-              className="flex w-full items-center gap-2 rounded-lg p-2 text-left hover:bg-stone-100 focus:bg-stone-100 focus:outline-none"
-              onClick={() => {
-                connect(w);
-                setOpen(false);
-              }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={w.icon} alt="" width={24} height={24} />
-              {w.name}
-            </button>
-          ))}
+          <p className="break-all p-2 font-mono text-xs text-stone-600">{wallet}</p>
+          <button role="menuitem" className={item} onClick={() => copy(wallet)}>
+            {copyLabel(state, "Copy my address")}
+          </button>
+          <button
+            role="menuitem"
+            className={item}
+            onClick={async () => {
+              setError(null);
+              try {
+                await handleExportWalletAccount({ address: wallet, keyFormat: KeyFormat.Solana });
+              } catch (e) {
+                setError((e as Error).message);
+              }
+            }}
+          >
+            Export my wallet key
+            <span className="block text-xs text-stone-500">Only for the command-line tool. Anyone with this key controls your wallet.</span>
+          </button>
+          <button
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              setOpen(false);
+              void logout();
+            }}
+          >
+            Sign out
+          </button>
+          {error && (
+            <p role="alert" className="p-2 text-xs text-red-700">
+              {error}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -83,25 +96,34 @@ function Inner() {
 }
 
 export function ConnectButton() {
-  const { client } = useApp();
   const mounted = useMounted();
-  const fallback = <span className="text-sm text-stone-500">Loading wallets...</span>;
-  // Wallet readiness is client-only state (it may already be "ready" at hydration), so render the gate after mount.
-  if (!mounted) return fallback;
-  return (
-    <WalletReadyGate client={client} fallback={fallback}>
-      <Inner />
-    </WalletReadyGate>
-  );
+  const { clientState, authState, handleLogin } = useTurnkey();
+  const { wallet } = useApp();
+  // Turnkey restores the session in the browser, so the button renders after mount.
+  if (!mounted || clientState === undefined || clientState === ClientState.Loading)
+    return <span className="text-sm text-stone-500">Loading...</span>;
+  if (clientState === ClientState.Error) return <span className="text-sm text-red-700">Sign-in is unavailable right now.</span>;
+  if (authState !== AuthState.Authenticated) return <Button onClick={() => signIn(handleLogin)}>Sign in</Button>;
+  if (!wallet) return <span className="text-sm text-stone-500">Setting up your wallet...</span>;
+  return <AccountMenu wallet={wallet} />;
 }
 
-/** Shows children only when a wallet is connected. */
+/** Shows children only when the member is signed in and their wallet is ready. */
 export function RequireWallet({ children }: { children: (wallet: NonNullable<ReturnType<typeof useApp>["wallet"]>) => React.ReactNode }) {
-  const { wallet } = useApp();
+  const { wallet, signedIn } = useApp();
+  const { handleLogin, clientState } = useTurnkey();
+  if (signedIn && !wallet)
+    return (
+      <div className="rounded-2xl border border-dashed border-stone-300 p-8 text-center text-stone-600">Setting up your wallet...</div>
+    );
   if (!wallet) {
     return (
       <div className="rounded-2xl border border-dashed border-stone-300 p-8 text-center text-stone-600">
-        Connect your wallet to continue.
+        <p>Sign in with a passkey or your email to continue.</p>
+        <p className="mt-1 text-sm">A wallet is made for you: no app to install, no recovery phrase, no SOL needed.</p>
+        <Button className="mt-4" disabled={clientState !== ClientState.Ready} onClick={() => signIn(handleLogin)}>
+          Sign in
+        </Button>
       </div>
     );
   }

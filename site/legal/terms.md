@@ -1,6 +1,6 @@
 ---
 title: Terms of use
-version: 0.2
+version: 0.3
 effective: 2026-10-25
 status: Draft for counsel's review. Good Faith runs on a test network with test money only.
 ---
@@ -111,13 +111,15 @@ Only the owner of a claim can give it up: the co-signer can waive theirs, and th
 
 ## Your wallet and keys
 
-You use Good Faith with your own wallet app, such as Phantom or Solflare; the app's Checking page shows and moves the USDC in it, under a key only you hold. **Your wallet, keys and recovery phrase are your responsibility.** We cannot see, reset or use them, or move your money. Solana transfers are final, so check before you sign.
+Your wallet is made for you when you sign up, by our wallet provider, Turnkey. You sign in with a passkey (your device's Face ID, fingerprint or PIN) or a code sent to your email. Its key is kept by Turnkey in secure hardware and is used only when you are signed in and approve an action in the app; we cannot see it or use it, and cannot move your money. The app's Checking page shows and moves the USDC in it. [[TO CONFIRM: counsel's view of the custody model, and whether Good Faith's Turnkey organisation can ever act in a member's account]]
+
+**Keeping your sign-in is your responsibility.** If you lose your passkey, sign in with a code sent to your email and add a new one. Keep that email account safe: anyone who controls it can sign in as you. Sessions end after a short time and you sign in again. You can export your wallet's key from the app's account menu, for the command-line tool that works without the website. Anyone with that key controls your wallet, so keep it secret. Solana transfers are final, so check before you sign.
 
 Your membership's history is public on chain. Anyone who learns your wallet can read it. Your documents and fingerprint stay off chain.
 
 ## Lost wallet: recovery
 
-If you lose your wallet, you can move your membership to a new one. Your loans, guarantees and bars move with you.
+If you lose your wallet (for example, both your passkey and your email account), you can move your membership to a new one. Your loans, guarantees and bars move with you.
 
 - Verify again from the new wallet and ask to move, with a message it signs.
 - Your contact on file is told first, and the new wallet's contact too.
@@ -158,7 +160,8 @@ These services are run by others, under their own terms and privacy policies:
 
 - **Persona** checks your identity and keeps your selfie and documents under its own policy. [[TO CONFIRM: link to Persona's terms and data-retention policy]]
 - **MoneyGram** offers cash-out and cash-in at its counters from the app's Checking page. It is the licensed party, runs its own identity check, and shows and charges its own fee and rate. **Good Faith adds no fee.** [[TO CONFIRM: link to MoneyGram's terms, production fees and Texas coverage]]
-- **Wallet apps**, **Circle** (USDC) and the **Solana** network.
+- **Turnkey** makes and keeps your wallet and runs sign-in (passkeys and emailed codes). [[TO CONFIRM: link to Turnkey's terms]]
+- **Circle** (USDC) and the **Solana** network.
 - A relay sends notices to your contact. [[TO CONFIRM: name of the notice relay]]
 
 [[TO CONFIRM: whether licensing, money-transmission or sanctions-screening rules apply, including to the MoneyGram service in the app]]
@@ -189,5 +192,6 @@ You may leave an email for notices about your membership. It can be changed only
 
 These terms are versioned, and every change is listed below with its date. We post a new version here before it takes effect and tell members who left a contact. [[TO CONFIRM: notice period for changes to these terms]] A change to these terms never changes an open loan.
 
+- 0.3 (2026-10-25): wallets are Turnkey sign-in wallets (passkey or emailed code), with key export for the command-line tool.
 - 0.2 (2026-10-25): the Texas check is the state on your ID, as the identity service reads it.
 - 0.1 (2026-10-25): first draft.

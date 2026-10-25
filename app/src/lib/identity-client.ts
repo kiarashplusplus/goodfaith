@@ -75,7 +75,7 @@ export async function signText(signer: TransactionSigner, walletClient: MessageC
     if (sig) return new Uint8Array(sig);
   }
   if (walletClient?.signMessage) return new Uint8Array(await walletClient.signMessage(bytes));
-  throw new Error("This wallet can't sign a message. Try Phantom or Solflare.");
+  throw new Error("This wallet can't sign a message. Sign in again and retry.");
 }
 
 /** Starts the identity check: the wallet signs a dated message proving control, the server opens the inquiry. */

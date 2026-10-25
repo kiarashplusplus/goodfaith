@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_POOL_MINT, DEFAULT_PROGRAM_ID, DEFAULT_RPC_URL, parseConfig } from "./config";
+import { DEFAULT_POOL_MINT, DEFAULT_PROGRAM_ID, DEFAULT_RPC_URL, DEVNET_TURNKEY, parseConfig } from "./config";
 
 const MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const AUTH = "2agNDw6soEttnATLgkhxup22GGoeCa7KVNfxyeeuHbve";
@@ -14,6 +14,7 @@ describe("parseConfig", () => {
     expect(c.programId).toBe(DEFAULT_PROGRAM_ID);
     expect(c.gatekeeperNetwork).toBe("");
     expect(c.poolAuthority).toBe("");
+    expect(c.turnkey).toEqual(DEVNET_TURNKEY);
   });
 
   it("accepts a full valid configuration", () => {
@@ -26,12 +27,27 @@ describe("parseConfig", () => {
       gatekeeperNetwork: AUTH,
       poolAddress: AUTH,
       poolAuthority: "none",
+      turnkeyOrganizationId: "11111111-2222-3333-4444-555555555555",
+      turnkeyAuthProxyConfigId: "66666666-7777-8888-9999-aaaaaaaaaaaa",
     });
     expect(c.errors).toEqual([]);
+    expect(c.turnkey.organizationId).toBe("11111111-2222-3333-4444-555555555555");
     expect(c.cluster).toBe("mainnet-beta");
     expect(c.koraUrl).toBe("https://kora.example");
     expect(c.poolAuthority).toBe("none");
     expect(parseConfig({ poolAuthority: AUTH }).poolAuthority).toBe(AUTH);
+  });
+
+  it("needs mainnet's own Turnkey IDs and refuses ones that are not UUIDs", () => {
+    const main = parseConfig({ cluster: "mainnet-beta" });
+    expect(main.turnkey).toEqual({ organizationId: "", authProxyConfigId: "" });
+    expect(main.errors.map((e) => e.split(" ")[0])).toEqual([
+      "NEXT_PUBLIC_TURNKEY_ORGANIZATION_ID",
+      "NEXT_PUBLIC_TURNKEY_AUTH_PROXY_CONFIG_ID",
+    ]);
+    const bad = parseConfig({ turnkeyOrganizationId: "org-1" });
+    expect(bad.turnkey.organizationId).toBe(DEVNET_TURNKEY.organizationId);
+    expect(bad.errors[0]).toMatch(/not a Turnkey ID/);
   });
 
   it("records a bad cluster and falls back to devnet", () => {

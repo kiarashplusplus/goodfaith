@@ -1,6 +1,7 @@
 // A member's fallback client: every action the web app offers, from the command line against the RPC alone, so a
 // member is never locked out when the app or the fee sponsor is down. Signs with MEMBER_KEYPAIR (default
-// ~/.config/solana/id.json) and pays its own fees. Amounts are in whole tokens (40 or 12.5).
+// ~/.config/solana/id.json): a solana-keygen JSON file, or a file holding the key the app's "Export my wallet key"
+// shows (base58, or hex). Pays its own fees. Amounts are in whole tokens (40 or 12.5).
 //
 //   npm run member -- status [wallet]
 //   npm run member -- request <amount> <termDays> <cosignerWallet>
@@ -18,7 +19,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { address, createKeyPairSignerFromBytes, createNoopSigner, getBase64Decoder, signBytes, type Address, type Instruction } from '@solana/kit';
+import { address, createKeyPairSignerFromBytes, createKeyPairSignerFromPrivateKeyBytes, createNoopSigner, getBase58Encoder, getBase64Decoder, signBytes, type Address, type Instruction } from '@solana/kit';
 import { getCreateAssociatedTokenIdempotentInstruction } from '@solana-program/token';
 import { rpc, RPC_URL } from './lib.ts';
 
@@ -43,10 +44,23 @@ const amountOf = (s: string): bigint => {
 const fmt = (n: bigint) => (Number(n) / 1e6).toFixed(2);
 const when = (t: bigint) => (t === 0n ? '-' : t === prog.PERMANENT ? 'for good' : new Date(Number(t) * 1000).toISOString());
 
+/** The member's key from MEMBER_KEYPAIR's text: a JSON byte array, or an exported key in base58 or hex (32 or 64 bytes). */
+export async function memberSigner(text: string) {
+  const t = text.trim();
+  const bytes = t.startsWith('[')
+    ? Uint8Array.from(JSON.parse(t) as number[])
+    : /^(0x)?[0-9a-fA-F]+$/.test(t) && (t.replace(/^0x/, '').length === 64 || t.replace(/^0x/, '').length === 128)
+      ? Uint8Array.from(t.replace(/^0x/, '').match(/../g)!, (h) => parseInt(h, 16))
+      : new Uint8Array(getBase58Encoder().encode(t));
+  if (bytes.length === 64) return createKeyPairSignerFromBytes(bytes);
+  if (bytes.length === 32) return createKeyPairSignerFromPrivateKeyBytes(bytes);
+  throw new Error(`MEMBER_KEYPAIR holds a ${bytes.length}-byte key; expected 32 or 64 bytes`);
+}
+
 export async function run(argv: string[], out: (line: string) => void = console.log): Promise<void> {
   const [cmd = 'status', ...args] = argv;
   const keyPath = process.env.MEMBER_KEYPAIR ?? path.join(os.homedir(), '.config/solana/id.json');
-  const signer = await createKeyPairSignerFromBytes(Uint8Array.from(JSON.parse(fs.readFileSync(keyPath, 'utf8'))));
+  const signer = await memberSigner(fs.readFileSync(keyPath, 'utf8'));
   const [poolAddr] = await prog.findPoolPda(cfg.POOL_MINT);
   const pool = await prog.fetchPool(txRpc, poolAddr);
   if (!pool) throw new Error(`pool ${poolAddr} not found at ${RPC_URL}`);

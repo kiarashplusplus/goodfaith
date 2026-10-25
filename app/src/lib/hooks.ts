@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import { address, type Address, type TransactionSigner } from "@solana/kit";
 import { useClient } from "@solana/react";
-import { useConnectedWallet } from "@solana/kit-plugin-wallet/react";
+import { AuthState, useTurnkey } from "@turnkey/react-wallet-kit";
 import type { AppClient } from "@/app/providers";
 import { POOL_MINT } from "./config";
 import {
@@ -20,6 +20,7 @@ import {
 import type { TxRpc } from "./tx";
 import type { Pool } from "./program";
 import { getKoraPayer, koraEnabled } from "./kora";
+import { createTurnkeySigner, signRawWith, solanaAccountOf, type TurnkeySigner } from "./turnkey-signer";
 
 const noopSubscribe = () => () => {};
 /** False during SSR and the hydration render, true afterwards. Safe against hydration mismatches. */
@@ -34,13 +35,16 @@ export function useMounted(): boolean {
 export function useApp() {
   const client = useClient<AppClient>();
   const mounted = useMounted();
-  // The wallet client is a module singleton whose state can already differ from the server render
-  // when React hydrates, so wallet state is hidden until after mount.
-  const liveConnected = useConnectedWallet(client);
-  const connected = mounted ? liveConnected : null;
-  const signer = (connected?.signer ?? null) as TransactionSigner | null;
-  const wallet: Address | null = connected ? address(connected.account.address) : null;
-  return { client, rpc: client.rpc as unknown as TxRpc & AppClient["rpc"], connected, signer, wallet };
+  const { wallets, httpClient, authState } = useTurnkey();
+  // Turnkey restores the session from the browser after hydration, so wallet state is hidden until after mount.
+  const signedIn = mounted && authState === AuthState.Authenticated;
+  const account = signedIn ? solanaAccountOf(wallets) : null;
+  const signer = useMemo<TurnkeySigner | null>(
+    () => (account && httpClient ? createTurnkeySigner(address(account), signRawWith(httpClient as never)) : null),
+    [account, httpClient],
+  );
+  const wallet: Address | null = signer ? signer.address : null;
+  return { client, rpc: client.rpc as unknown as TxRpc & AppClient["rpc"], signedIn, signer: signer as TransactionSigner | null, wallet };
 }
 
 const POLL = { refreshInterval: 10_000, revalidateOnFocus: true };
