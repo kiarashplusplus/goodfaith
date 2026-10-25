@@ -15,6 +15,9 @@ Interest-free, fee-free community loans on Solana, funded by gifts. Texas reside
 - **One person, one membership:** an identity check issues a pass on the fund's own gatekeeper network, and a lost
   wallet can be recovered without losing the membership.
 - **Fees are covered:** a fee sponsor (Kora) pays network fees, so members need no SOL.
+- **Cash at MoneyGram:** members can turn USDC into cash at a MoneyGram counter, or cash into USDC, from the app's
+  Checking page. MoneyGram runs its own ID check and charges its own fee (its test environment quotes $3). This works
+  on devnet against MoneyGram's sandbox; see [app/README.md](app/README.md#cash-at-moneygram).
 - **Everything is public and on chain:** settings changes wait out a notice period, and the white paper's appendix
   lists how to check what is deployed.
 

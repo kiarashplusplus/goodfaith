@@ -112,7 +112,10 @@ mint, the cluster, an exact amount, a recipient other than the wallet) and build
 account, which is paid directly, or a wallet, whose associated account is used. The transfer carries MoneyGram's
 reference as a memo, which the sponsor pays for (one memo of at most 128 bytes, only next to the wallet's own transfer). Sandbox: origin
 `https://playground.xramps.moneygram.com` and a `ramps_sk_sbox_` key, devnet only; the playground needs realistic test
-details (an 8-digit, non-sequential Texas licence number) before it asks for the transfer.
+details (an 8-digit, non-sequential Texas licence number) before it asks for the transfer. A cash-in also asks for a
+Social Security number and a secondary ID, and the playground rejects numbers outside the issued SSN ranges. A sandbox
+cash-out has been run end to end from the test wallet in `keys/devnet-test-member.json.enc`: 10 USDC to MoneyGram's
+account, reference number issued for 7.00 USD in Texas.
 
 ## Layout
 
