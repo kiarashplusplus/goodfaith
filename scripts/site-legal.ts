@@ -131,22 +131,98 @@ ${html}
 `;
 }
 
+// ---------- the home page's derived parts: FAQ structured data and llms.txt ----------
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+/** Visible text of an HTML fragment: tags dropped, entities decoded, whitespace collapsed. */
+export const text = (html: string) =>
+  html.replace(/<[^>]+>/g, '').replace(/&(\w+|#\d+);/g, (m, e: string) => ENTITIES[e] ?? m).replace(/\s+/g, ' ').trim();
+
+/** The Questions section's visible questions and answers, in order. */
+export function faqOf(indexHtml: string): { q: string; a: string }[] {
+  const sec = indexHtml.match(/<section id="faq"[\s\S]*?<\/section>/);
+  if (!sec) throw new Error('index.html has no Questions section (#faq)');
+  return [...sec[0].matchAll(/<details>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/g)].map((m) => ({ q: text(m[1]), a: text(m[2]) }));
+}
+
+const FAQ_START = '<!-- faq-ld:start (generated from the Questions section by scripts/site-legal.ts; do not edit by hand) -->';
+const FAQ_END = '<!-- faq-ld:end -->';
+
+/** index.html with its FAQPage JSON-LD rebuilt from the visible questions, so the two always say the same thing. */
+export function withFaqLd(indexHtml: string): string {
+  const i = indexHtml.indexOf(FAQ_START), j = indexHtml.indexOf(FAQ_END);
+  if (i < 0 || j < i) throw new Error('index.html is missing the faq-ld markers');
+  const ld = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqOf(indexHtml).map(({ q, a }) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
+  };
+  const block = `${FAQ_START}\n  <script type="application/ld+json">\n  ${JSON.stringify(ld).replace(/</g, '\\u003c')}\n  </script>\n  `;
+  return indexHtml.slice(0, i) + block + indexHtml.slice(j);
+}
+
+/** A plain-text summary of the home page for AI tools: the data-llms sections, in page order, without the widgets. */
+export function llmsTxt(indexHtml: string): string {
+  const desc = indexHtml.match(/<meta name="description" content="([^"]*)">/)?.[1] ?? '';
+  const body = indexHtml.replace(/<!-- llms:skip -->[\s\S]*?<!-- \/llms:skip -->/g, '');
+  const out = [
+    '# Good Faith',
+    '',
+    `> ${text(desc)}`,
+    '',
+    'Status: test network only. Good Faith runs on Solana devnet with test money; nothing moves real dollars yet.',
+    '',
+  ];
+  for (const m of body.matchAll(/<section[^>]*data-llms="([^"]+)"[^>]*>([\s\S]*?)<\/section>/g)) {
+    out.push(`## ${m[1]}`, '');
+    const inner = m[2]
+      .replace(/<h2[^>]*>[\s\S]*?<\/h2>/g, '')
+      .replace(/^\s*<h3[^>]*>[\s\S]*?<\/h3>/, '') // a tab panel's own heading repeats the section's
+      .replace(/<\/label>\s*<p>/g, ' ') // a checklist row: its label and its explanation on one bullet
+      .replace(/<summary>([\s\S]*?)<\/summary>/g, '\n### $1\n')
+      .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/g, '\n### $1\n')
+      .replace(/<li[^>]*>\s*/g, '\n- ')
+      .replace(/<\/(p|li|ul|ol|div|details)>/g, '\n');
+    for (const line of inner.split('\n').map((l) => (l.trim().startsWith('- ') || l.trim().startsWith('### ') ? l.trim().slice(0, 2) + text(l.trim().slice(2)) : text(l))))
+      if (line && line !== '-') out.push(line.startsWith('##') ? `\n${line}` : line);
+    out.push('');
+  }
+  out.push(
+    '## Links',
+    '',
+    '- Home: https://goodfaith.fi/',
+    '- Privacy notice: https://goodfaith.fi/privacy.html',
+    '- Terms of use: https://goodfaith.fi/terms.html',
+    '- White paper: https://github.com/kiarashplusplus/goodfaith/blob/main/docs/whitepaper.md',
+    '- Source code: https://github.com/kiarashplusplus/goodfaith',
+    '',
+  );
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 if (process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]))) {
   const dir = path.join(site, 'legal');
   const names = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)).sort();
   let stale = 0;
-  for (const name of names) {
-    const html = page(name, parse(fs.readFileSync(path.join(dir, `${name}.md`), 'utf8')));
-    const target = path.join(site, `${name}.html`);
+  const outputs: [string, string, string][] = names.map((name) => [
+    `${name}.html`,
+    page(name, parse(fs.readFileSync(path.join(dir, `${name}.md`), 'utf8'))),
+    `site/legal/${name}.md or launch.json`,
+  ]);
+  const index = fs.readFileSync(path.join(site, 'index.html'), 'utf8');
+  outputs.push(['index.html', withFaqLd(index), 'its Questions section (the FAQ structured data)']);
+  outputs.push(['llms.txt', llmsTxt(withFaqLd(index)), 'index.html']);
+  for (const [file, content, source] of outputs) {
+    const target = path.join(site, file);
     const current = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : null;
     if (check) {
-      if (current !== html) { console.error(`  site/${name}.html is out of date with site/legal/${name}.md or launch.json`); stale++; }
-    } else if (current !== html) {
-      fs.writeFileSync(target, html);
-      console.log(`wrote site/${name}.html`);
+      if (current !== content) { console.error(`  site/${file} is out of date with ${source}`); stale++; }
+    } else if (current !== content) {
+      fs.writeFileSync(target, content);
+      console.log(`wrote site/${file}`);
     }
   }
   if (check && stale) { console.error('Run: cd scripts && npm run site-legal'); console.error('SITE-LEGAL FAIL'); process.exit(1); }
-  console.log(`${names.length} legal page(s) ${check ? 'up to date' : 'built'}`);
+  console.log(`${names.length} legal page(s), the FAQ structured data and llms.txt ${check ? 'up to date' : 'built'}`);
   console.log(check ? 'SITE-LEGAL PASS' : 'SITE-LEGAL DONE');
 }

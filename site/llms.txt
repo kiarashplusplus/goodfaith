@@ -1,0 +1,96 @@
+# Good Faith
+
+> Interest-free, fee-free community loans for Texas residents 18 or older, funded by gifts and backed by a friend who co-signs. See what you need, try a loan, and read what happens if it isn't repaid.
+
+Status: test network only. Good Faith runs on Solana devnet with test money; nothing moves real dollars yet.
+
+## Before you start: what you need
+
+Before you start, here is what you need. Tick what applies to you.
+- I live in Texas. The state on your government ID must be Texas; we use that as a proxy for where you live.
+- I'm 18 or older. Your ID's birth date is checked once. We keep the result, not the date.
+- I can do a one-time ID check with a selfie. Our verification partner, Persona, checks a government ID and a selfie. Good Faith keeps only a keyed fingerprint of the ID so one person holds one membership; your documents are never stored by us or put on the blockchain.
+- I have, or can install, a Solana wallet. Phantom or Solflare, both free. You don't need any SOL: a fee sponsor pays network fees.
+- To borrow: a friend will co-sign. A different person who has also verified, and who puts down a deposit of 25% of the loan.
+To turn USDC into cash, MoneyGram runs an identity check of its own and you show the same ID at the counter. To pay cash in, MoneyGram also asks for your Social Security number. Optional: an email address for notices about your membership, such as a recovery request or a bar.
+One membership per person, one wallet per membership. A lost wallet can be recovered without losing your membership; it takes a few days and you are told first.
+
+## Borrowing
+
+- Ask. Choose an amount and a term of up to 180 days, and name your co-signer. A request nobody co-signs expires after 7 days.
+- Your friend co-signs. They approve the exact terms and put down the deposit.
+- The USDC arrives in your wallet.
+- Repay any amount, from any wallet, until the cutoff: the due date plus 30 days of grace. You repay exactly what you borrowed.
+- Your limit grows. Each loan repaid on time that ran at least 30 days raises it by 100, at most once every 30 days, up to 500.
+First loan up to 150 USDC. For your first 30 days as a member (and after a wallet recovery or an unpaid loan) you stay on the first-loan limit. A loan that is not repaid resets it.
+
+## Co-signing
+
+- Approve the exact terms you are shown: amount, term, grace period, deposit and bar.
+- Put down 25% of the loan as a deposit, held in escrow by the program.
+- Repaid on time: the deposit is yours again, in full.
+- Not repaid: the deposit covers what is missing, and comes back only if the borrower later pays back. If the fund still lost money, you can't borrow or co-sign for 1 year, ending sooner if the fund is paid back.
+You can guarantee at most 2 loans at a time. Only co-sign for someone you trust, with money you could lose: a guarantee is a real commitment and can strain a friendship.
+
+## Giving
+
+- Donate USDC to the shared fund. Anyone can give; you don't need to be a member.
+- It is a gift: you earn nothing and cannot take it back, which lets the fund lend at zero cost.
+- It only leaves the fund as loans, under the rules of a public program on the Solana blockchain. Settings changes are announced ahead of time, and anyone can check what is deployed.
+
+## Cash at MoneyGram
+
+Cash-out and cash-in powered by MoneyGram, from the app's Checking page.
+- Cash out: MoneyGram checks your name, phone, date of birth, address and government ID, and shows its fee and rate before you commit.
+- Send the USDC from the app; the fee sponsor pays the network fee.
+- Collect US dollars at a MoneyGram location with your reference number and that ID. Keep the reference number private; it is never put on the blockchain.
+Cash in: pay cash at a MoneyGram location and receive USDC, for example to repay. MoneyGram also asks for your Social Security number and a second ID.
+Fees: MoneyGram charges its own fee; Good Faith adds nothing. Its test environment quoted $3 on a cash-out. To confirm: production fees
+Where: MoneyGram's test environment offers Texas pickup locations. To confirm: production coverage in Texas, cash-out and cash-in
+
+## What a loan looks like, and what happens if it isn't repaid
+
+See what you repay, what your co-signer puts down, and what happens in each case.
+
+### Example: 150 USDC for 90 days
+You repay exactly 150 USDC, any amount at a time, by the cutoff: the due date plus 30 days of grace. Your co-signer puts down 37.50 USDC (25%).
+- Repaid on time: your co-signer gets the 37.50 back in full, and your limit can grow by 100 for the next loan.
+- Paid back after the cutoff: the loan is settled at the cutoff and the deposit covers what it can. When you pay back in full, the fund is paid first and then your co-signer gets the 37.50 back. Your bar becomes 90 days from when you pay back, your co-signer's ends, and your limit goes back to the first-loan limit.
+- Not repaid: you can't take new loans for 2 years. Your co-signer's 37.50 covers part of the loss and is lost to them unless you pay back later; because the fund still lost 112.50, they can't borrow or co-sign for 1 year. There is no interest and no fee in any case.
+
+## Questions
+
+### Is it really 0% interest?
+Yes. You repay exactly what you borrowed. There is no interest, no fee and no late penalty, and the program has no setting that could add one.
+
+### What happens if I can't repay on time?
+Nothing costs money. Paying back after the cutoff means no new loans for 90 days from when you pay back. Not paying back means no new loans for 2 years, and your co-signer's deposit covers part of the loss.
+
+### What does my co-signer risk?
+Their deposit of 25% of the loan, which comes back in full if you repay on time. If you don't, it covers what is missing, and they can't borrow or co-sign for 1 year if the fund still lost money, ending sooner if the fund is paid back.
+
+### How much can I borrow?
+Your first loan can be up to 150 USDC. Each loan repaid on time raises your limit by 100, up to 500, for terms of up to 180 days plus 30 days of grace.
+
+### Do I need crypto experience or SOL?
+No. You need a free Solana wallet such as Phantom or Solflare. A fee sponsor pays network fees, so you need no SOL, and the app shows your USDC like a checking account.
+
+### How do I turn USDC into cash?
+From the app's Checking page, at a MoneyGram location. MoneyGram checks your ID, shows its own fee before you commit, and gives you a reference number to collect US dollars with that ID. Good Faith adds no fee.
+
+### Why only Texas?
+The fund starts in one state so its loans and co-signer terms can be reviewed under that state's law. Other states may follow, one at a time.
+
+### What data do you keep about me?
+A keyed fingerprint of your ID, a random person id, your wallet addresses and, if you give one, an email. Persona holds your ID document and selfie; we never see them. Your wallet, loans and any bar are public on the blockchain. See the privacy notice.
+
+### Is Good Faith live?
+Not yet. It runs on a Solana test network with test money only, while the legal entity, the terms and the questions for a Texas attorney are settled. See the terms of use.
+
+## Links
+
+- Home: https://goodfaith.fi/
+- Privacy notice: https://goodfaith.fi/privacy.html
+- Terms of use: https://goodfaith.fi/terms.html
+- White paper: https://github.com/kiarashplusplus/goodfaith/blob/main/docs/whitepaper.md
+- Source code: https://github.com/kiarashplusplus/goodfaith
