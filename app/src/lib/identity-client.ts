@@ -8,7 +8,7 @@ import {
   type TransactionSigner,
 } from "@solana/kit";
 import type { StatusView, PreparedTx } from "./identity/service";
-import { proofMessage } from "./identity/wallet-proof";
+import { proofMessage, type ProofPurpose } from "./identity/wallet-proof";
 
 export type { StatusView, PreparedTx };
 
@@ -19,6 +19,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
+/** Anyone's view of a wallet: no check reason and no check link (`detailsHidden` says when there are some). */
 export const fetchIdentityStatus = (wallet: Address) => call<StatusView>(`/api/identity/status?wallet=${wallet}`);
 export const prepareJoin = (wallet: Address) =>
   call<PreparedTx>("/api/identity/join", { method: "POST", body: JSON.stringify({ wallet }) });
@@ -26,10 +27,15 @@ export const prepareJoin = (wallet: Address) =>
 type MessageCapable = { signMessage?: (message: Uint8Array) => Promise<Uint8Array> };
 
 /** The dated proof of control every wallet-acting route wants, signed now. */
-async function proof(signer: TransactionSigner, walletClient: MessageCapable | undefined) {
-  const message = proofMessage(signer.address, Math.floor(Date.now() / 1000));
+async function proof(signer: TransactionSigner, walletClient: MessageCapable | undefined, purpose: ProofPurpose = "identity") {
+  const message = proofMessage(signer.address, Math.floor(Date.now() / 1000), purpose);
   const signature = getBase64Decoder().decode(await signText(signer, walletClient, message));
   return { wallet: signer.address, message, signature };
+}
+
+/** The wallet's own view, with the check's reason and its link: the wallet signs a dated "status" message. */
+export async function fetchIdentityDetails(signer: TransactionSigner, walletClient: MessageCapable | undefined): Promise<StatusView> {
+  return call<StatusView>("/api/identity/status", { method: "POST", body: JSON.stringify(await proof(signer, walletClient, "status")) });
 }
 
 /**

@@ -52,6 +52,12 @@ async function api<T>(path: string, init: RequestInit = {}, expectStatus = 200):
   return body;
 }
 const status = (w: Address) => api<StatusView>(`/api/identity/status?wallet=${w}`);
+/** The wallet's own view, with the check's reason and link: signed with the "status" purpose. */
+async function details(w: KeyPairSigner, purpose: 'status' | 'identity' = 'status', expectStatus = 200) {
+  const message = proofMessage(w.address, Math.floor(Date.now() / 1000), purpose);
+  const sig = await signBytes(w.keyPair.privateKey, new TextEncoder().encode(message));
+  return api<StatusView>('/api/identity/status', { method: 'POST', body: JSON.stringify({ wallet: w.address, message, signature: getBase64Decoder().decode(sig) }) }, expectStatus);
+}
 async function start(w: KeyPairSigner, tamper = false, route: 'start' | 'link' = 'start') {
   const message = proofMessage(w.address, Math.floor(Date.now() / 1000));
   const sig = await signBytes(w.keyPair.privateKey, new TextEncoder().encode(tamper ? message + '!' : message));
@@ -152,6 +158,8 @@ row('start with a tampered signature', '401');
 }
 const s1 = await start(w1);
 assert.ok(s1.url.includes(s1.inquiryId));
+assert.equal((await status(w1.address)).url, undefined, 'the public status does not give out the check link');
+assert.equal((await details(w1)).url, s1.url, 'the wallet itself gets its link back');
 assert.deepEqual(await start(w1), s1, 'a second start resumes the same inquiry');
 assert.equal((await status(w1.address)).next, 'wait');
 assert.equal((await decide(s1.inquiryId, 'approved')).result, 'issued');
@@ -197,7 +205,7 @@ const sX = await start(wX);
 assert.equal((await decide(sX.inquiryId, 'approved', { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-x` })).result, 'issued');
 const l1b = await start(w1, false, 'link');
 assert.equal((await decide(l1b.inquiryId, 'approved', { ...MOCK_FIELDS_TX, idNumber: `TX-${runId}-x` })).result, 'issued');
-assert.equal((await status(w1.address)).reason, 'That document already belongs to another membership.');
+assert.equal((await details(w1)).reason, 'That document already belongs to another membership.');
 row('link a renewed document', 'same person from a new wallet after linking: recover', `someone else's document: refused`);
 
 // ---------- the same person, new wallet: the membership moves after the recovery delay ----------
@@ -276,9 +284,20 @@ assert.equal(st.next, 'blocked');
 const w4 = await generateKeyPairSigner();
 const s4 = await start(w4);
 assert.equal((await decide(s4.inquiryId, 'approved', { ...MOCK_FIELDS_TX, idNumber: 'CA-1', issuingState: 'CA' })).result, 'ineligible');
-assert.equal((await status(w4.address)).reason, 'Good Faith is for Texas residents only.');
+// anyone can ask for a wallet's status, so the reason (a person's age or state) is only in the wallet's own view
+const pub4 = await status(w4.address);
+assert.equal(pub4.reason, undefined, 'the public status carries no reason');
+assert.equal(pub4.detailsHidden, true);
+assert.equal((await details(w4)).reason, 'Good Faith is for Texas residents only.');
+// purposes do not cross: an identity-check proof does not read details, and a status proof cannot start a check
+await details(w4, 'identity', 401);
+{
+  const message = proofMessage(w4.address, Math.floor(Date.now() / 1000), 'status');
+  const sig = getBase64Decoder().decode(await signBytes(w4.keyPair.privateKey, new TextEncoder().encode(message)));
+  await api('/api/identity/start', { method: 'POST', body: JSON.stringify({ wallet: w4.address, message, signature: sig }) }, 401);
+}
 assert.equal((await rpc.getAccountInfo(await gatewayTokenAddress(w4.address, pool.gatekeeperNetwork), { encoding: 'base64' }).send()).value, null, 'no pass for an ineligible person');
-row('declined / out of state', `w3 ${st.reason}`, 'w4 Good Faith is for Texas residents only. (no pass issued)');
+row('declined / out of state', `w3 ${(await details(w3)).reason}`, 'w4 Good Faith is for Texas residents only. (no pass issued)', 'reasons only with the wallet\'s signature');
 
 // ---------- a permanent bar: passes frozen (not revoked), the person cannot come back on a new wallet; a lift thaws them ----------
 // A second person (different ID) joins and is then barred; the first person stays eligible for cranker-e2e.
@@ -299,7 +318,7 @@ assert.equal((await status(w6.address)).pass?.state, 'frozen');
 const w5 = await generateKeyPairSigner();
 const s5 = await start(w5);
 assert.equal((await decide(s5.inquiryId, 'approved', other)).result, 'ineligible');
-assert.equal((await status(w5.address)).reason, 'This person can no longer use Good Faith.');
+assert.equal((await details(w5)).reason, 'This person can no longer use Good Faith.');
 // the bar is lifted (lift_bar, or a pay-back): the pass thaws and works again
 const thaw = await api<{ banned: boolean; unfrozen: string[] }>('/api/identity/ban', { method: 'POST', headers: { 'x-identity-admin-key': adminKey }, body: JSON.stringify({ wallet: w6.address, until: '0' }) });
 assert.equal(thaw.banned, false);

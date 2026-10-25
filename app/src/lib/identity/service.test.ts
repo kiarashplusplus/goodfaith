@@ -170,7 +170,11 @@ describe("start", () => {
     const a = await svc.start(w1);
     expect(a.status).toBe("pending");
     expect(await svc.start(w1)).toEqual(a);
-    expect(await svc.status(w1)).toMatchObject({ status: "pending", next: "wait", url: a.url });
+    // anyone may ask for a wallet's status, so the check's one-time link is only in the wallet's own (signed) view
+    const pub = await svc.status(w1);
+    expect(pub).toMatchObject({ status: "pending", next: "wait", detailsHidden: true });
+    expect(pub.url).toBeUndefined();
+    expect(await svc.status(w1, { details: true })).toMatchObject({ status: "pending", url: a.url });
   });
 });
 
@@ -208,6 +212,13 @@ describe("webhook", () => {
     expect(gk.issued.size).toBe(0);
     expect(await approve(w2, { ...MOCK_FIELDS_TX, idNumber: "2", birthdate: "2010-01-01" })).toBe("ineligible");
     expect(await store.getWallet(w2)).toMatchObject({ reason: "You must be 18 or older." });
+    // the reason says a person's age or state: not in the public view, only in the wallet's own
+    for (const w of [w1, w2]) {
+      const pub = await svc.status(w);
+      expect(pub).toMatchObject({ status: "ineligible", next: "blocked", detailsHidden: true });
+      expect(pub.reason).toBeUndefined();
+    }
+    expect((await svc.status(w2, { details: true })).reason).toBe("You must be 18 or older.");
     const w3 = (await generateKeyPairSigner()).address;
     const { inquiryId } = await svc.start(w3);
     expect(await svc.handleWebhook(new Headers(provider.sign()), provider.decide(inquiryId, "needs_review"))).toBe("review");
@@ -343,6 +354,24 @@ describe("webhook", () => {
     expect((await svc.prepareRebind(w2)).kind).toBe("review");
     const sent = notes.sent.filter((e) => e.kind === "recovery_requested").map((e) => e.contact);
     expect(sent.sort()).toEqual(["second@example.test", "thief@example.test"]);
+  });
+
+  it("clears the previous email from the records of the person's older wallets when it is removed", async () => {
+    await svc.start(w1, "first@example.test");
+    const { inquiryId } = (await store.getWallet(w1))!;
+    expect(await svc.handleWebhook(new Headers(provider.sign()), provider.decide(inquiryId, "approved"))).toBe("issued");
+    const id = (await store.getWallet(w1))!.personId!;
+    // the membership has moved to w2 (same person, same document); w1's record still holds the email
+    await svc.start(w2);
+    const second = (await store.getWallet(w2))!;
+    expect(await svc.handleWebhook(new Headers(provider.sign()), provider.decide(second.inquiryId, "approved"))).toBe("issued");
+    const [pda] = await findPersonPda(POOL, fromHex(id));
+    chain.persons.set(pda, { wallet: w2 });
+    expect((await store.getWallet(w1))!.contact).toBe("first@example.test");
+    expect(await svc.setContact(w2, undefined)).toEqual({ changed: true });
+    expect((await store.getPerson(id))!.contact).toBeUndefined();
+    expect((await store.getWallet(w1))!.contact).toBeUndefined();
+    expect((await store.getWallet(w2))!.contact).toBeUndefined();
   });
 
   it("renews a pass for a member in good standing, not for a barred one", async () => {

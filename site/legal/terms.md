@@ -1,6 +1,6 @@
 ---
 title: Terms of use
-version: 0.1
+version: 0.2
 effective: 2026-10-25
 status: Draft for counsel's review. Good Faith runs on a test network with test money only.
 ---
@@ -25,7 +25,7 @@ The test fund may run with different settings from the launch settings in these 
 
 ## Who can use Good Faith
 
-To join, borrow or co-sign, you must be a **Texas resident, 18 or older**, and pass a one-time identity check with our verification partner, Persona. Persona checks a government ID, your age, and that the ID was issued in Texas. We use a Texas ID as a sign of where you live; it is not proof. Do not join if you do not live in Texas.
+To join, borrow or co-sign, you must be a **Texas resident, 18 or older**, and pass a one-time identity check with our verification partner, Persona. Persona checks a government ID, your age, and that the state on the ID is Texas. We use that as a sign of where you live; it is not proof. [[TO CONFIRM: whether the check should use the state that issued the ID rather than the address state on it]] Do not join if you do not live in Texas.
 
 **One verified person, one membership.** We keep a keyed fingerprint of your ID so the same ID is recognised if it is used again. Each membership has one wallet at a time. Do not hold more than one membership or join for someone else.
 
@@ -189,4 +189,5 @@ You may leave an email for notices about your membership. It can be changed only
 
 These terms are versioned, and every change is listed below with its date. We post a new version here before it takes effect and tell members who left a contact. [[TO CONFIRM: notice period for changes to these terms]] A change to these terms never changes an open loan.
 
+- 0.2 (2026-10-25): the Texas check is the state on your ID, as the identity service reads it.
 - 0.1 (2026-10-25): first draft.

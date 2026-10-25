@@ -78,8 +78,15 @@ export type ServiceDeps = {
 export type StatusView = {
   /** "none" before any check; otherwise the wallet record's status. */
   status: WalletRecord["status"] | "none";
+  /** Why a check ended as it did, or why a member wallet is blocked. A check's reason is a detail (below). */
   reason?: string;
+  /** The provider's one-time link for a pending check. A detail. */
   url?: string;
+  /**
+   * True when this view leaves details out: anyone can ask for a wallet's status, so the check's reason (which can
+   * say a person's age or state) and the pending check's link are only in the view the wallet itself signs for.
+   */
+  detailsHidden?: boolean;
   /** The person behind the approved check, as the chain sees it. */
   person: null | {
     onChain: boolean;
@@ -390,6 +397,18 @@ export class IdentityService {
     const previous = person.contact;
     await this.d.store.putPerson({ ...person, contact });
     await this.update(rec, { contact });
+    // Older wallet records of the person may still hold the previous email (a wallet keeps the contact it had):
+    // replace those copies so a removed or changed email does not linger. A contact given on another wallet's own
+    // check is that wallet's, and a wallet asking to recover the membership keeps its own: both stay as they are.
+    if (previous) {
+      const open = await this.d.store.getRecovery(rec.personId);
+      const requester = open && !open.closedAs ? open.newWallet : null;
+      for (const w of await this.d.store.walletsOf(rec.personId)) {
+        if (w === wallet || w === requester) continue;
+        const r = await this.d.store.getWallet(w as Address);
+        if (r && r.contact === previous) await this.update(r, { contact });
+      }
+    }
     if (previous)
       await this.notify("contact_changed", rec.personId, "The contact for your Good Faith notices was changed from this wallet.", {
         wallet,
@@ -414,7 +433,17 @@ export class IdentityService {
     return this.update(rec, { status: "issued", personId, linkTo: undefined, url: undefined, reason: undefined });
   }
 
-  async status(wallet: Address): Promise<StatusView> {
+  /** A wallet's standing. Without `details` (the wallet's own signed request) the check's reason and link are left out. */
+  async status(wallet: Address, opts: { details?: boolean } = {}): Promise<StatusView> {
+    const view = await this.fullStatus(wallet);
+    if (opts.details) return view;
+    const { url, reason, ...rest } = view;
+    // A replaced member wallet is public on chain; that reason stays.
+    const publicReason = view.member?.retired ? reason : undefined;
+    return { ...rest, ...(publicReason ? { reason: publicReason } : {}), detailsHidden: !!url || (!!reason && !publicReason) };
+  }
+
+  private async fullStatus(wallet: Address): Promise<StatusView> {
     const rec = await this.d.store.getWallet(wallet);
     const pool = await this.pool();
     const member = pool ? await fetchMember(this.d.rpc, pool.address, wallet) : null;

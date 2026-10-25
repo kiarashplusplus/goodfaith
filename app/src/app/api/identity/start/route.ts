@@ -1,6 +1,7 @@
 /**
  * Starts the hosted identity check for a wallet that proves control by signing a dated message. An optional `contact`
- * (an email, up to 120 characters) is where notices about the membership go; it is stored, never shown or sent on.
+ * (an email, up to 120 characters) is where notices about the membership go; it is stored and sent only to the notice
+ * relay with each notice (`lib/identity/notify.ts`), never shown or published.
  */
 import type { NextRequest } from "next/server";
 import { identity } from "@/lib/identity/env";

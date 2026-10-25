@@ -29,7 +29,15 @@ anything else (`IDENTITY_DB_URL`, Phase 6), memory in tests.
 ## Verification
 
 1. The wallet signs a dated message proving control (`wallet-proof.ts`) and `start` opens a hosted check with the
-   provider (Persona in production, a mock on test networks).
+   provider (Persona in production, a mock on test networks). The message's first line names its purpose: "Good Faith
+   identity check" for start, link, rebind, renew and contact; "Good Faith status" only for reading a check's
+   details. A proof for one purpose is refused for the other, so a status signature can never start a check (which
+   is what attaches an identity to a wallet). Both are valid for five minutes.
+
+   `GET /api/identity/status?wallet=` answers anyone (the Join page polls it) with what the chain shows anyway:
+   membership, pass, bars, a pending move, `next`. It leaves out the check's `reason` (which can say a person's age
+   or state) and a pending check's one-time `url`, and sets `detailsHidden`. `POST /api/identity/status` with the
+   wallet's "status" proof returns them too.
 2. The provider's webhook reports the outcome. On approval the service reads the verified fields, enforces Texas and
    18+, and computes the fingerprint under every key in the keyring (newest first).
 3. A known fingerprint resolves to its person; an unknown one creates a person. A person barred for good is

@@ -103,7 +103,7 @@ The sponsor's money is bounded and kept apart by purpose:
 
 ### One verified person, one membership
 
-- **The check.** Our verification partner (Persona) checks a government ID, age, and that the ID was issued in Texas (a proxy for residency, not proof). Our server learns the outcome and a few ID fields, never the selfie or documents; Persona keeps those under its own policy, which we will publish before launch.
+- **The check.** Our verification partner (Persona) checks a government ID, age, and that the state on the ID is Texas (the address state Persona reads from it; a proxy for residency, not proof). Our server learns the outcome and a few ID fields, never the selfie or documents; Persona keeps those under its own policy, which we will publish before launch.
 - **The fingerprint, off chain.** From the ID number, state and birth date the server computes a keyed fingerprint, so the same document is recognised again. Whoever holds the key and knows someone's ID fields can tell whether they are a member, so a leaked key is treated as a breach.
 - **The person id, on chain.** The program keeps one **person** per random id and one wallet per person; eligibility, loans, guarantees and caps live on the person. The chain shows what the id did; anyone who learns your wallet can read that history. "Private" means the documents and the fingerprint stay off chain, not that the chain is anonymous.
 - **The pass and the membership.** The server issues a pass on the fund's own gatekeeper network, which the program checks on every request and co-sign. Joining is a transaction signed by you and by the fund's identity issuer, and it needs a valid pass. **Joining and borrowing need both keys**: the issuer's signature and the gatekeeper's pass.

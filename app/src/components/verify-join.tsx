@@ -6,6 +6,7 @@ import type { Address } from "@solana/kit";
 import { Button, Card, GhostButton, Notice, TxStatus } from "./ui";
 import { useApp, useMember, usePool, useSponsor } from "@/lib/hooks";
 import {
+  fetchIdentityDetails,
   fetchIdentityStatus,
   prepareJoin,
   prepareRebind,
@@ -35,6 +36,10 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
   const [starting, setStarting] = useState(false);
   const [contact, setContactText] = useState<string | null>(null);
   const [contactNote, setContactNote] = useState<string | null>(null);
+  // The check's reason and link are not in the public status; the wallet signs once to see them.
+  const [details, setDetails] = useState<StatusView | null>(null);
+  const [startedUrl, setStartedUrl] = useState<string | null>(null);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
   const status = useSWR(["identity-status", wallet], () => fetchIdentityStatus(wallet), {
     refreshInterval: (d?: StatusView) => (d?.next === "wait" ? 4_000 : 20_000),
     revalidateOnFocus: true,
@@ -43,8 +48,24 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
 
   if (!pool.data) return <Notice tone="info">{pool.isLoading ? "Loading the fund..." : "The fund isn't set up yet."}</Notice>;
   if (status.error) return <Notice tone="warn">{friendlyError(status.error)}</Notice>;
-  const s = status.data;
-  if (!s) return <p className="text-sm text-stone-500">Checking your membership...</p>;
+  const live = status.data;
+  if (!live) return <p className="text-sm text-stone-500">Checking your membership...</p>;
+  // Signed details count only while the check is still where they found it.
+  const mine = details && details.status === live.status ? details : null;
+  const s: StatusView = {
+    ...live,
+    reason: mine?.reason ?? live.reason,
+    url: mine?.url ?? (live.status === "pending" ? (startedUrl ?? undefined) : undefined),
+  };
+  const hidden = !!live.detailsHidden && !mine && !(live.status === "pending" && startedUrl);
+  const showDetails = async () => {
+    setDetailsError(null);
+    try {
+      setDetails(await fetchIdentityDetails(signer!, walletClient));
+    } catch (e) {
+      setDetailsError(friendlyError(e));
+    }
+  };
 
   const refresh = () => Promise.all([status.mutate(), member.mutate()]);
   const start = async () => {
@@ -52,6 +73,7 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
     setStarting(true);
     try {
       const { url } = await startIdentityCheck(signer!, walletClient);
+      setStartedUrl(url);
       window.open(url, "_blank", "noopener");
       await status.mutate();
     } catch (e) {
@@ -111,6 +133,15 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
           <Notice tone="warn">{s.reason ?? "The identity check was not approved."}</Notice>
         )}
         {s.status === "error" && <Notice tone="error">{s.reason ?? "Something went wrong. Please try again."}</Notice>}
+        {hidden && (
+          <div className="mt-3">
+            <GhostButton disabled={!signer} onClick={showDetails}>
+              {s.status === "pending" ? "Get my check link" : "Show details"}
+            </GhostButton>
+            <p className="mt-1 text-xs text-stone-500">You sign a message so only you can see your check&apos;s details.</p>
+            {detailsError && <Notice tone="error">{detailsError}</Notice>}
+          </div>
+        )}
         {(s.status === "none" || s.status === "error" || s.status === "declined") && s.next !== "done" && (
           <div className="mt-3">
             <Button disabled={!signer || starting} onClick={start}>

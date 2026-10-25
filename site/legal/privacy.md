@@ -1,6 +1,6 @@
 ---
 title: Privacy notice
-version: 0.1
+version: 0.2
 effective: 2026-10-25
 status: Draft for counsel's review. Good Faith runs on a test network with test money only.
 ---
@@ -69,7 +69,7 @@ Solana is a public ledger. Anyone can read it, and nobody, including us, can cha
 
 Your person id is not anonymous. Anyone who learns your wallet can read this history, and our database can link the id back to your record. The operator publishes the written reasons behind bar lifts and forgiveness. [[TO CONFIRM: how published reasons avoid identifying members]]
 
-Our app's status check also answers for any wallet address. Someone who knows your wallet can see whether it passed the check and, if it was declined, the short reason, such as age or state. [[TO CONFIRM: whether the status check will require a wallet signature before launch]]
+Our app's status check answers for any wallet address, but only with what the blockchain shows anyway: whether the wallet is a member, its pass and any bar. The reason a check was declined, which can say your age or state, and the link to an open check are shown only after your wallet signs a message.
 
 ## Who we share with
 
@@ -103,7 +103,7 @@ No system is perfectly safe: a stored fingerprint and your email could leak.
 ## Your choices and rights
 
 - You can choose not to give an email. Without notices, a recovery request you did not make is harder to spot.
-- You can change or remove your email from your linked wallet at any time. [[TO CONFIRM: removing an email also clears copies kept on records of older wallets]]
+- You can change or remove your email from your linked wallet at any time. That also replaces the copies kept on the records of your older wallets. An email you gave when verifying another wallet stays on that wallet's record; ask us to remove it.
 - You can ask what we hold about you, and ask us to correct or delete it. We may need to keep some records, such as the fingerprint that stops one person holding two memberships. Nobody can delete anything from the blockchain.
 - Ask Persona and MoneyGram directly about the data they hold.
 
@@ -123,4 +123,5 @@ For questions or requests about your information, write to [[TO CONFIRM: legal e
 
 When this notice changes, we update its version and date and list the change below. [[TO CONFIRM: how members are told about material changes]]
 
+- 0.2 (2026-10-25): a check's reason and link need your wallet's signature; changing or removing your email also updates older wallets' copies.
 - 0.1 (2026-10-25): first draft.

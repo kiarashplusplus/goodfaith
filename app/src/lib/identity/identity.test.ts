@@ -268,6 +268,12 @@ describe("wallet proof", () => {
     expect(await verifyProof(kp.address, msg, "AAAA", now)).toBe(false);
     const forged = getBase64Decoder().decode(await signBytes(other.keyPair.privateKey, new TextEncoder().encode(msg)));
     expect(await verifyProof(kp.address, msg, forged, now)).toBe(false);
+    // purposes do not cross: a status proof cannot start a check, an identity proof does not read details
+    const statusMsg = proofMessage(kp.address, now, "status");
+    const statusSig = getBase64Decoder().decode(await signBytes(kp.keyPair.privateKey, new TextEncoder().encode(statusMsg)));
+    expect(await verifyProof(kp.address, statusMsg, statusSig, now, "status")).toBe(true);
+    expect(await verifyProof(kp.address, statusMsg, statusSig, now)).toBe(false);
+    expect(await verifyProof(kp.address, msg, sig, now, "status")).toBe(false);
   });
 });
 
