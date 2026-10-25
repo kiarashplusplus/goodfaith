@@ -78,7 +78,8 @@ backend of ours; each member gets their own Turnkey sub-organisation, and sign-u
     passkeys are bound to it for good.
   - **Account lookups.** Turn on "Require verification token for account lookups", or anyone can ask the Auth Proxy
     whether an email has an account.
-  - **Captcha.** Turn on Cloudflare Turnstile; the wallet kit (2.3.0 or later) handles it. Each sign-up creates a
+  - **Captcha.** Turn on Cloudflare Turnstile; the wallet kit (2.3.0 or later) handles it. With it on, the kit loads the widget on every
+    signed-out page; `scripts/smoke.ts` ignores `challenges.cloudflare.com` traffic and nothing else. Each sign-up creates a
     sub-organisation, so bots cost money without it.
   - **Email.** Set the application name and logo shown in sign-in emails ("Good Faith").
   - **Sessions.** The default is 15 minutes (900 seconds), which the privacy notice states.
