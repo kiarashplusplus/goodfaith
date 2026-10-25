@@ -1,16 +1,16 @@
 # Good Faith
 
-> Interest-free, fee-free community loans for Texas residents 18 or older, funded by gifts and backed by a friend who co-signs. See what you need, try a loan, and read what happens if it isn't repaid.
+> Interest-free, fee-free loans for Texans 18 and older, funded by gifts and backed by a friend who co-signs. See what you need and try a loan. Test money only.
 
 Status: test network only. Good Faith runs on Solana devnet with test money; nothing moves real dollars yet.
 
 ## Before you start: what you need
 
-Before you start, here is what you need. Tick what applies to you.
+Here is what you need. Tick what applies to you.
 - I live in Texas. The state on your government ID must be Texas; we use that as a proxy for where you live.
 - I'm 18 or older. Your ID's birth date is checked once. We keep the result, not the date.
-- I can do a one-time ID check with a selfie. Our verification partner, Persona, checks a government ID and a selfie. Good Faith keeps only a keyed fingerprint of the ID so one person holds one membership; your documents are never stored by us or put on the blockchain.
-- I have an email address I can read. You sign in with it: each time, a code is sent to it. It is also how you get back in on a new device, and where notices about your membership go, such as a recovery request or a bar. Your wallet is made for you when you sign up, with Turnkey: no app to install, no recovery phrase to write down, and no SOL, since a fee sponsor pays network fees.
+- I can do a one-time ID check with a selfie. Our verification partner, Persona, checks a government ID and a selfie. Good Faith keeps only a keyed fingerprint of the ID, so one person holds one membership. We never store your documents, and they never go on the blockchain.
+- I have an email address I can read. You sign in with it: each time, we send it a code. It is also how you get back in on a new device, and where notices about your membership go, such as a recovery request or a bar. Your wallet is made for you when you sign up, with Turnkey: no app to install, no recovery phrase to write down, and no SOL, since a fee sponsor pays network fees.
 - To borrow: a friend will co-sign. A different person who has also verified, and who puts down a deposit of 25% of the loan.
 To turn USDC into cash, MoneyGram runs an identity check of its own and you show the same ID at the counter. To pay cash in, MoneyGram also asks for your Social Security number.
 One membership per person, one wallet per membership. A lost wallet can be recovered without losing your membership; it takes a few days and you are told first.
@@ -18,11 +18,18 @@ One membership per person, one wallet per membership. A lost wallet can be recov
 ## Borrowing
 
 - Ask. Choose an amount and a term of up to 180 days, and name your co-signer. A request nobody co-signs expires after 7 days.
-- Your friend co-signs. They approve the exact terms and put down the deposit.
+- Your friend co-signs. They approve the exact terms and put down a deposit.
 - The USDC arrives in your wallet.
 - Repay any amount, from any wallet, until the cutoff: the due date plus 30 days of grace. You repay exactly what you borrowed.
 - Your limit grows. Each loan repaid on time that ran at least 30 days raises it by 100, at most once every 30 days, up to 500.
-First loan up to 150 USDC. For your first 30 days as a member (and after a wallet recovery or an unpaid loan) you stay on the first-loan limit. A loan that is not repaid resets it.
+Fund
+Borrower
+1 lends USDC
+Co-signer
+Deposit held
+2 puts down a deposit
+3 repaid on time: back to you
+First loan up to 150 USDC. You stay on the first-loan limit for your first 30 days as a member, and after a wallet recovery or an unpaid loan.
 
 ## Co-signing
 

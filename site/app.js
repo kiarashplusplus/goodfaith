@@ -34,12 +34,19 @@
     const update = () => {
       const boxes = $$("input[data-req]", list);
       const missing = boxes.filter((i) => !i.checked).map((i) => i.dataset.req);
-      out.hidden = missing.length === boxes.length;
-      out.className = `result ${missing.length ? "almost" : "yes"}`;
-      out.textContent = missing.length
-        ? `Not ticked yet: ${missing.map((k) => NAMES[k]).join(", ")}. ${HINT[missing[0]]}`
-        : "You can join and borrow. The app opens here when it leaves the test network.";
+      const none = missing.length === boxes.length;
+      // The live region stays in the page (never [hidden]) so its changes are announced politely.
+      out.className = `result ${none ? "empty" : missing.length ? "almost" : "yes"}`;
+      out.textContent = none
+        ? ""
+        : missing.length
+          ? `Not ticked yet: ${missing.map((k) => NAMES[k]).join(", ")}. ${HINT[missing[0]]}`
+          : "You can join and borrow. The app opens here when it leaves the test network.";
     };
+    out.hidden = false;
+    out.setAttribute("role", "status");
+    out.setAttribute("aria-live", "polite");
+    out.setAttribute("aria-atomic", "true");
     list.addEventListener("change", update);
     update();
   }
@@ -61,11 +68,13 @@
       });
       if (focus) buttons[i].focus();
     };
+    panels.forEach((p) => p.setAttribute("tabindex", "0")); // lets keyboard users reach the panel after its tab
     buttons.forEach((b, i) => {
       b.addEventListener("click", () => select(i, false));
       b.addEventListener("keydown", (e) => {
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
         const n = buttons.length;
-        const k = { ArrowRight: i + 1, ArrowLeft: i - 1 + n, Home: 0, End: n - 1 }[e.key];
+        const k = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1 + n, ArrowUp: i - 1 + n, Home: 0, End: n - 1 }[e.key];
         if (k === undefined) return;
         e.preventDefault();
         select(k % n, true);
@@ -139,19 +148,41 @@
       $("#x-cosigner").textContent = text[1];
     };
 
-    $$("[data-outcome]", live).forEach((b) =>
-      b.addEventListener("click", () => {
-        outcome = b.dataset.outcome;
-        $$("[data-outcome]", live).forEach((x) => x.setAttribute("aria-checked", String(x === b)));
-        render();
-      }),
-    );
+    // Radio group pattern: one tab stop (the checked radio), arrows move and check, Home/End jump.
+    const radios = $$("[data-outcome]", live);
+    const choose = (i, focus) => {
+      radios.forEach((x, j) => {
+        x.setAttribute("aria-checked", String(i === j));
+        x.tabIndex = i === j ? 0 : -1;
+      });
+      outcome = radios[i].dataset.outcome;
+      if (focus) radios[i].focus();
+      render();
+    };
+    radios.forEach((b, i) => {
+      b.addEventListener("click", () => choose(i, false));
+      b.addEventListener("keydown", (e) => {
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
+        const n = radios.length;
+        const k = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1 + n, ArrowUp: i - 1 + n, Home: 0, End: n - 1 }[e.key];
+        if (k === undefined) return;
+        e.preventDefault();
+        choose(k % n, true);
+      });
+    });
+    radios.forEach((x, j) => (x.tabIndex = x.getAttribute("aria-checked") === "true" ? 0 : -1));
+    // Sliders already announce their own value; keep the figures grid quiet and announce only the outcome text.
+    const figures = $(".figures", live);
+    if (figures) figures.setAttribute("aria-live", "off");
     [amount, loans, term].forEach((i) => i.addEventListener("input", render));
     live.hidden = false;
     const worked = $("[data-worked]");
     if (worked) worked.hidden = true;
     render();
   }
+
+  // Print: open every question so the answers are on paper.
+  window.addEventListener("beforeprint", () => $$(".faq details").forEach((d) => (d.open = true)));
 
   const start = () => {
     for (const f of [checklist, tabs, explorer]) {

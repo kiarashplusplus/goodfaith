@@ -3,24 +3,36 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Good Faith — interest-free loans for Texans</title>
-  <meta name="description" content="Interest-free, fee-free community loans for Texas residents 18 or older, funded by gifts and backed by a friend who co-signs. See what you need, try a loan, and read what happens if it isn't repaid.">
+  <title>Good Faith — 0% community loans for Texans</title>
+  <meta name="description" content="Interest-free, fee-free loans for Texans 18 and older, funded by gifts and backed by a friend who co-signs. See what you need and try a loan. Test money only.">
   <link rel="canonical" href="https://goodfaith.fi/">
-  <meta name="theme-color" content="#065f46">
+  <meta name="theme-color" content="#065f46" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1c1917" media="(prefers-color-scheme: dark)">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Good Faith">
   <meta property="og:title" content="Good Faith — interest-free loans for Texans">
   <meta property="og:description" content="0% loans funded by gifts, for Texas residents 18 or older. A friend co-signs with a deposit. Test network only for now.">
   <meta property="og:url" content="https://goodfaith.fi/">
-  <meta property="og:image" content="https://goodfaith.fi/assets/texas-flag.svg">
-  <meta name="twitter:card" content="summary">
-  <link rel="icon" href="assets/texas-flag.svg" type="image/svg+xml">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:image" content="https://goodfaith.fi/assets/social-card.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Good Faith: 0% loans for Texans, funded by gifts. Devnet, test money only.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Good Faith — 0% community loans for Texans">
+  <meta name="twitter:description" content="0% loans funded by gifts, for Texans 18 or older. A friend co-signs with a deposit. Test network only for now.">
+  <meta name="twitter:image" content="https://goodfaith.fi/assets/social-card.png">
+  <meta name="twitter:image:alt" content="Good Faith: 0% loans for Texans, funded by gifts. Devnet, test money only.">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
   <script type="application/ld+json">
   {"@context":"https://schema.org","@graph":[
-    {"@type":"WebSite","@id":"https://goodfaith.fi/#site","name":"Good Faith","url":"https://goodfaith.fi/","inLanguage":"en-US"},
-    {"@type":"Organization","@id":"https://goodfaith.fi/#org","name":"Good Faith","url":"https://goodfaith.fi/","logo":"https://goodfaith.fi/assets/texas-flag.svg","areaServed":{"@type":"State","name":"Texas"},"sameAs":["https://github.com/kiarashplusplus/goodfaith"]}
+    {"@type":"WebSite","@id":"https://goodfaith.fi/#site","name":"Good Faith","url":"https://goodfaith.fi/","inLanguage":"en-US","description":"Interest-free community loans for Texans 18 and older, funded by gifts. Test network only."},
+    {"@type":"Organization","@id":"https://goodfaith.fi/#org","name":"Good Faith","url":"https://goodfaith.fi/","logo":"https://goodfaith.fi/assets/apple-touch-icon.png","areaServed":{"@type":"State","name":"Texas"},"sameAs":["https://github.com/kiarashplusplus/goodfaith"]}
   ]}
   </script>
   <!-- faq-ld:start (generated from the Questions section by scripts/site-legal.ts; do not edit by hand) -->
@@ -53,7 +65,7 @@
   <main class="wrap">
     <section id="before" class="card first" data-llms="Before you start: what you need">
       <h2>Can I use Good Faith?</h2>
-      <p class="sub">Before you start, here is what you need. Tick what applies to you.</p>
+      <p class="sub">Here is what you need. Tick what applies to you.</p>
       <ul class="checks" data-checklist>
         <li>
           <label><input type="checkbox" data-req="texas"> <img class="flag" src="assets/texas-flag.svg" alt="" width="24" height="16"> <strong>I live in Texas.</strong></label>
@@ -65,11 +77,11 @@
         </li>
         <li>
           <label><input type="checkbox" data-req="id"> <strong>I can do a one-time ID check with a selfie.</strong></label>
-          <p>Our verification partner, Persona, checks a government ID and a selfie. Good Faith keeps only a keyed fingerprint of the ID so one person holds one membership; your documents are never stored by us or put on the blockchain.</p>
+          <p>Our verification partner, Persona, checks a government ID and a selfie. Good Faith keeps only a keyed fingerprint of the ID, so one person holds one membership. We never store your documents, and they never go on the blockchain.</p>
         </li>
         <li>
           <label><input type="checkbox" data-req="wallet"> <strong>I have an email address I can read.</strong></label>
-          <p>You sign in with it: each time, a code is sent to it. It is also how you get back in on a new device, and where notices about your membership go, such as a recovery request or a bar. Your wallet is made for you when you sign up, with Turnkey: no app to install, no recovery phrase to write down, and no SOL, since a fee sponsor pays network fees.</p>
+          <p>You sign in with it: each time, we send it a code. It is also how you get back in on a new device, and where notices about your membership go, such as a recovery request or a bar. Your wallet is made for you when you sign up, with Turnkey: no app to install, no recovery phrase to write down, and no SOL, since a fee sponsor pays network fees.</p>
         </li>
         <li>
           <label><input type="checkbox" data-req="cosigner"> <strong>To borrow: a friend will co-sign.</strong></label>
@@ -96,12 +108,31 @@
         <h3>Borrow</h3>
         <ol class="steps">
           <li><strong>Ask.</strong> Choose an amount and a term of up to <span data-launch="maxTermDays">180</span> days, and name your co-signer. A request nobody co-signs expires after <span data-launch="requestTtlDays">7</span> days.</li>
-          <li><strong>Your friend co-signs.</strong> They approve the exact terms and put down the deposit.</li>
+          <li><strong>Your friend co-signs.</strong> They approve the exact terms and put down a deposit.</li>
           <li><strong>The USDC arrives</strong> in your wallet.</li>
           <li><strong>Repay any amount, from any wallet,</strong> until the cutoff: the due date plus <span data-launch="graceDays">30</span> days of grace. You repay exactly what you borrowed.</li>
           <li><strong>Your limit grows.</strong> Each loan repaid on time that ran at least <span data-launch="seasoningDays">30</span> days raises it by <span data-launch="loanCapStep">100</span>, at most once every <span data-launch="capStepIntervalDays">30</span> days, up to <span data-launch="maxLoan">500</span>.</li>
         </ol>
-        <p class="note">First loan up to <span data-launch="firstLoanCap">150</span> USDC. For your first <span data-launch="cooldownDays">30</span> days as a member (and after a wallet recovery or an unpaid loan) you stay on the first-loan limit. A loan that is not repaid resets it.</p>
+        <figure class="flow" aria-hidden="true">
+          <svg viewBox="0 0 320 144" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" font-family="inherit" font-size="12">
+            <defs><marker id="flow-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 8 4 0 8z" fill="currentColor" stroke="none"/></marker></defs>
+            <rect x="2" y="8" width="84" height="34" rx="9" fill="var(--brand-soft, none)" stroke="var(--brand, currentColor)"/>
+            <text x="44" y="29" text-anchor="middle" fill="currentColor" stroke="none">Fund</text>
+            <rect x="234" y="8" width="84" height="34" rx="9" fill="var(--brand-soft, none)" stroke="var(--brand, currentColor)"/>
+            <text x="276" y="29" text-anchor="middle" fill="currentColor" stroke="none">Borrower</text>
+            <path d="M88 25H230" stroke="var(--brand, currentColor)" marker-end="url(#flow-arrow)"/>
+            <text x="160" y="18" text-anchor="middle" fill="var(--muted, currentColor)" stroke="none">1 lends USDC</text>
+            <rect x="2" y="88" width="84" height="40" rx="9" stroke="var(--line, currentColor)"/>
+            <text x="44" y="112" text-anchor="middle" fill="currentColor" stroke="none">Co-signer</text>
+            <rect x="214" y="88" width="104" height="40" rx="9" stroke="var(--line, currentColor)"/>
+            <text x="266" y="112" text-anchor="middle" fill="currentColor" stroke="none">Deposit held</text>
+            <path d="M88 104H210" stroke="var(--muted, currentColor)" marker-end="url(#flow-arrow)"/>
+            <text x="150" y="96" text-anchor="middle" fill="var(--muted, currentColor)" stroke="none">2 puts down a deposit</text>
+            <path d="M210 120H88" stroke="var(--brand, currentColor)" stroke-dasharray="4 3" marker-end="url(#flow-arrow)"/>
+            <text x="150" y="141" text-anchor="middle" fill="var(--brand, currentColor)" stroke="none">3 repaid on time: back to you</text>
+          </svg>
+        </figure>
+        <p class="note">First loan up to <span data-launch="firstLoanCap">150</span> USDC. You stay on the first-loan limit for your first <span data-launch="cooldownDays">30</span> days as a member, and after a wallet recovery or an unpaid loan.</p>
       </section>
 
       <section id="cosign" class="panel" role="tabpanel" aria-labelledby="tab-cosign" data-llms="Co-signing">
