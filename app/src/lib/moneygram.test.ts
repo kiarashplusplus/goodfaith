@@ -115,9 +115,9 @@ describe("MoneyGram cash-out transfers", () => {
   const payer = address("Kora111111111111111111111111111111111111111");
   const cash = { to: tokenAccount, amount: 25_000_000n, memo: "43acb682-2798-4e57-b966-cc818c6a7628" };
 
-  it("pays a MoneyGram token account directly, with its reference, at the wallet's expense", async () => {
+  it("pays a MoneyGram token account directly, with its reference, sponsored", async () => {
     const plan = await planCashOut(rpcWith({ [tokenAccount]: [TOKEN_PROGRAM_ADDRESS, token(mint)] }), wallet, mint, 6, cash);
-    expect(plan.sponsor).toBe(false);
+    expect(plan.sponsor).toBe(true);
     const [transfer, memo, ...rest] = await plan.instructions(wallet);
     expect(rest).toEqual([]);
     expect(transfer.programAddress).toBe(TOKEN_PROGRAM_ADDRESS);
@@ -141,7 +141,15 @@ describe("MoneyGram cash-out transfers", () => {
     const [transfer, memo] = await plan.instructions(wallet);
     expect(transfer.accounts![2].address).toBe(ata);
     expect(memo.programAddress).toBe(MEMO_PROGRAM);
-    expect(plan.sponsor).toBe(false);
+    expect(plan.sponsor).toBe(true);
+    // a wallet with no USDC account yet: the sender pays its rent, the sponsor does not
+    const fresh = await planCashOut(rpcWith({}), wallet, mint, 6, { ...cash, to: owner });
+    expect(fresh.sponsor).toBe(false);
+    expect((await fresh.instructions(wallet)).map((i) => i.programAddress)).toEqual([
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      TOKEN_PROGRAM_ADDRESS,
+      MEMO_PROGRAM,
+    ]);
   });
 
   it("refuses a token account of another mint, a frozen one, and a program account", async () => {

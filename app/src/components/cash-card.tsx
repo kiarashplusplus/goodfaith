@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Address } from "@solana/kit";
 import { Button, Card, GhostButton, Notice } from "@/components/ui";
-import { useApp, useBalances } from "@/lib/hooks";
+import { useApp } from "@/lib/hooks";
 import { CLUSTER, explorerTx, POOL_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/config";
 import {
   checkCashOut,
@@ -18,9 +18,6 @@ import {
 import { sendInstructions } from "@/lib/tx";
 
 let sdk: Promise<CreateRamps> | null = null;
-
-/** A cash-out carries MoneyGram's reference, which the fee sponsor won't pay for: the wallet pays a fee of about 0.000005 SOL. */
-const CASH_OUT_FEE_SOL = 100_000n;
 
 /** Loads MoneyGram's widget SDK from the widget origin once. */
 function loadSdk(): Promise<CreateRamps> {
@@ -44,8 +41,6 @@ type Outcome = { tone: "ok" | "warn"; text: string; sig?: string };
 /** Cash out to, or cash in from, a MoneyGram counter. Shown only when the widget origin is configured. */
 export function CashCard({ wallet, onDone }: { wallet: Address; onDone: () => void }) {
   const { rpc, signer } = useApp();
-  const balances = useBalances(wallet);
-  const noSol = balances.data !== undefined && balances.data.sol < CASH_OUT_FEE_SOL;
   const container = useRef<HTMLDivElement>(null);
   const widget = useRef<RampsInstance | null>(null);
   const [open, setOpen] = useState(false);
@@ -65,7 +60,7 @@ export function CashCard({ wallet, onDone }: { wallet: Address; onDone: () => vo
   async function sendCashOut(tx: OnChainTransaction): Promise<string> {
     const check = checkCashOut(tx, { wallet, mint: POOL_MINT, decimals: TOKEN_DECIMALS, cluster: CLUSTER });
     if (!check.ok) throw new Error(check.reason);
-    // The fee sponsor refuses memos, so a transfer carrying MoneyGram's reference is paid by the wallet.
+    // Sponsored, MoneyGram's reference memo included; only a new token account for the recipient is the sender's to pay.
     const plan = await planCashOut(rpc, wallet, POOL_MINT, TOKEN_DECIMALS, check.cashOut);
     const sig = await sendInstructions(rpc, signer!, plan.instructions, { sponsor: plan.sponsor });
     lastSig.current = sig;
@@ -134,12 +129,6 @@ export function CashCard({ wallet, onDone }: { wallet: Address; onDone: () => vo
             Cash in
           </GhostButton>
         </div>
-        {noSol && (
-          <Notice tone="info">
-            A cash-out pays its own network fee (well under 0.001 SOL), because it carries MoneyGram&apos;s reference. This wallet has no
-            SOL yet; cash-in works without it.
-          </Notice>
-        )}
         {outcome && (
           <Notice tone={outcome.tone}>
             {outcome.text}

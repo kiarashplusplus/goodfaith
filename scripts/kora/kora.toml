@@ -46,6 +46,8 @@ allowed_programs = [
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
     "ComputeBudget111111111111111111111111111111",
+    # SPL Memo v2: MoneyGram's cash-out reference; the app's proxy allows one short memo, only on the wallet's own transfer
+    "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
     "BvYSoBvDqLGrnrMqSpPguFkApyNTTj219mLWQGnrkCGq",
 ]
 allowed_tokens = ["4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"]

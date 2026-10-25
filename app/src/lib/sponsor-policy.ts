@@ -8,10 +8,12 @@
  *     own account); on its own (no Good Faith instruction) it is sponsored for members only (the route checks),
  *   - a token transfer signed by the wallet itself (never a close: the rent of an account the sponsor created would go
  *     to the wallet, a repeatable way to collect the sponsor's money),
+ *   - one SPL Memo (v2) next to such a transfer: at most `MAX_MEMO_BYTES`, naming no account but the wallet (a cash-out
+ *     to MoneyGram carries its reference this way; a memo on its own is not sponsored),
  * with Kora as the fee payer and the wallet the sponsorship is attributed to as the next signer; further signers (the
  * issuer and the recovery authority co-sign registrations and recovery proposals) are allowed only when a Good Faith
- * instruction is present. Anything else (a system transfer, a memo, an account for a stranger, another mint, a lookup
- * table) is refused before it reaches Kora.
+ * instruction is present. Anything else (a system transfer, a lone memo, an account for a stranger, another mint, a
+ * lookup table) is refused before it reaches Kora.
  * Per-wallet caps (sponsored transactions per day, token accounts created in total) bound what one person can cost.
  * The fund-wide daily budget is split into three lanes, so that exhausting one never blocks another:
  *   - protected: settling, repaying, paying back, releasing and collecting what is owed, waiving, vetoing or
@@ -45,6 +47,9 @@ import {
 } from "../generated";
 
 export const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111" as Address;
+export const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" as Address;
+/** The longest memo the sponsor pays for (MoneyGram's references are 36-character UUIDs). */
+export const MAX_MEMO_BYTES = 128;
 
 export type CreatedAta = { ata: Address; owner: Address };
 export type Inspection =
@@ -112,6 +117,8 @@ export function inspectTransaction(base64: string, policy: Policy): Inspection {
   let protectedOnly = true;
   let registers = false;
   const pending: { ix: Instruction; what: string }[] = [];
+  let memos = 0;
+  let transfers = 0;
   for (const ix of instructions) {
     const accounts = ix.accounts ?? [];
     const data = ix.data ?? new Uint8Array();
@@ -123,6 +130,12 @@ export function inspectTransaction(base64: string, policy: Policy): Inspection {
       continue;
     }
     if (ix.programAddress === COMPUTE_BUDGET_PROGRAM) continue;
+    if (ix.programAddress === MEMO_PROGRAM) {
+      if (++memos > 1) return { ok: false, reason: "Only one memo is sponsored." };
+      if (data.length > MAX_MEMO_BYTES) return { ok: false, reason: "That memo is too long to sponsor." };
+      if (accounts.some((a) => a.address !== wallet)) return { ok: false, reason: "A sponsored memo may only name the wallet." };
+      continue;
+    }
     if (ix.programAddress === ASSOCIATED_TOKEN_PROGRAM_ADDRESS) {
       const kind = data.length === 0 ? 0 : data[0];
       if (kind !== 0 && kind !== 1) return { ok: false, reason: "Only token account creation is sponsored on the token-account program." };
@@ -148,6 +161,7 @@ export function inspectTransaction(base64: string, policy: Policy): Inspection {
       else return { ok: false, reason: "Only token transfers are sponsored on the token program." };
       if (!authority || !isSignerRole(authority.role) || authority.address !== wallet)
         return { ok: false, reason: "Token instructions must be signed by the wallet itself." };
+      transfers++;
       continue;
     }
     return { ok: false, reason: "This program is not sponsored." };
@@ -156,6 +170,7 @@ export function inspectTransaction(base64: string, policy: Policy): Inspection {
     if (!goodFaithAccounts.has(p.what as Address))
       return { ok: false, reason: "A token account for someone else is only sponsored as part of a Good Faith transaction." };
   }
+  if (memos && !transfers) return { ok: false, reason: "A memo is only sponsored on the wallet's own token transfer." };
   if (signers.length > 2 && !goodFaithInstructions)
     return { ok: false, reason: "Extra signers are only sponsored on a Good Faith transaction." };
   if (!goodFaithInstructions && !atas.length && !instructions.some((ix) => ix.programAddress === TOKEN_PROGRAM_ADDRESS)) {

@@ -25,6 +25,7 @@ import { getTransferSolInstruction } from "@solana-program/system";
 import { REGISTER_MEMBER_DISCRIMINATOR, REPAY_DISCRIMINATOR, SETTLE_DISCRIMINATOR } from "../generated";
 import {
   COMPUTE_BUDGET_PROGRAM,
+  MAX_MEMO_BYTES,
   budgetFromEnv,
   checkBudget,
   checkCaps,
@@ -156,8 +157,34 @@ describe("inspectTransaction", () => {
       reason: /not sponsored/,
     });
   });
+  it("sponsors one short memo on the wallet's own transfer (a MoneyGram cash-out), never on its own", () => {
+    const transfer = getTransferInstruction({ source: ataW, destination: ataO, authority: createNoopSigner(wallet), amount: 5n });
+    const ref = (text: string, accounts: Instruction["accounts"] = []): Instruction => ({
+      programAddress: address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+      accounts,
+      data: new TextEncoder().encode(text),
+    });
+    expect(inspect([transfer, ref("43acb682-2798-4e57-b966-cc818c6a7628")])).toMatchObject({ ok: true, wallet, goodFaithInstructions: 0 });
+    expect(inspect([transfer, memo])).toMatchObject({ ok: true }); // naming the wallet as its signer
+    expect(inspect([transfer, ref("x".repeat(MAX_MEMO_BYTES))])).toMatchObject({ ok: true });
+    expect(inspect([transfer, ref("x".repeat(MAX_MEMO_BYTES + 1))])).toMatchObject({ ok: false, reason: /too long/ });
+    expect(inspect([transfer, ref("a"), ref("b")])).toMatchObject({ ok: false, reason: /one memo/ });
+    expect(inspect([transfer, ref("a", [{ address: other, role: AccountRole.READONLY }])])).toMatchObject({
+      ok: false,
+      reason: /only name the wallet/,
+    });
+    expect(inspect([transfer, ref("a", [{ address: payer, role: AccountRole.READONLY_SIGNER }])])).toMatchObject({
+      ok: false,
+      reason: /only name the wallet/,
+    });
+    expect(inspect([gf([pool]), ref("a")])).toMatchObject({ ok: false, reason: /own token transfer/ });
+    // the older memo program is not on the list
+    expect(
+      inspect([transfer, { programAddress: address("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo"), data: new TextEncoder().encode("a") }]),
+    ).toMatchObject({ ok: false, reason: /not sponsored/ });
+  });
   it("refuses other programs, the wrong fee payer, extra signers, lookup tables and empty transactions", () => {
-    expect(inspect([memo])).toMatchObject({ ok: false, reason: /not sponsored/ });
+    expect(inspect([memo])).toMatchObject({ ok: false, reason: /own token transfer/ });
     expect(inspect([getTransferSolInstruction({ source: createNoopSigner(wallet), destination: other, amount: 1n })])).toMatchObject({
       ok: false,
       reason: /not sponsored/,
@@ -165,7 +192,7 @@ describe("inspectTransaction", () => {
     expect(inspect([gf([pool])], wallet)).toMatchObject({ ok: false, reason: /fee payer/ });
     expect(inspect([budget])).toMatchObject({ ok: false, reason: /wallet's signature/ }); // nobody but the payer signs
     expect(inspect([create(ataW, wallet)])).toMatchObject({ ok: false, reason: /wallet's signature/ });
-    expect(inspect([budget, memo])).toMatchObject({ ok: false, reason: /not sponsored/ });
+    expect(inspect([budget, memo])).toMatchObject({ ok: false, reason: /own token transfer/ });
     expect(inspectTransaction("not base64!", { payer, programId: PROGRAM })).toMatchObject({ ok: false, reason: /decoded/ });
   });
 });

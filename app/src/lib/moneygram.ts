@@ -22,6 +22,7 @@ import { parseAmount } from "./format";
 import type { Cluster } from "./config";
 import { findAta } from "./program";
 import { planTokenSend } from "./send";
+import { MAX_MEMO_BYTES, MEMO_PROGRAM } from "./sponsor-policy";
 
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 
@@ -29,9 +30,8 @@ const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 export const RAMPS_ORIGIN = (process.env.NEXT_PUBLIC_RAMPS_ORIGIN ?? "").trim().replace(/\/+$/, "");
 export const RAMPS_SDK_PATH = "/sdk/index.global.js";
 export const DEFAULT_SESSIONS_URL = "https://playground.xramps.moneygram.com/api/v1/sessions";
-export const MEMO_PROGRAM: Address = address("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-/** Longer memos are refused rather than sent: nothing MoneyGram documents needs more. */
-export const MAX_MEMO_BYTES = 128;
+// The fee sponsor pays for one memo up to MAX_MEMO_BYTES next to the wallet's transfer; a longer one is refused here.
+export { MAX_MEMO_BYTES, MEMO_PROGRAM };
 
 // Shapes of the Ramps web SDK (the global `window.RampsSDK`), as the Solana Foundation's MoneyGram template uses them.
 export interface RampsWallet {
@@ -139,7 +139,7 @@ export function checkCashOut(
 }
 
 export type CashOutPlan = {
-  /** False when the transfer carries MoneyGram's reference (the fee sponsor refuses memos) or creates an account. */
+  /** False only when the transfer must create the destination's token account: the sender pays that rent. */
   sponsor: boolean;
   instructions: (feePayer: Address) => Promise<Instruction[]>;
 };
@@ -170,12 +170,12 @@ export async function planCashOut(
       amount: c.amount,
       decimals,
     });
-    return { sponsor: !c.memo, instructions: async () => [transfer, ...memo] };
+    return { sponsor: true, instructions: async () => [transfer, ...memo] };
   }
   if (account.exists && account.programAddress !== SYSTEM_PROGRAM)
     throw new Error("MoneyGram's destination is neither a wallet nor a USDC account.");
   const plan = await planTokenSend(rpc, wallet, c.to, mint, c.amount);
-  return { sponsor: plan.sponsor && !c.memo, instructions: async (payer) => [...(await plan.instructions(payer)), ...memo] };
+  return { sponsor: plan.sponsor, instructions: async (payer) => [...(await plan.instructions(payer)), ...memo] };
 }
 
 /** An SPL Memo instruction with no signers: the reference MoneyGram matches the deposit by, when it asks for one. */

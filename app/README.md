@@ -110,7 +110,7 @@ unless `NEXT_PUBLIC_RAMPS_ORIGIN` is set, and `/api/health` reports `ramps`. Mon
 On a cash-out the widget asks the app to send USDC: `lib/moneygram.ts` checks the request (Solana, USDC of the pool's
 mint, the cluster, an exact amount, a recipient other than the wallet) and builds the transfer. MoneyGram names a token
 account, which is paid directly, or a wallet, whose associated account is used. The transfer carries MoneyGram's
-reference as a memo, so the wallet pays that fee: the sponsor refuses memos. Sandbox: origin
+reference as a memo, which the sponsor pays for (one memo of at most 128 bytes, only next to the wallet's own transfer). Sandbox: origin
 `https://playground.xramps.moneygram.com` and a `ramps_sk_sbox_` key, devnet only; the playground needs realistic test
 details (an 8-digit, non-sequential Texas licence number) before it asks for the transfer.
 

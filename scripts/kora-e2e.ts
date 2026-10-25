@@ -193,8 +193,18 @@ await sp(third, plan2.instructions as never, 'send sponsored');
 assert.equal(await tok(await ata(fresh.address)), 2n * USDC);
 row('send to a new wallet', 'first transfer: sender pays rent', 'second transfer: sponsored');
 
-// ---------- negative: a program outside the allow-list ----------
-const memo: Instruction = { programAddress: address('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'), accounts: [{ address: third.address, role: AccountRole.READONLY_SIGNER }], data: new TextEncoder().encode('hi') };
+// ---------- a MoneyGram-style cash-out: a transfer carrying a reference memo, sponsored ----------
+const reference: Instruction = { programAddress: address('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'), accounts: [], data: new TextEncoder().encode('43acb682-2798-4e57-b966-cc818c6a7628') };
+const plan3 = await sendLib.planTokenSend(txRpc, third.address, fresh.address, MINT, 1n * USDC);
+assert.equal(plan3.sponsor, true);
+const thirdSolMemo = await sol(third.address);
+await sp(third, async (feePayer) => [...(await plan3.instructions(feePayer)), reference], 'transfer with a memo');
+assert.equal(await sol(third.address), thirdSolMemo, 'the sender paid nothing for a transfer with a memo');
+assert.equal(await tok(await ata(fresh.address)), 3n * USDC);
+row('transfer with a reference memo', 'sponsored', 'sender paid 0');
+
+// ---------- negative: a program outside the allow-list (the older memo program) ----------
+const memo: Instruction = { programAddress: address('Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo'), accounts: [{ address: third.address, role: AccountRole.READONLY_SIGNER }], data: new TextEncoder().encode('hi') };
 const refusal = async (p: Promise<unknown>): Promise<InstanceType<typeof kora.KoraError>> => {
   try { await p; } catch (e) { if (e instanceof kora.KoraError) return e; throw new Error(`expected a KoraError, got ${String(e)}`); }
   throw new Error('expected the sponsor to refuse');
@@ -203,10 +213,14 @@ const rejected = await refusal(sponsored(third, [memo]));
 console.log('sponsor rejection:', rejected.code, rejected.message);
 assert.equal(prog.friendlyError(rejected), "The fee sponsor doesn't cover this kind of transaction.");
 const viaProxy = /\/api\/sponsor$/.test(process.env.NEXT_PUBLIC_KORA_URL!);
-row('memo instruction', viaProxy ? `refused by the proxy policy (${rejected.code})` : 'rejected by Kora', prog.friendlyError(rejected));
+row('memo v1 instruction', viaProxy ? `refused by the proxy policy (${rejected.code})` : 'rejected by Kora', prog.friendlyError(rejected));
 
 // ---------- the proxy's sponsorship policy (only when KORA_URL is the app's /api/sponsor) ----------
 if (viaProxy) {
+  // a memo on its own: Kora allows the program, the proxy only pays for one next to the wallet's own transfer
+  const lone = await refusal(sponsored(third, [{ ...reference, accounts: [{ address: third.address, role: AccountRole.READONLY_SIGNER }] }]));
+  assert.equal(lone.code, kora.KORA_CODES.REFUSED, lone.message);
+  assert.match(lone.message, /own token transfer/);
   const stranger = await wallet();
   // a token account for a stranger smuggled next to an unrelated Good Faith instruction: rent farming
   const farm = await refusal(sponsored(third, async (feePayer) => [ataCreate(feePayer, await ata(stranger.address), stranger.address, pool.mint), await prog.donateIx({ donor: third.address, pool, amount: 1n * USDC })]));
