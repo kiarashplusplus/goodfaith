@@ -9,7 +9,7 @@ Status: test network only. Good Faith runs on Solana devnet with test money; not
 Here is what you need. Tick what applies to you.
 - I live in Texas. The state on your government ID must be Texas; we use that as a proxy for where you live.
 - I'm 18 or older. Your ID's birth date is checked once. We keep the result, not the date.
-- I can do a one-time ID check with a selfie. Our verification partner, Persona, checks a government ID and a selfie. Good Faith keeps only a keyed fingerprint of the ID, so one person holds one membership. We never store your documents, and they never go on the blockchain.
+- I can do a one-time ID check with a selfie. Our verification partner, Persona, checks a government ID and a selfie. Good Faith keeps only a keyed fingerprint of the ID and the check's result, so one person holds one membership. We never store your documents, and they never go on the blockchain.
 - I have an email address I can read. You sign in with it: each time, we send it a code. It is also how you get back in on a new device, and where notices about your membership go, such as a recovery request or a bar. Your wallet is made for you when you sign up, with Turnkey: no app to install, no recovery phrase to write down, and no SOL, since a fee sponsor pays network fees.
 - To borrow: a friend will co-sign. A different person who has also verified, and who puts down a deposit of 25% of the loan.
 To turn USDC into cash, MoneyGram runs an identity check of its own and you show the same ID at the counter. To pay cash in, MoneyGram also asks for your Social Security number.
@@ -27,7 +27,7 @@ Borrower
 1 lends USDC
 Co-signer
 Deposit held
-2 puts down a deposit
+2 deposit
 3 repaid on time: back to you
 First loan up to 150 USDC. You stay on the first-loan limit for your first 30 days as a member, and after a wallet recovery or an unpaid loan.
 
@@ -89,7 +89,7 @@ From the app's Checking page, at a MoneyGram location. MoneyGram checks your ID,
 The fund starts in one state so its loans and co-signer terms can be reviewed under that state's law. Other states may follow, one at a time.
 
 ### What data do you keep about me?
-A keyed fingerprint of your ID, a random person id, your wallet addresses and, if you give one, an email. Persona holds your ID document and selfie; we never see them. Your wallet, loans and any bar are public on the blockchain. See the privacy notice.
+A keyed fingerprint of your ID, a random person id, your wallet addresses and your email. Persona holds your ID document and selfie; we never see them. Your wallet, loans and any bar are public on the blockchain. See the privacy notice.
 
 ### Is Good Faith live?
 Not yet. It runs on a Solana test network with test money only, while the legal entity, the terms and the questions for a Texas attorney are settled. See the terms of use.
