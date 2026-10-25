@@ -124,6 +124,9 @@ jobs:
           (cd ../app && PORT=3100 npm start > /tmp/app.log 2>&1 &)
           for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:3100/fund && break; sleep 1; done
           APP_URL=http://127.0.0.1:3100 npm run smoke
+      - name: Public site figures match launch.json
+        working-directory: scripts
+        run: npm run site-check
 
   # Long job: Surfpool devnet fork + Kora. Runs on pushes to main and by hand (Actions > CI > Run workflow);
   # it depends on public devnet RPC from the runner, so a rate-limit flake is possible: re-run it.

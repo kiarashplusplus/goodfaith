@@ -22,6 +22,8 @@ Interest-free, fee-free community loans on Solana, funded by gifts. Texas reside
   lists how to check what is deployed.
 
 ## Read more
+- [Public site](site/index.html): what you need before you start (Texas, 18+, ID, a co-signer, cash at
+  MoneyGram), as a static page to host at goodfaith.fi ([site/README.md](site/README.md))
 - [White paper](docs/whitepaper.md): the case, the risks and how to verify the deployment
 - [Specification](docs/spec.md) · [Economics](docs/economics.md) · [Identity](docs/identity.md) ·
   [Internal review](docs/audit.md) · [Launch](docs/launch.md) · [Operations](docs/operations.md)
@@ -38,6 +40,7 @@ Interest-free, fee-free community loans on Solana, funded by gifts. Texas reside
 - `app`: the web app, identity service and fee-sponsor proxy (Next.js)
 - `scripts`: fork deployment, end-to-end runs, the operator and member command lines, the cranker
   ([scripts/README.md](scripts/README.md))
+- `site`: the public website, a static page with the requirements up front
 - `deploy`: Docker images and compose file for hosting
 - `keys`: encrypted devnet keys ([keys/README.md](keys/README.md))
 

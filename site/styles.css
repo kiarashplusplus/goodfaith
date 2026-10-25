@@ -1,0 +1,100 @@
+/* Good Faith public site. Palette from the app (Tailwind emerald and stone); light and dark. */
+:root {
+  --bg: #fafaf9; /* stone-50 */
+  --card: #ffffff;
+  --text: #1c1917; /* stone-900 */
+  --muted: #57534e; /* stone-600 */
+  --line: #e7e5e4; /* stone-200 */
+  --brand: #065f46; /* emerald-800 */
+  --brand-soft: #d1fae5; /* emerald-100 */
+  --warn-bg: #fef3c7; /* amber-100 */
+  --warn: #78350f; /* amber-900 */
+  /* MoneyGram's red: replace with the brand kit's value when it arrives (site/README.md). */
+  --mg: #da291c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1917;
+    --card: #292524; /* stone-800 */
+    --text: #f5f5f4;
+    --muted: #a8a29e;
+    --line: #44403c;
+    --brand: #6ee7b7; /* emerald-300 */
+    --brand-soft: #064e3b;
+    --warn-bg: #451a03;
+    --warn: #fde68a;
+    --mg: #ff6b5e;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 48rem; margin: 0 auto; padding: 0 16px; }
+a { color: var(--brand); }
+
+.banner {
+  margin: 0;
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 0.875rem;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.hero { padding: 40px 0 24px; border-bottom: 1px solid var(--line); background: var(--card); }
+.eyebrow { display: flex; align-items: center; gap: 8px; margin: 0; font-weight: 600; color: var(--muted); }
+.flag { display: inline-block; vertical-align: -3px; border-radius: 2px; box-shadow: 0 0 0 1px var(--line); }
+h1 { margin: 8px 0 8px; font-size: 2.5rem; line-height: 1.1; color: var(--brand); }
+.lede { margin: 0 0 20px; font-size: 1.125rem; max-width: 38rem; }
+.jump { display: flex; flex-wrap: wrap; gap: 6px; }
+.jump a {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  text-decoration: none;
+  font-size: 0.875rem;
+}
+
+main { padding: 24px 16px 8px; }
+.card {
+  margin: 0 0 16px;
+  padding: 20px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.card.first { border: 2px solid var(--brand); }
+h2 { margin: 0 0 12px; font-size: 1.25rem; }
+ul { margin: 0; padding-left: 1.25rem; }
+li { margin: 6px 0; }
+.checks { list-style: none; padding: 0; }
+.checks li { padding: 10px 0; border-top: 1px solid var(--line); }
+.checks li:first-child { border-top: 0; padding-top: 0; }
+.note { margin: 12px 0 0; color: var(--muted); font-size: 0.9375rem; }
+.tbc {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: normal;
+}
+.mg { color: var(--mg); font-weight: 800; letter-spacing: -0.01em; }
+.cash { border-left: 4px solid var(--mg); }
+.powered { margin: -4px 0 12px; color: var(--muted); }
+.soon { color: var(--muted); font-style: italic; }
+.foot { padding: 16px 16px 40px; color: var(--muted); font-size: 0.8125rem; }
+
+@media (max-width: 480px) {
+  h1 { font-size: 2rem; }
+  .card { padding: 16px; }
+}

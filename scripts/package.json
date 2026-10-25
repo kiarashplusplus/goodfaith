@@ -15,7 +15,8 @@
     "member": "tsx member.ts",
     "recovery": "tsx recovery.ts",
     "launch": "tsx launch.ts",
-    "admin": "tsx admin.ts"
+    "admin": "tsx admin.ts",
+    "site-check": "tsx site-check.ts"
   },
   "dependencies": {
     "@solana/kit": "^8.5.0"

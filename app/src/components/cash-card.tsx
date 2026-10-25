@@ -16,6 +16,7 @@ import {
   type RampsSession,
 } from "@/lib/moneygram";
 import { sendInstructions } from "@/lib/tx";
+import { TexasFlag } from "@/components/texas-flag";
 
 let sdk: Promise<CreateRamps> | null = null;
 
@@ -118,8 +119,9 @@ export function CashCard({ wallet, onDone }: { wallet: Address; onDone: () => vo
     <Card title="Cash at MoneyGram">
       <div className="space-y-3">
         <p className="text-sm text-stone-600">
-          Turn {TOKEN_SYMBOL} into cash, or cash into {TOKEN_SYMBOL}, at a MoneyGram counter. MoneyGram checks your ID and shows its fee and
-          rate before you commit; Good Faith adds nothing.
+          Turn {TOKEN_SYMBOL} into cash, or cash into {TOKEN_SYMBOL}, at a MoneyGram counter in <TexasFlag /> Texas. MoneyGram checks your
+          ID and shows its fee and rate before you commit; Good Faith adds nothing. You collect cash with that ID; cash-in also asks for
+          your Social Security number.
         </p>
         <div className="flex gap-2">
           <Button disabled={busy || !signer} onClick={() => start("off-ramp")}>

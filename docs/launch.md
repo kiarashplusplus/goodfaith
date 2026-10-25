@@ -85,6 +85,11 @@ pins.
 
 ## 6. Services
 
+The public website (`site/`) is static and can go live before the services: a Cloudflare Pages project (or any
+static host) with no build command and `site` as the output directory; `site/README.md` has the steps. Keep its loan
+figures in step with `scripts/launch.json` (`cd scripts && npm run site-check`, also in CI).
+
+
 Copy `deploy/.env.example` to `deploy/.env`, paste the `NEXT_PUBLIC_*` block from the launch output and the secrets
 (each key as a JSON array; `PERSON_HASH_SECRETS=1:<random 32 bytes hex>`; random `KORA_API_KEY`, `KORA_HMAC_SECRET`,
 `IDENTITY_ADMIN_KEY`, `MOCK_WEBHOOK_SECRET` or the Persona settings; `RECOVERY_MIN_AGE_SECONDS` if a day is not the

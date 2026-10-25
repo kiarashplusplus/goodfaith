@@ -17,6 +17,7 @@ import {
 import { friendlyError } from "@/lib/program";
 import { sendPrepared } from "@/lib/tx";
 import { useRun } from "@/lib/use-run";
+import { TexasFlag } from "@/components/texas-flag";
 
 /**
  * Step 1: a one-time identity check with the fund's verification service (government ID, Texas, 18+).
@@ -89,8 +90,9 @@ export function VerifyAndJoin({ wallet }: { wallet: Address }) {
     <div className="space-y-4">
       <Card title="1. Verify who you are">
         <p className="mb-3 text-sm text-stone-600">
-          A one-time check of your government ID with our verification partner: Texas residents, 18 or older. Good Faith keeps only a keyed
-          fingerprint of your ID so one person can hold one membership. Your documents are never stored here or on the blockchain.
+          A one-time check of your government ID with our verification partner: <TexasFlag /> Texas residents, 18 or older. Good Faith keeps
+          only a keyed fingerprint of your ID so one person can hold one membership. Your documents are never stored here or on the
+          blockchain.
         </p>
         {verified && <Notice tone="ok">Verified. Your pass is linked to this wallet.</Notice>}
         {s.status === "pending" && (

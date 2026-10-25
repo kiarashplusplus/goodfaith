@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Good Faith — interest-free loans for Texans</title>
+  <meta name="description" content="Interest-free, fee-free community loans for Texas residents, funded by gifts. What you need, before you start.">
+  <link rel="icon" href="assets/texas-flag.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <p class="banner" role="note"><strong>Test network only.</strong> Good Faith runs on Solana devnet with test money. Nothing here moves real dollars yet.</p>
+
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow"><img class="flag" src="assets/texas-flag.svg" alt="" width="30" height="20"> For Texas residents</p>
+      <h1>Good Faith</h1>
+      <p class="lede">Interest-free, fee-free loans between neighbours, funded by gifts. You pay back exactly what you borrow, and a friend you trust co-signs.</p>
+      <nav class="jump" aria-label="On this page">
+        <a href="#before">Before you start</a>
+        <a href="#borrow">Borrowing</a>
+        <a href="#cosign">Co-signing</a>
+        <a href="#late">If you can't repay</a>
+        <a href="#cash">Cash at MoneyGram</a>
+        <a href="#how">How it works</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section id="before" class="card first">
+      <h2>Before you start: what you need</h2>
+      <ul class="checks">
+        <li><img class="flag" src="assets/texas-flag.svg" alt="" width="24" height="16"> <strong>A Texas resident, 18 or older.</strong> Your government ID must be issued in Texas; we use that as a proxy for where you live.</li>
+        <li><strong>A government ID and a selfie</strong> for a one-time check with our verification partner, Persona. Good Faith keeps only a keyed fingerprint of the ID so one person holds one membership; your documents are never stored by us or put on the blockchain.</li>
+        <li><strong>A Solana wallet</strong> such as Phantom or Solflare. You don't need any SOL: a fee sponsor pays network fees.</li>
+        <li><strong>To borrow, a co-signer:</strong> a different person who has also verified, and who puts down a deposit (below).</li>
+        <li><strong>To turn USDC into cash</strong>, a MoneyGram identity check of its own, and the same ID at the counter. To pay cash in, also your Social Security number.</li>
+        <li><em>Optional:</em> an email address for notices about your membership, such as a recovery request or a bar.</li>
+      </ul>
+      <p class="note">One membership per person, one wallet per membership. A lost wallet can be recovered without losing your membership; it takes a few days and you are told first.</p>
+    </section>
+
+    <section id="borrow" class="card">
+      <h2>Borrowing</h2>
+      <ul>
+        <li>First loan up to <span data-launch="firstLoanCap">150</span> USDC. Each loan repaid on time raises your limit by <span data-launch="loanCapStep">100</span>, up to <span data-launch="maxLoan">500</span>.</li>
+        <li>No interest and no fees: you repay exactly what you borrowed, any amount, from any wallet.</li>
+        <li>Terms up to <span data-launch="maxTermDays">180</span> days, then <span data-launch="graceDays">30</span> days of grace.</li>
+        <li>After a loan, <span data-launch="cooldownDays">30</span> days before the next one.</li>
+        <li>A request nobody co-signs expires after <span data-launch="requestTtlDays">7</span> days.</li>
+      </ul>
+    </section>
+
+    <section id="cosign" class="card">
+      <h2>Co-signing</h2>
+      <ul>
+        <li>You put down <span data-launch="cosignerEscrowBps" data-unit="percent">25</span>% of the loan as a deposit, held in escrow.</li>
+        <li>If the loan is repaid on time, the deposit is yours again in full. If not, it covers what is missing, and comes back only if the borrower later pays back.</li>
+        <li>You can guarantee at most <span data-launch="maxGuaranteesPerMember">2</span> loans at a time.</li>
+        <li>If your deposit didn't cover everything and the fund lost money, you can't borrow or co-sign for <span data-launch="cosignerBanDays" data-unit="years">1</span> year, ending sooner if the fund is paid back.</li>
+      </ul>
+      <p class="note">Only co-sign for someone you trust. A guarantee is a real commitment and can strain a friendship.</p>
+    </section>
+
+    <section id="late" class="card">
+      <h2>If you can't repay</h2>
+      <ul>
+        <li>Paying back late, after the grace period: no new loans for <span data-launch="lateBanDays">90</span> days, counted from when you pay back.</li>
+        <li>Not paying back: no new loans for <span data-launch="defaultBanDays" data-unit="years">2</span> years. Paying back later shortens it.</li>
+        <li>Lateness never costs money: there is no interest and no fee, ever.</li>
+      </ul>
+    </section>
+
+    <section id="cash" class="card cash">
+      <h2>Cash at <span class="mg">MoneyGram</span></h2>
+      <p class="powered">Cash-out and cash-in powered by <span class="mg">MoneyGram</span>, from the app's Checking page.</p>
+      <ul>
+        <li><strong>Cash out:</strong> turn USDC into US dollars at a MoneyGram location. MoneyGram checks your name, phone, date of birth, address and government ID, then gives you a reference number to collect the cash with that ID.</li>
+        <li><strong>Cash in:</strong> pay cash at a MoneyGram location and receive USDC, for example to repay. MoneyGram also asks for your Social Security number and a second ID.</li>
+        <li><strong>Fees:</strong> MoneyGram charges its own fee and shows it before you commit; Good Faith adds nothing. Its test environment quoted $3 on a cash-out. <span class="tbc">To confirm: production fees</span></li>
+        <li><strong>Where:</strong> MoneyGram's test environment offers Texas pickup locations. <span class="tbc">To confirm: production coverage in Texas, cash-out and cash-in</span></li>
+      </ul>
+    </section>
+
+    <section id="how" class="card">
+      <h2>How it works</h2>
+      <ul>
+        <li><strong>Donors</strong> give USDC to a shared fund as gifts: they earn nothing and cannot take it back, which lets the fund lend at zero cost.</li>
+        <li><strong>The rules are a public program</strong> on the Solana blockchain. Settings changes are announced ahead of time, and anyone can check what is deployed.</li>
+        <li><strong>Your money stays in your own wallet.</strong> Good Faith never holds it.</li>
+      </ul>
+      <p class="note">Still to settle before real money: the legal entity that runs the fund, and the questions we are putting to a Texas attorney. <span class="tbc">To confirm</span> Persona's data-retention policy will be published before launch.</p>
+    </section>
+
+    <section class="card links">
+      <h2>Read more</h2>
+      <ul>
+        <li><a href="https://github.com/kiarashplusplus/goodfaith/blob/main/docs/whitepaper.md">White paper</a>: the case, the risks, and how to verify the deployment</li>
+        <li><a href="https://github.com/kiarashplusplus/goodfaith">Source code</a>, published to be read and checked</li>
+        <li>The app: <span class="soon">coming soon</span></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    <p>Good Faith is not affiliated with or endorsed by the State of Texas. MoneyGram is a trademark of MoneyGram International, Inc.; cash services are provided by MoneyGram, which runs its own identity check. USDC is not a bank deposit and is not FDIC-insured.</p>
+    <p>Copyright © 2026 Kiarash Adl. All rights reserved.</p>
+  </footer>
+</body>
+</html>
